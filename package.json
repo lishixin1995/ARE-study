@@ -1,185 +1,20 @@
 {
-  "version": "2.1",
-  "name": "exam_question_review_parser",
-  "description": "Parse single-choice and multiple-choice exam questions into structured review blocks with automatic keyword emphasis.",
-  "formatting": {
-    "text_format": "markdown",
-    "enable_keyword_emphasis": true,
-    "emphasis_mode": "bold",
-    "supported_emphasis_modes": ["bold", "underline"],
-    "bold_wrapper": ["**", "**"],
-    "underline_wrapper": ["<u>", "</u>"],
-    "render_markdown_in_ui": true,
-    "render_inline_html_in_ui": false
+  "name": "are-study",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
-  "rules": {
-    "question_type_supported": ["single_choice", "multiple_choice"],
-    "correct_answer_rule": {
-      "single_choice": "Return exactly one answer item.",
-      "multiple_choice": "Return all correct answer items."
-    },
-    "correct_answer_display_rule": {
-      "single_choice": "Show one short answer line, with keyword emphasis applied only to important terms if needed.",
-      "multiple_choice": "Join all correct answers with ' / ', and apply keyword emphasis only where needed."
-    },
-    "keyword_emphasis_rule": {
-      "instruction": "Apply emphasis to important concepts, contrasted terms, misleading options, technical vocabulary, code-related terms, and memory-trigger words. Do not over-format every word. Usually emphasize 1 to 3 key terms per sentence.",
-      "targets": [
-        "core concepts",
-        "contrasting terms",
-        "wrong-option trap words",
-        "technical vocabulary",
-        "code or standards language",
-        "memory hook trigger words"
-      ]
-    },
-    "answer_extraction_rule": {
-      "type": "numbered_list",
-      "min_items": 2,
-      "max_items": 4,
-      "instruction": "Extract only the key reasoning or evidence that leads to the correct answer. Keep each item concise. Emphasize important keywords."
-    },
-    "trap_point_rule": {
-      "type": "bullet_list",
-      "min_items": 1,
-      "max_items": 4,
-      "instruction": "Explain why wrong options are wrong or misleading. Focus on confusion points. Emphasize the misleading and contrasting terms."
-    },
-    "memory_hook_rule": {
-      "type": "short_sentence",
-      "max_sentences": 2,
-      "instruction": "Write a short practical exam reminder. Emphasize the trigger words or contrast words."
-    }
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-markdown": "^9.0.1"
   },
-  "output_schema": {
-    "question_id": "string",
-    "question_type": "single_choice | multiple_choice",
-    "emphasis_mode": "bold | underline",
-    "correct_answer": {
-      "display": "string",
-      "items": ["string"]
-    },
-    "answer_extraction": [
-      {
-        "id": 1,
-        "text": "string"
-      }
-    ],
-    "trap_points": [
-      {
-        "id": 1,
-        "text": "string"
-      }
-    ],
-    "memory_hook": {
-      "text": "string"
-    },
-    "keywords_highlighted": ["string"]
-  },
-  "ui_blocks": [
-    {
-      "key": "correct_answer",
-      "title": "Correct Answer",
-      "type": "card"
-    },
-    {
-      "key": "answer_extraction",
-      "title": "Answer Extraction",
-      "type": "card"
-    },
-    {
-      "key": "trap_points",
-      "title": "Trap Point",
-      "type": "card"
-    },
-    {
-      "key": "memory_hook",
-      "title": "Memory Hook",
-      "type": "card"
-    }
-  ],
-  "examples": {
-    "single_choice_bold": {
-      "question_id": "Q001",
-      "question_type": "single_choice",
-      "emphasis_mode": "bold",
-      "correct_answer": {
-        "display": "fabrication",
-        "items": ["fabrication"]
-      },
-      "answer_extraction": [
-        {
-          "id": 1,
-          "text": "The question is asking about the **manufacturing** of a building component."
-        },
-        {
-          "id": 2,
-          "text": "**Fabrication** happens before **delivery** and **installation** on site."
-        }
-      ],
-      "trap_points": [
-        {
-          "id": 1,
-          "text": "**Installation** is wrong because it refers to placing a finished component on site."
-        },
-        {
-          "id": 2,
-          "text": "**Assembly** is tempting, but it means joining parts rather than manufacturing the component itself."
-        }
-      ],
-      "memory_hook": {
-        "text": "Do not confuse **making** a component with **installing** it."
-      },
-      "keywords_highlighted": [
-        "manufacturing",
-        "fabrication",
-        "delivery",
-        "installation",
-        "assembly",
-        "making",
-        "installing"
-      ]
-    },
-    "single_choice_underline": {
-      "question_id": "Q001",
-      "question_type": "single_choice",
-      "emphasis_mode": "underline",
-      "correct_answer": {
-        "display": "fabrication",
-        "items": ["fabrication"]
-      },
-      "answer_extraction": [
-        {
-          "id": 1,
-          "text": "The question is asking about the <u>manufacturing</u> of a building component."
-        },
-        {
-          "id": 2,
-          "text": "<u>Fabrication</u> happens before <u>delivery</u> and <u>installation</u> on site."
-        }
-      ],
-      "trap_points": [
-        {
-          "id": 1,
-          "text": "<u>Installation</u> is wrong because it refers to placing a finished component on site."
-        },
-        {
-          "id": 2,
-          "text": "<u>Assembly</u> is tempting, but it means joining parts rather than manufacturing the component itself."
-        }
-      ],
-      "memory_hook": {
-        "text": "Do not confuse <u>making</u> a component with <u>installing</u> it."
-      },
-      "keywords_highlighted": [
-        "manufacturing",
-        "fabrication",
-        "delivery",
-        "installation",
-        "assembly",
-        "making",
-        "installing"
-      ]
-    }
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.8"
   }
 }
