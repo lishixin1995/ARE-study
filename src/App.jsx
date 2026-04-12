@@ -255,14 +255,26 @@ function summarizeWrongAnswer(text, division, room) {
         .join(' ')
     : '没有稳定识别到正确选项，请手动检查 OCR 结果。'
 
-  const trapPoint = incorrectOptions.length
-    ? incorrectOptions
-        .map((item) => {
-          const explanation = item.explanations.join(' ').trim()
-          return `${item.label}: ${explanation}`
-        })
-        .join(' ')
-    : '目前没有稳定识别到错误选项解释。'
+const trapPoint = incorrectOptions.length
+  ? incorrectOptions
+      .slice(0, 2)
+      .map((item) => {
+        const explanation = item.explanations.join(' ').trim()
+
+        let shortReason = explanation
+
+        if (/doesn't specifically contribute|does not specifically contribute/i.test(explanation)) {
+          shortReason = '听起来是好事，但不直接服务题干目标。'
+        } else if (/low-?voc/i.test(explanation) || /high-?voc/i.test(explanation)) {
+          shortReason = '方向反了，这题应选 low-VOC 而不是 high-VOC。'
+        } else if (explanation.length > 60) {
+          shortReason = explanation.slice(0, 60) + '...'
+        }
+
+        return `${item.label}: ${shortReason}`
+      })
+      .join(' ')
+  : '最容易错在只看到表面关键词，却没有先判断题干真正目标。'
 
   const keyPoints = []
 
