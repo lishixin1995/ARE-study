@@ -1,28 +1,189 @@
 {
-  "name": "are-study",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "lint": "eslint .",
-    "preview": "vite preview"
+  "version": "2.0",
+  "name": "exam_question_review_parser",
+  "description": "Parse single-choice and multiple-choice exam questions into structured review blocks with bolded key terms.",
+  "formatting": {
+    "text_format": "markdown",
+    "enable_bold_keywords": true,
+    "bold_style": "**keyword**",
+    "render_markdown_in_ui": true
   },
-  "dependencies": {
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "tesseract.js": "^5"
+  "rules": {
+    "question_type_supported": ["single_choice", "multiple_choice"],
+    "correct_answer_rule": {
+      "single_choice": "Return exactly one answer item.",
+      "multiple_choice": "Return all correct answer items."
+    },
+    "correct_answer_display_rule": {
+      "single_choice": "Show one short bolded answer only.",
+      "multiple_choice": "Join all bolded answers with ' / '."
+    },
+    "answer_extraction_rule": {
+      "type": "numbered_list",
+      "min_items": 2,
+      "max_items": 4,
+      "instruction": "Extract only the key reasoning or evidence that leads to the correct answer. Keep each item concise. Bold the most important terms."
+    },
+    "trap_point_rule": {
+      "type": "bullet_list",
+      "min_items": 1,
+      "max_items": 4,
+      "instruction": "Explain why wrong options are wrong or misleading. Focus on confusion points and bold the misleading or critical terms."
+    },
+    "memory_hook_rule": {
+      "type": "short_sentence",
+      "max_sentences": 2,
+      "instruction": "Write a short, practical exam reminder. Bold the most important contrast or trigger words."
+    }
   },
-  "devDependencies": {
-    "@eslint/js": "^9.39.4",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
-    "eslint": "^9.39.4",
-    "eslint-plugin-react-hooks": "^7.0.1",
-    "eslint-plugin-react-refresh": "^0.5.2",
-    "globals": "^17.4.0",
-    "vite": "^8.0.4"
+  "output_schema": {
+    "question_id": "string",
+    "question_type": "single_choice | multiple_choice",
+    "correct_answer": {
+      "display": "string",
+      "items": ["string"]
+    },
+    "answer_extraction": [
+      {
+        "id": 1,
+        "text": "string"
+      }
+    ],
+    "trap_points": [
+      {
+        "id": 1,
+        "text": "string"
+      }
+    ],
+    "memory_hook": {
+      "text": "string"
+    },
+    "keywords_highlighted": ["string"]
+  },
+  "ui_blocks": [
+    {
+      "key": "correct_answer",
+      "title": "Correct Answer",
+      "type": "card",
+      "style": {
+        "emphasis": "high",
+        "compact": true
+      }
+    },
+    {
+      "key": "answer_extraction",
+      "title": "Answer Extraction",
+      "type": "card",
+      "style": {
+        "emphasis": "medium",
+        "list_style": "numbered"
+      }
+    },
+    {
+      "key": "trap_points",
+      "title": "Trap Point",
+      "type": "card",
+      "style": {
+        "emphasis": "medium",
+        "list_style": "bullet"
+      }
+    },
+    {
+      "key": "memory_hook",
+      "title": "Memory Hook",
+      "type": "card",
+      "style": {
+        "emphasis": "high",
+        "compact": true
+      }
+    }
+  ],
+  "examples": {
+    "single_choice": {
+      "question_id": "Q001",
+      "question_type": "single_choice",
+      "correct_answer": {
+        "display": "**fabrication**",
+        "items": ["**fabrication**"]
+      },
+      "answer_extraction": [
+        {
+          "id": 1,
+          "text": "The question is asking about the **making** or **manufacturing** of a building component."
+        },
+        {
+          "id": 2,
+          "text": "**Fabrication** happens before the component is delivered to the site."
+        },
+        {
+          "id": 3,
+          "text": This is about **production**, not **installation** or final placement."
+        }
+      ],
+      "trap_points": [
+        {
+          "id": 1,
+          "text": "**Installation** is wrong because it refers to putting a finished component in place, not making it."
+        },
+        {
+          "id": 2,
+          "text": "**Assembly** is tempting because it sounds construction-related, but it means joining parts rather than manufacturing the component itself."
+        }
+      ],
+      "memory_hook": {
+        "text": "Do not confuse **making** a component with **installing** it."
+      },
+      "keywords_highlighted": [
+        "fabrication",
+        "installation",
+        "assembly",
+        "production"
+      ]
+    },
+    "multiple_choice": {
+      "question_id": "Q002",
+      "question_type": "multiple_choice",
+      "correct_answer": {
+        "display": "**concrete** / **cement** / **sand**",
+        "items": ["**concrete**", "**cement**", "**sand**"]
+      },
+      "answer_extraction": [
+        {
+          "id": 1,
+          "text": "**Concrete** is the final composite material."
+        },
+        {
+          "id": 2,
+          "text": "**Cement** acts as the binder in the mix."
+        },
+        {
+          "id": 3,
+          "text": "**Sand** is a fine aggregate used in the mixture."
+        }
+      ],
+      "trap_points": [
+        {
+          "id": 1,
+          "text": "**Mortar** is tempting because it also contains cement and sand, but it is not the same as **concrete**."
+        },
+        {
+          "id": 2,
+          "text": "**Grout** is wrong because it is used differently and has a different composition."
+        }
+      ],
+      "memory_hook": {
+        "text": "When material terms look similar, separate the **binder**, **aggregate**, and **final composite** first."
+      },
+      "keywords_highlighted": [
+        "concrete",
+        "cement",
+        "sand",
+        "mortar",
+        "grout",
+        "binder",
+        "aggregate",
+        "final composite"
+      ]
+    }
   }
 }
