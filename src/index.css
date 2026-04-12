@@ -171,4 +171,74 @@ body {
   .card-grid {
     grid-template-columns: 1fr;
   }
+  button {
+  font: inherit;
+}
+
+.pill {
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pill:hover {
+  border-color: #9ca3af;
+}
+
+.list-button {
+  width: 100%;
+  border: 1px solid #e5e7eb;
+  border-radius: 16px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  background: #fafafa;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+}
+
+.list-button:hover {
+  border-color: #9ca3af;
+}
+
+.active-room {
+  background: #eef2ff;
+  border-color: #c7d2fe;
+}
+
+.status-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 14px 0;
+}
+
+.status-tag {
+  background: #111827;
+  color: white;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.action-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.small-action {
+  border: none;
+  background: #111827;
+  color: white;
+  border-radius: 12px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+
+.small-action.ghost {
+  background: #e5e7eb;
+  color: #111827;
+}
 }
