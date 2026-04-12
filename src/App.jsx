@@ -396,12 +396,107 @@ export default function App() {
   };
 
   const clearAll = () => {
-    setCaptureText("");
-    setStatusMessage("已清空 Capture。");
-    setOcrStatus("");
-    setOcrPreviewName("");
+  setCaptureText("");
+  setStatusMessage("已清空 Capture。");
+};
+
+const handleImageChange = (event) => {
+  const file = event.target.files?.[0] || null;
+
+  if (!file) {
     setImageFile(null);
+    setImagePreview("");
+    setOcrPreviewName("");
+    setOcrStatus("No image selected.");
+    return;
+  }
+
+  setImageFile(file);
+  setOcrPreviewName(file.name);
+  setOcrStatus(`Selected image: ${file.name}`);
+
+  const reader = new FileReader();
+  reader.onloadend = () => {
+    setImagePreview(typeof reader.result === "string" ? reader.result : "");
   };
+  reader.readAsDataURL(file);
+};
+
+const runOCR = async () => {
+  if (!imageFile) {
+    setOcrStatus("Please select an image first.");
+    return;
+  }
+
+  try {
+    setIsScanning(true);
+    setOcrStatus("Reading image text...");
+
+    const result = await Tesseract.recognize(imageFile, "eng");
+    const extractedText = result?.data?.text?.trim() || "";
+
+    if (!extractedText) {
+      setOcrStatus("No text detected from this image.");
+      return;
+    }
+
+    setOcrText(extractedText);
+    setOcrStatus("OCR completed. Text is ready for analysis.");
+    setStatusMessage("OCR 完成，右侧错题分析 block 已更新。");
+  } catch (error) {
+    console.error(error);
+    setOcrStatus("OCR failed. Try another image.");
+    setStatusMessage("OCR 失败，请换一张更清晰的图片。");
+  } finally {
+    setIsScanning(false);
+  }
+};
+
+const saveWrongQuestion = () => {
+  const payload = {
+    imagePreview,
+    imageName: ocrPreviewName,
+    ocrText,
+    savedAt: new Date().toISOString()
+  };
+
+  localStorage.setItem("are-wrong-question", JSON.stringify(payload));
+
+  const now = new Date();
+  const stamp = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()} ${now.toLocaleTimeString()}`;
+  setWrongQuestionSavedAt(stamp);
+  setOcrStatus("Wrong-question block saved.");
+};
+
+const loadWrongQuestion = () => {
+  const raw = localStorage.getItem("are-wrong-question");
+
+  if (!raw) {
+    setOcrStatus("No saved wrong-question block found.");
+    return;
+  }
+
+  try {
+    const data = JSON.parse(raw);
+    setImagePreview(data.imagePreview || "");
+    setOcrPreviewName(data.imageName || "");
+    setOcrText(data.ocrText || "");
+    setWrongQuestionSavedAt(data.savedAt || "");
+    setOcrStatus("Saved wrong-question block loaded.");
+  } catch (error) {
+    console.error(error);
+    setOcrStatus("Failed to load saved wrong-question block.");
+  }
+};
+
+const clearWrongQuestion = () => {
+  setImageFile(null);
+  setImagePreview("");
+  setOcrPreviewName("");
+  setOcrText("");
+  setOcrStatus("");
+  setWrongQuestionSavedAt("");
+};
 
   const handleImageChange = (event) => {
     const file = event.target.files?.[0] || null;
