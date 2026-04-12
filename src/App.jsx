@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import Tesseract from 'tesseract.js'
 
 const palaceData = {
   PA: {
@@ -173,7 +174,8 @@ function summarizeWrongAnswer(text, division, room) {
   const clean = text.trim()
   if (!clean) return null
 
-  const lines = clean
+  const normalized = clean.replace(/\r/g, '')
+  const lines = normalized
     .split('\n')
     .map((line) => line.replace(/\s+/g, ' ').trim())
     .filter(Boolean)
@@ -184,24 +186,47 @@ function summarizeWrongAnswer(text, division, room) {
     /^which of the following/i,
     /^an architect is working/i,
     /^check the four/i,
-    /^incorrect!?$/i,
   ]
-
-  function isOptionLine(line) {
-    if (/^(correct|incorrect)\b/i.test(line)) return false
-    if (ignoredPatterns.some((pattern) => pattern.test(line))) return false
-    if (line.length > 120) return false
-    if (line.endsWith('?')) return false
-    return true
-  }
 
   const options = []
   let currentOption = null
 
-  for (const line of lines) {
-    if (isOptionLine(line)) {
+  function cleanOptionLabel(line) {
+    return line
+      .replace(/^[•\-✓✔☐☑■□]+\s*/, '')
+      .replace(/^[A-D][\.\)]\s*/, '')
+      .replace(/\.$/, '')
+      .trim()
+  }
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]
+    const nextLine = lines[i + 1] || ''
+
+    if (ignoredPatterns.some((pattern) => pattern.test(line))) {
+      continue
+    }
+
+    if (/^reference[:：]?/i.test(line)) {
+      break
+    }
+
+    if (/^(correct|incorrect)\b/i.test(line) && currentOption) {
+      currentOption.status = /^correct/i.test(line) ? 'correct' : 'incorrect'
+      currentOption.explanations.push(
+        line.replace(/^(correct|incorrect)[\.:]?\s*/i, '').trim()
+      )
+      continue
+    }
+
+    const looksLikeOption =
+      !/^(correct|incorrect)\b/i.test(line) &&
+      /^(correct|incorrect)\b/i.test(nextLine) &&
+      line.length < 140
+
+    if (looksLikeOption) {
       currentOption = {
-        label: line.replace(/^[•\-✓✔☐☑]\s*/, '').replace(/\.$/, '').trim(),
+        label: cleanOptionLabel(line),
         status: 'unknown',
         explanations: [],
       }
@@ -209,23 +234,7 @@ function summarizeWrongAnswer(text, division, room) {
       continue
     }
 
-    if (/^correct\b/i.test(line) && currentOption) {
-      currentOption.status = 'correct'
-      currentOption.explanations.push(
-        line.replace(/^correct[.:]?\s*/i, '').trim()
-      )
-      continue
-    }
-
-    if (/^incorrect\b/i.test(line) && currentOption) {
-      currentOption.status = 'incorrect'
-      currentOption.explanations.push(
-        line.replace(/^incorrect[.:]?\s*/i, '').trim()
-      )
-      continue
-    }
-
-    if (currentOption) {
+    if (currentOption && currentOption.status !== 'unknown') {
       currentOption.explanations.push(line)
     }
   }
@@ -244,50 +253,45 @@ function summarizeWrongAnswer(text, division, room) {
           return `${item.label}: ${explanation}`
         })
         .join(' ')
-    : '请从答案分析里提炼一句：这些正确选项为什么符合题干目标。'
+    : '没有稳定识别到正确选项，请手动检查 OCR 结果。'
 
   const trapPoint = incorrectOptions.length
     ? incorrectOptions
-        .slice(0, 3)
         .map((item) => {
           const explanation = item.explanations.join(' ').trim()
           return `${item.label}: ${explanation}`
         })
         .join(' ')
-    : '最容易错在只看到表面关键词，却没有先判断题目真正考的目标和筛选条件。'
+    : '目前没有稳定识别到错误选项解释。'
 
   const keyPoints = []
 
   if (/prefabricat/i.test(clean)) {
-    keyPoints.push('预制构件常对应减少现场切割、施工废料和现场污染。')
+    keyPoints.push('预制构件通常对应减少现场切割、减少施工废料和现场污染。')
   }
-
   if (/recycled/i.test(clean)) {
-    keyPoints.push('高 recycled content 常对应减少新原材料开采，是材料可持续性的常见正向选项。')
+    keyPoints.push('高 recycled content 常对应减少新原材料开采。')
   }
-
   if (/smart technology|smart thermostat|occupancy sensor|automation/i.test(clean)) {
-    keyPoints.push('smart technology 更偏 building operation efficiency 和 performance。')
+    keyPoints.push('smart technology 更偏建筑运营效率和 performance。')
   }
-
   if (/high-?voc|low-?voc/i.test(clean)) {
-    keyPoints.push('VOC 题要先分清 high VOC 和 low VOC，通常 low VOC 才是正确方向。')
+    keyPoints.push('VOC 题先分清方向，通常 low VOC 才是可持续方向。')
   }
-
   if (/field finishing|factory/i.test(clean)) {
-    keyPoints.push('减少现场 finishing、转向工厂完成，常有助于降低现场污染和粉尘。')
+    keyPoints.push('减少现场 finishing、转向工厂完成，通常有助于减少污染物和粉尘。')
   }
 
   if (keyPoints.length === 0) {
-    keyPoints.push('先判断题目真正考的是概念、系统、流程，还是规范逻辑。')
-    keyPoints.push('不要只记正确选项，要记为什么其他项错。')
-    keyPoints.push('把这题归到固定房间里，后面复习时更容易回忆。')
+    keyPoints.push('先判断题干真正目标，再筛选哪些选项直接服务这个目标。')
+    keyPoints.push('不要只背正确项，也要记为什么其他项错。')
+    keyPoints.push('把这题归进固定房间，后面复习更容易提取。')
   }
 
   const memoryHook =
     correctOptions.length > 1
-      ? '这类多选题先抓题干目标，再逐项筛掉“看起来不错但不直接服务目标”的选项。'
-      : '先抓题干目标，再判断哪个选项最直接满足它。'
+      ? '多选题先抓题干目标，再逐项筛掉“听起来不错但不直接服务目标”的选项。'
+      : '先抓题干目标，再找最直接满足目标的选项。'
 
   return {
     correctAnswer,
@@ -318,6 +322,11 @@ export default function App() {
   const [wrongAnswerSummary, setWrongAnswerSummary] = useState(null)
   const [savedWrongCards, setSavedWrongCards] = useState(() => getStoredCards())
   const [expandedCardId, setExpandedCardId] = useState(null)
+
+  const [ocrLoading, setOcrLoading] = useState(false)
+  const [ocrStatus, setOcrStatus] = useState('')
+  const [ocrProgress, setOcrProgress] = useState(0)
+  const [ocrError, setOcrError] = useState('')
 
   const currentRooms = palaceData[selectedDivision].rooms
 
@@ -399,15 +408,61 @@ export default function App() {
     const reader = new FileReader()
     reader.onloadend = () => {
       setWrongAnswerImage(reader.result)
+      setOcrError('')
+      setOcrStatus('')
+      setOcrProgress(0)
     }
     reader.readAsDataURL(file)
   }
 
+  async function handleRunOCR() {
+    if (!wrongAnswerImage) {
+      alert('请先上传题目截图。')
+      return
+    }
+
+    try {
+      setOcrLoading(true)
+      setOcrError('')
+      setOcrStatus('Starting OCR...')
+      setOcrProgress(0)
+
+      const result = await Tesseract.recognize(wrongAnswerImage, 'eng', {
+        logger: (message) => {
+          if (message.status) {
+            setOcrStatus(message.status)
+          }
+          if (typeof message.progress === 'number') {
+            setOcrProgress(Math.round(message.progress * 100))
+          }
+        },
+      })
+
+      const extractedText = result?.data?.text?.trim() || ''
+      setWrongAnswerText(extractedText)
+
+      if (extractedText) {
+        const summary = summarizeWrongAnswer(
+          extractedText,
+          selectedDivision,
+          selectedRoom
+        )
+        setWrongAnswerSummary(summary)
+      }
+
+      setOcrStatus('OCR finished')
+      setOcrProgress(100)
+    } catch (error) {
+      console.error(error)
+      setOcrError('OCR 失败了。你可以重试，或者先手动把文字粘进右边文本框。')
+    } finally {
+      setOcrLoading(false)
+    }
+  }
+
   function handleAnalyzeWrongAnswer() {
     if (!wrongAnswerText.trim()) {
-      alert(
-        '请先把题目、答案和解析文字粘贴到右边文本框里。当前上传图片只支持预览，还没有自动提取文字。'
-      )
+      alert('请先上传图片做 OCR，或者先把题目、答案和解析文字粘贴到右边文本框里。')
       return
     }
 
@@ -449,13 +504,12 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
 
   function handleSaveToFlashcards() {
     if (!wrongAnswerSummary) {
-      alert('请先先分析这道题，再保存成 flashcard。')
+      alert('请先分析这道题，再保存成 flashcard。')
       return
     }
 
     const newCard = {
       id: Date.now(),
-      image: wrongAnswerImage || '',
       rawText: wrongAnswerText,
       division: selectedDivision,
       room: selectedRoom,
@@ -471,6 +525,9 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
     setWrongAnswerImage(null)
     setWrongAnswerText('')
     setWrongAnswerSummary(null)
+    setOcrStatus('')
+    setOcrProgress(0)
+    setOcrError('')
     localStorage.removeItem(STORAGE_KEYS.wrongAnswerText)
   }
 
@@ -603,7 +660,7 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
         <section className="panel big-panel">
           <div className="section-title">Wrong Answer Lab</div>
           <div className="section-subtitle">
-            先上传题目截图做预览，再把题干、答案和解析粘进来，系统会帮你提炼错题重点。
+            先上传题目截图，先做 OCR 提字，再做错题分析，最后保存成 flashcard。
           </div>
 
           <div className="wrong-answer-grid">
@@ -629,6 +686,76 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
                   上传题目截图后，这里会显示预览。
                 </div>
               )}
+
+              <div
+                style={{
+                  marginTop: '14px',
+                  display: 'grid',
+                  gap: '10px',
+                }}
+              >
+                <button
+                  className="small-action"
+                  onClick={handleRunOCR}
+                  disabled={ocrLoading || !wrongAnswerImage}
+                  style={{
+                    opacity: ocrLoading || !wrongAnswerImage ? 0.6 : 1,
+                    cursor: ocrLoading || !wrongAnswerImage ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  {ocrLoading ? 'Reading Image...' : 'OCR Image to Text'}
+                </button>
+
+                {(ocrStatus || ocrError || ocrLoading) && (
+                  <div
+                    style={{
+                      border: '1px solid #e5e7eb',
+                      borderRadius: '16px',
+                      padding: '12px',
+                      background: '#fafafa',
+                    }}
+                  >
+                    {ocrStatus && (
+                      <div style={{ fontSize: '14px', marginBottom: '8px' }}>
+                        OCR Status: {ocrStatus}
+                      </div>
+                    )}
+
+                    {(ocrLoading || ocrProgress > 0) && (
+                      <div
+                        style={{
+                          width: '100%',
+                          height: '10px',
+                          background: '#e5e7eb',
+                          borderRadius: '999px',
+                          overflow: 'hidden',
+                          marginBottom: '8px',
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${ocrProgress}%`,
+                            height: '100%',
+                            background: '#111827',
+                          }}
+                        />
+                      </div>
+                    )}
+
+                    {(ocrLoading || ocrProgress > 0) && (
+                      <div style={{ fontSize: '13px', color: '#6b7280' }}>
+                        {ocrProgress}% complete
+                      </div>
+                    )}
+
+                    {ocrError && (
+                      <div style={{ fontSize: '14px', color: '#b91c1c' }}>
+                        {ocrError}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
 
             <div>
@@ -636,7 +763,7 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
                 className="note-input wrong-answer-textarea"
                 value={wrongAnswerText}
                 onChange={(e) => setWrongAnswerText(e.target.value)}
-                placeholder="Paste question, answer, and explanation here..."
+                placeholder="OCR result will appear here. You can also edit it manually before analyzing."
               />
 
               <div className="action-row">
@@ -717,85 +844,123 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
               还没有保存的 flashcards。先分析一题，再点 Save to Flashcards。
             </div>
           ) : (
-            <div className="saved-cards-grid">
+            <div
+              style={{
+                display: 'grid',
+                gap: '16px',
+                marginTop: '16px',
+              }}
+            >
               {savedWrongCards.map((card) => (
-                <div className="flashcard-card" key={card.id}>
-                  {card.image ? (
-                    <img
-                      src={card.image}
-                      alt="Saved flashcard"
-                      className="flashcard-thumb"
-                    />
-                  ) : (
-                    <div className="flashcard-thumb placeholder-thumb">
-                      No Image
+                <div
+                  key={card.id}
+                  style={{
+                    border: '1px solid #e5e7eb',
+                    borderRadius: '20px',
+                    background: '#fff',
+                    padding: '16px',
+                  }}
+                >
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: '8px',
+                      flexWrap: 'wrap',
+                      marginBottom: '10px',
+                    }}
+                  >
+                    <span
+                      style={{
+                        background: '#eef2ff',
+                        color: '#3730a3',
+                        borderRadius: '999px',
+                        padding: '6px 10px',
+                        fontSize: '12px',
+                      }}
+                    >
+                      {card.division}
+                    </span>
+                    <span
+                      style={{
+                        background: '#eef2ff',
+                        color: '#3730a3',
+                        borderRadius: '999px',
+                        padding: '6px 10px',
+                        fontSize: '12px',
+                      }}
+                    >
+                      {card.room}
+                    </span>
+                  </div>
+
+                  <div style={{ fontWeight: 700, marginBottom: '8px' }}>
+                    {card.summary.correctAnswer}
+                  </div>
+
+                  <div
+                    style={{
+                      color: '#6b7280',
+                      fontSize: '13px',
+                      marginBottom: '12px',
+                    }}
+                  >
+                    Saved: {card.savedAt}
+                  </div>
+
+                  <div className="flashcard-actions">
+                    <button
+                      className="small-action"
+                      onClick={() => toggleCard(card.id)}
+                    >
+                      {expandedCardId === card.id ? 'Hide' : 'View'}
+                    </button>
+
+                    <button
+                      className="small-action ghost"
+                      onClick={() => handleDeleteCard(card.id)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+
+                  {expandedCardId === card.id && (
+                    <div
+                      style={{
+                        marginTop: '14px',
+                        display: 'grid',
+                        gap: '12px',
+                      }}
+                    >
+                      <div className="card soft">
+                        <div className="card-title">Why It Is Right</div>
+                        <div className="card-text">{card.summary.whyRight}</div>
+                      </div>
+
+                      <div className="card soft">
+                        <div className="card-title">Trap Point</div>
+                        <div className="card-text">{card.summary.trapPoint}</div>
+                      </div>
+
+                      <div className="card soft">
+                        <div className="card-title">Memory Hook</div>
+                        <div className="card-text">{card.summary.memoryHook}</div>
+                      </div>
+
+                      <div className="card soft">
+                        <div className="card-title">Key Points</div>
+                        <ul className="key-points-list">
+                          {card.summary.keyPoints.map((point, index) => (
+                            <li key={index}>{point}</li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      <div className="card soft">
+                        <div className="card-title">Raw OCR Text</div>
+                        <div className="card-text">{card.rawText}</div>
+                      </div>
                     </div>
                   )}
-
-                  <div className="flashcard-body">
-                    <div className="flashcard-tags">
-                      <span className="mini-tag">{card.division}</span>
-                      <span className="mini-tag">{card.room}</span>
-                    </div>
-
-                    <div className="flashcard-title">
-                      {card.summary.correctAnswer}
-                    </div>
-
-                    <div className="flashcard-meta">
-                      Saved: {card.savedAt}
-                    </div>
-
-                    <div className="flashcard-actions">
-                      <button
-                        className="small-action"
-                        onClick={() => toggleCard(card.id)}
-                      >
-                        {expandedCardId === card.id ? 'Hide' : 'View'}
-                      </button>
-
-                      <button
-                        className="small-action ghost"
-                        onClick={() => handleDeleteCard(card.id)}
-                      >
-                        Delete
-                      </button>
-                    </div>
-
-                    {expandedCardId === card.id && (
-                      <div className="flashcard-detail">
-                        <div className="card soft">
-                          <div className="card-title">Why It Is Right</div>
-                          <div className="card-text">
-                            {card.summary.whyRight}
-                          </div>
-                        </div>
-
-                        <div className="card soft">
-                          <div className="card-title">Trap Point</div>
-                          <div className="card-text">
-                            {card.summary.trapPoint}
-                          </div>
-                        </div>
-
-                        <div className="card soft">
-                          <div className="card-title">Memory Hook</div>
-                          <div className="card-text">
-                            {card.summary.memoryHook}
-                          </div>
-                        </div>
-
-                        <div className="card soft">
-                          <div className="card-title">Key Points</div>
-                          <ul className="key-points-list">
-                            {card.summary.keyPoints.map((point, index) => (
-                              <li key={index}>{point}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
-                    )}
-                  </div>
                 </div>
               ))}
             </div>
