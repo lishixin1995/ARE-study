@@ -361,6 +361,18 @@ export default function App() {
   const studyData = useMemo(() => {
     return buildStudyData(captureText, selectedDivision);
   }, [captureText, selectedDivision]);
+  const reviewSourceText = useMemo(() => {
+  return ocrText?.trim() ? ocrText : captureText;
+}, [ocrText, captureText]);
+
+const reviewData = useMemo(() => {
+  return buildReview(reviewSourceText);
+}, [reviewSourceText]);
+
+const reviewCorrectAnswerDisplay = useMemo(() => {
+  const value = reviewData.correctAnswer;
+  return Array.isArray(value) ? value.join(" / ") : value;
+}, [reviewData]);
 
   const correctAnswerDisplay = useMemo(() => {
     const value = studyData.review.correctAnswer;
@@ -726,56 +738,142 @@ const clearWrongQuestion = () => {
             </div>
           </div>
 
-          <div className="right-column">
-            <div className="info-card">
-              <div className="card-title">Logic Links</div>
-              <ul className="plain-list">
-                {studyData.logicLinks.map((item, index) => (
-                  <li key={index}>
-                    <MarkdownText
-                      text={emphasizeKeywords(
-                        item,
-                        studyData.review.keywords,
-                        emphasisMode
-                      )}
-                    />
-                  </li>
-                ))}
-              </ul>
-            </div>
+         <div className="right-column">
+  <div className="wrong-question-card">
+    <div className="card-title">Wrong Question OCR</div>
+    <div className="card-subtitle">
+      图片和 OCR 单独放在这里，专门给错题分析使用。
+    </div>
 
-            <div className="review-grid">
-              <div className="review-card">
-                <div className="review-card-title">Correct Answer</div>
-                <div className="review-card-content">
-                  <MarkdownText
-                    text={emphasizeKeywords(
-                      correctAnswerDisplay,
-                      studyData.review.keywords,
-                      emphasisMode
-                    )}
-                  />
-                </div>
-              </div>
+    <div className="wrong-question-grid">
+      <div className="image-block">
+        <div className="mini-title">Image</div>
 
-              <div className="review-card">
-                <div className="review-card-title">Answer Extraction</div>
-                <div className="review-card-content">
-                  <ol className="plain-list numbered">
-                    {studyData.review.answerExtraction.map((item, index) => (
-                      <li key={index}>
-                        <MarkdownText
-                          text={emphasizeKeywords(
-                            item,
-                            studyData.review.keywords,
-                            emphasisMode
-                          )}
-                        />
-                      </li>
-                    ))}
-                  </ol>
-                </div>
-              </div>
+        <div className="image-preview-box">
+          {imagePreview ? (
+            <img src={imagePreview} alt="Selected question" className="image-preview" />
+          ) : (
+            <div className="image-placeholder">No image selected</div>
+          )}
+        </div>
+
+        {ocrPreviewName ? (
+          <div className="ocr-file-name">Selected: {ocrPreviewName}</div>
+        ) : null}
+      </div>
+
+      <div className="ocr-block">
+        <div className="mini-title">OCR Text</div>
+
+        <textarea
+          className="ocr-textarea"
+          value={ocrText}
+          onChange={(e) => setOcrText(e.target.value)}
+          placeholder="OCR result will appear here. You can also edit it manually."
+        />
+
+        <div className="ocr-actions">
+          <label className="file-upload-pill action-btn secondary">
+            Select Image
+            <input type="file" accept="image/*" onChange={handleImageChange} />
+          </label>
+
+          <button
+            className="action-btn primary"
+            onClick={runOCR}
+            disabled={isScanning}
+          >
+            {isScanning ? "Reading..." : "Run OCR"}
+          </button>
+
+          <button className="action-btn secondary" onClick={saveWrongQuestion}>
+            Save Wrong Q
+          </button>
+
+          <button className="action-btn secondary" onClick={loadWrongQuestion}>
+            Load Saved Q
+          </button>
+
+          <button className="action-btn ghost" onClick={clearWrongQuestion}>
+            Clear OCR
+          </button>
+        </div>
+
+        {wrongQuestionSavedAt ? (
+          <div className="ocr-meta">Saved: {wrongQuestionSavedAt}</div>
+        ) : null}
+
+        {ocrStatus ? <div className="ocr-status">{ocrStatus}</div> : null}
+      </div>
+    </div>
+  </div>
+
+  <div className="review-grid">
+    <div className="review-card">
+      <div className="review-card-title">Correct Answer</div>
+      <div className="review-card-content">
+        <MarkdownText
+          text={emphasizeKeywords(
+            reviewCorrectAnswerDisplay,
+            reviewData.keywords,
+            emphasisMode
+          )}
+        />
+      </div>
+    </div>
+
+    <div className="review-card">
+      <div className="review-card-title">Answer Extraction</div>
+      <div className="review-card-content">
+        <ol className="plain-list numbered">
+          {reviewData.answerExtraction.map((item, index) => (
+            <li key={index}>
+              <MarkdownText
+                text={emphasizeKeywords(
+                  item,
+                  reviewData.keywords,
+                  emphasisMode
+                )}
+              />
+            </li>
+          ))}
+        </ol>
+      </div>
+    </div>
+
+    <div className="review-card">
+      <div className="review-card-title">Trap Point</div>
+      <div className="review-card-content">
+        <ul className="plain-list">
+          {reviewData.trapPoints.map((item, index) => (
+            <li key={index}>
+              <MarkdownText
+                text={emphasizeKeywords(
+                  item,
+                  reviewData.keywords,
+                  emphasisMode
+                )}
+              />
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+
+    <div className="review-card">
+      <div className="review-card-title">Memory Hook</div>
+      <div className="review-card-content">
+        <MarkdownText
+          text={emphasizeKeywords(
+            reviewData.memoryHook,
+            reviewData.keywords,
+            emphasisMode
+          )}
+        />
+      </div>
+    </div>
+  </div>
+</div>
 
               <div className="review-card">
                 <div className="review-card-title">Trap Point</div>
