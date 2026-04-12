@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import Tesseract from "tesseract.js";
 import "./App.css";
 
 const DIVISIONS = ["PA", "PPD", "PDD", "PCM", "PJM", "CE"];
@@ -38,7 +39,7 @@ Punch list review compares completed work against contract expectations.`
 };
 
 function splitSentences(text) {
-  return text
+  return (text || "")
     .replace(/\r/g, "")
     .replace(/\n+/g, " ")
     .split(/(?<=[.!?])\s+/)
@@ -47,7 +48,7 @@ function splitSentences(text) {
 }
 
 function splitLines(text) {
-  return text
+  return (text || "")
     .replace(/\r/g, "")
     .split("\n")
     .map((item) => item.trim())
@@ -73,7 +74,7 @@ function buildCaptureExtraction(text) {
 }
 
 function buildCaptureBulletPoints(text) {
-  const lower = text.toLowerCase();
+  const lower = (text || "").toLowerCase();
   const points = [];
 
   if (lower.includes("active system")) {
@@ -103,7 +104,7 @@ function buildCaptureBulletPoints(text) {
 }
 
 function buildCaptureLogicLinks(text) {
-  const lower = text.toLowerCase();
+  const lower = (text || "").toLowerCase();
   const links = [];
 
   if (
@@ -143,7 +144,7 @@ function buildCaptureLogicLinks(text) {
 }
 
 function buildCaptureLogicGraph(text) {
-  const lower = text.toLowerCase();
+  const lower = (text || "").toLowerCase();
   const nodes = [];
   const edges = [];
 
@@ -208,6 +209,116 @@ function buildCaptureLogicGraph(text) {
   return { nodes, edges };
 }
 
+function parseCorrectAnswer(text) {
+  const match = (text || "").match(/correct answer\s*[:\-]\s*(.+)/i);
+  if (!match) return null;
+
+  const raw = match[1].trim();
+  if (!raw) return null;
+
+  if (raw.includes("/") || raw.includes(",")) {
+    return raw
+      .split(/[\/,]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return raw;
+}
+
+function buildWrongQuestionSummary(text) {
+  const sentences = splitSentences(text);
+  if (sentences.length >= 2) return `${sentences[0]} ${sentences[1]}`;
+  if (sentences.length === 1) return sentences[0];
+  return "No wrong-question content yet.";
+}
+
+function buildWrongQuestionCorrectAnswer(text) {
+  const parsed = parseCorrectAnswer(text);
+  if (parsed) return parsed;
+  return "Not detected yet. Add a line like: Correct Answer: ...";
+}
+
+function buildWrongQuestionAnswerExtraction(text) {
+  const lower = (text || "").toLowerCase();
+
+  if (lower.includes("concrete") && lower.includes("cement") && lower.includes("sand")) {
+    return [
+      "Concrete is the final composite material.",
+      "Cement acts as the binder in the mix.",
+      "Sand is the fine aggregate used in the mixture."
+    ];
+  }
+
+  if (lower.includes("fabrication")) {
+    return [
+      "The question is asking about manufacturing a component.",
+      "Fabrication happens before delivery and installation on site.",
+      "This is about production, not on-site placement."
+    ];
+  }
+
+  const lines = splitLines(text).filter(
+    (item) =>
+      !/^question[:\-]/i.test(item) &&
+      !/^correct answer[:\-]/i.test(item)
+  );
+
+  if (lines.length >= 3) return lines.slice(0, 3);
+
+  const sentences = splitSentences(text);
+  if (sentences.length >= 3) return sentences.slice(0, 3);
+
+  return ["Add more wrong-question notes to generate answer extraction."];
+}
+
+function buildWrongQuestionTrapPoint(text) {
+  const lower = (text || "").toLowerCase();
+
+  if (lower.includes("concrete") && lower.includes("cement") && lower.includes("sand")) {
+    return [
+      "Mortar is tempting because it also contains cement and sand, but it is not the same as concrete.",
+      "Grout is wrong because it has a different purpose and composition."
+    ];
+  }
+
+  if (lower.includes("fabrication")) {
+    return [
+      "Installation is wrong because it refers to placing a finished component on site.",
+      "Assembly is tempting, but it refers to joining parts rather than manufacturing the component itself."
+    ];
+  }
+
+  return [
+    "Watch for answer choices that sound related but describe a different stage, material, or concept.",
+    "If two terms look similar, compare their exact role instead of choosing the more familiar word."
+  ];
+}
+
+function buildWrongQuestionMemoryHook(text) {
+  const lower = (text || "").toLowerCase();
+
+  if (lower.includes("concrete") && lower.includes("cement") && lower.includes("sand")) {
+    return "When material terms look similar, separate the binder, aggregate, and final composite first.";
+  }
+
+  if (lower.includes("fabrication")) {
+    return "Do not confuse making a component with installing it.";
+  }
+
+  return "Before choosing, ask what the question is really testing: material, process, system, or code idea.";
+}
+
+function buildWrongQuestionAnalysis(text) {
+  return {
+    summary: buildWrongQuestionSummary(text),
+    correctAnswer: buildWrongQuestionCorrectAnswer(text),
+    answerExtraction: buildWrongQuestionAnswerExtraction(text),
+    trapPoint: buildWrongQuestionTrapPoint(text),
+    memoryHook: buildWrongQuestionMemoryHook(text)
+  };
+}
+
 function readSavedNotesByTopic() {
   try {
     const raw = localStorage.getItem("savedNotesByTopic");
@@ -218,6 +329,23 @@ function readSavedNotesByTopic() {
   }
 }
 
+function readWrongQuestionFlashcards() {
+  try {
+    const raw = localStorage.getItem("wrongQuestionFlashcards");
+    if (!raw) return [];
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+function formatSavedAt(dateString) {
+  if (!dateString) return "";
+  const d = new Date(dateString);
+  if (Number.isNaN(d.getTime())) return dateString;
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${d.toLocaleTimeString()}`;
+}
+
 export default function App() {
   const [selectedDivision, setSelectedDivision] = useState("PPD");
   const [selectedRoom, setSelectedRoom] = useState("Site");
@@ -226,6 +354,16 @@ export default function App() {
   const [debouncedCaptureDraft, setDebouncedCaptureDraft] = useState("");
   const [savedNotesByTopic, setSavedNotesByTopic] = useState(() => readSavedNotesByTopic());
   const [captureStatus, setCaptureStatus] = useState("Ready.");
+
+  const [wrongQuestionImageFile, setWrongQuestionImageFile] = useState(null);
+  const [wrongQuestionImagePreview, setWrongQuestionImagePreview] = useState("");
+  const [wrongQuestionOcrText, setWrongQuestionOcrText] = useState("");
+  const [wrongQuestionDraftText, setWrongQuestionDraftText] = useState("");
+  const [wrongQuestionStatus, setWrongQuestionStatus] = useState("Ready.");
+  const [isRunningOcr, setIsRunningOcr] = useState(false);
+  const [wrongQuestionFlashcards, setWrongQuestionFlashcards] = useState(() =>
+    readWrongQuestionFlashcards()
+  );
 
   const currentTopicKey = useMemo(() => {
     return `${selectedDivision}::${selectedRoom}`;
@@ -248,6 +386,13 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("savedNotesByTopic", JSON.stringify(savedNotesByTopic));
   }, [savedNotesByTopic]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "wrongQuestionFlashcards",
+      JSON.stringify(wrongQuestionFlashcards)
+    );
+  }, [wrongQuestionFlashcards]);
 
   const savedTopicText = useMemo(() => {
     return savedNotesForTopic.map((item) => item.text).join("\n\n");
@@ -282,6 +427,10 @@ export default function App() {
   const captureLogicGraph = useMemo(() => {
     return buildCaptureLogicGraph(effectiveCaptureText);
   }, [effectiveCaptureText]);
+
+  const wrongQuestionAnalysis = useMemo(() => {
+    return buildWrongQuestionAnalysis(wrongQuestionDraftText);
+  }, [wrongQuestionDraftText]);
 
   const handleSaveNote = () => {
     const trimmed = captureDraft.trim();
@@ -330,6 +479,97 @@ export default function App() {
     setCaptureDraft("");
     setDebouncedCaptureDraft("");
     setCaptureStatus("Capture editor cleared.");
+  };
+
+  const handleWrongQuestionImageChange = (event) => {
+    const file = event.target.files?.[0] || null;
+
+    if (!file) {
+      setWrongQuestionImageFile(null);
+      setWrongQuestionImagePreview("");
+      setWrongQuestionStatus("No image selected.");
+      return;
+    }
+
+    setWrongQuestionImageFile(file);
+    setWrongQuestionStatus(`Selected image: ${file.name}`);
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setWrongQuestionImagePreview(
+        typeof reader.result === "string" ? reader.result : ""
+      );
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRunOcr = async () => {
+    if (!wrongQuestionImageFile) {
+      setWrongQuestionStatus("Please select an image first.");
+      return;
+    }
+
+    try {
+      setIsRunningOcr(true);
+      setWrongQuestionStatus("Reading image text...");
+
+      const result = await Tesseract.recognize(wrongQuestionImageFile, "eng");
+      const extractedText = result?.data?.text?.trim() || "";
+
+      if (!extractedText) {
+        setWrongQuestionStatus("No text detected from this image.");
+        return;
+      }
+
+      setWrongQuestionOcrText(extractedText);
+      setWrongQuestionDraftText(extractedText);
+      setWrongQuestionStatus("OCR completed. Text has been added to Wrong Question Text.");
+    } catch (error) {
+      console.error(error);
+      setWrongQuestionStatus("OCR failed. Try another image.");
+    } finally {
+      setIsRunningOcr(false);
+    }
+  };
+
+  const handleSaveWrongQuestion = () => {
+    const trimmed = wrongQuestionDraftText.trim();
+
+    if (!trimmed) {
+      setWrongQuestionStatus("Wrong Question Text is empty.");
+      return;
+    }
+
+    const newCard = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      topicKey: currentTopicKey,
+      imagePreview: wrongQuestionImagePreview,
+      ocrText: wrongQuestionOcrText,
+      editedText: trimmed,
+      summary: wrongQuestionAnalysis.summary,
+      correctAnswer: wrongQuestionAnalysis.correctAnswer,
+      answerExtraction: wrongQuestionAnalysis.answerExtraction,
+      trapPoint: wrongQuestionAnalysis.trapPoint,
+      memoryHook: wrongQuestionAnalysis.memoryHook,
+      savedAt: new Date().toISOString()
+    };
+
+    setWrongQuestionFlashcards((prev) => [newCard, ...prev]);
+    setWrongQuestionStatus("Wrong question saved as flashcard.");
+  };
+
+  const handleLoadSavedFlashcards = () => {
+    const loaded = readWrongQuestionFlashcards();
+    setWrongQuestionFlashcards(loaded);
+    setWrongQuestionStatus(`Loaded ${loaded.length} saved flashcards.`);
+  };
+
+  const handleClearWrongQuestion = () => {
+    setWrongQuestionImageFile(null);
+    setWrongQuestionImagePreview("");
+    setWrongQuestionOcrText("");
+    setWrongQuestionDraftText("");
+    setWrongQuestionStatus("Wrong question workspace cleared.");
   };
 
   return (
@@ -488,6 +728,8 @@ export default function App() {
             <div className="workspace-meta">
               <span>{selectedDivision}</span>
               <span>{selectedRoom}</span>
+              <span>{currentTopicKey}</span>
+              <span>Flashcards: {wrongQuestionFlashcards.length}</span>
             </div>
           </div>
 
@@ -497,10 +739,30 @@ export default function App() {
 
               <div className="subcard">
                 <div className="subcard-title">Image Upload</div>
-                <div className="image-placeholder">Image Preview</div>
-                <div className="button-row">
-                  <button>Upload Image</button>
-                  <button>Run OCR</button>
+                {wrongQuestionImagePreview ? (
+                  <img
+                    src={wrongQuestionImagePreview}
+                    alt="Wrong question preview"
+                    className="image-preview"
+                  />
+                ) : (
+                  <div className="image-placeholder">Image Preview</div>
+                )}
+
+                <div className="button-row" style={{ marginTop: 12 }}>
+                  <label className="upload-label">
+                    Upload Image
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleWrongQuestionImageChange}
+                      hidden
+                    />
+                  </label>
+
+                  <button onClick={handleRunOcr} disabled={isRunningOcr}>
+                    {isRunningOcr ? "Running OCR..." : "Run OCR"}
+                  </button>
                 </div>
               </div>
 
@@ -508,6 +770,8 @@ export default function App() {
                 <div className="subcard-title">Wrong Question Text</div>
                 <textarea
                   className="panel-textarea"
+                  value={wrongQuestionDraftText}
+                  onChange={(e) => setWrongQuestionDraftText(e.target.value)}
                   placeholder="这里输入错题内容，或者让 OCR 结果填进来。"
                 />
               </div>
@@ -518,27 +782,39 @@ export default function App() {
 
               <div className="subcard">
                 <div className="subcard-title">Summary</div>
-                <p>这里以后显示错题 summary。</p>
+                <p>{wrongQuestionAnalysis.summary}</p>
               </div>
 
               <div className="subcard">
                 <div className="subcard-title">Correct Answer</div>
-                <p>这里以后显示正确答案。</p>
+                {Array.isArray(wrongQuestionAnalysis.correctAnswer) ? (
+                  <p>{wrongQuestionAnalysis.correctAnswer.join(" / ")}</p>
+                ) : (
+                  <p>{wrongQuestionAnalysis.correctAnswer}</p>
+                )}
               </div>
 
               <div className="subcard">
                 <div className="subcard-title">Answer Extraction</div>
-                <p>这里以后显示答案提取。</p>
+                <ul>
+                  {wrongQuestionAnalysis.answerExtraction.map((item, index) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ul>
               </div>
 
               <div className="subcard">
                 <div className="subcard-title">Trap Point</div>
-                <p>这里以后显示错因分析。</p>
+                <ul>
+                  {wrongQuestionAnalysis.trapPoint.map((item, index) => (
+                    <li key={index}>{item}</li>
+                  ))}
+                </ul>
               </div>
 
               <div className="subcard">
                 <div className="subcard-title">Memory Hook</div>
-                <p>这里以后显示记忆提醒。</p>
+                <p>{wrongQuestionAnalysis.memoryHook}</p>
               </div>
             </div>
           </div>
@@ -546,17 +822,71 @@ export default function App() {
           <div className="panel wrong-question-controls">
             <div className="panel-title">Wrong Question Controls</div>
             <div className="button-row">
-              <button>Save Wrong Question</button>
-              <button>Load Saved Flashcards</button>
-              <button>Clear Wrong Question</button>
+              <button onClick={handleSaveWrongQuestion}>Save Wrong Question</button>
+              <button onClick={handleLoadSavedFlashcards}>Load Saved Flashcards</button>
+              <button onClick={handleClearWrongQuestion}>Clear Wrong Question</button>
             </div>
+            <div style={{ marginTop: 12 }}>{wrongQuestionStatus}</div>
           </div>
 
           <div className="panel flashcard-panel">
             <div className="panel-title">Wrong Question Flashcards</div>
-            <div className="flashcard-placeholder">
-              这里以后显示保存后的错题 flashcards
-            </div>
+
+            {wrongQuestionFlashcards.length === 0 ? (
+              <div className="flashcard-placeholder">
+                No saved flashcards yet.
+              </div>
+            ) : (
+              <div className="flashcard-list">
+                {wrongQuestionFlashcards.map((card) => (
+                  <div key={card.id} className="subcard">
+                    <div className="subcard-title">
+                      {card.topicKey} · {formatSavedAt(card.savedAt)}
+                    </div>
+
+                    {card.imagePreview ? (
+                      <img
+                        src={card.imagePreview}
+                        alt="Saved wrong question"
+                        className="image-preview"
+                        style={{ marginBottom: 12 }}
+                      />
+                    ) : null}
+
+                    <p><strong>Summary:</strong> {card.summary}</p>
+
+                    <p style={{ marginTop: 8 }}>
+                      <strong>Correct Answer:</strong>{" "}
+                      {Array.isArray(card.correctAnswer)
+                        ? card.correctAnswer.join(" / ")
+                        : card.correctAnswer}
+                    </p>
+
+                    <div style={{ marginTop: 8 }}>
+                      <strong>Answer Extraction:</strong>
+                      <ul>
+                        {card.answerExtraction.map((item, index) => (
+                          <li key={index}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <div style={{ marginTop: 8 }}>
+                      <strong>Trap Point:</strong>
+                      <ul>
+                        {card.trapPoint.map((item, index) => (
+                          <li key={index}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+
+                    <p style={{ marginTop: 8 }}>
+                      <strong>Memory Hook:</strong> {card.memoryHook}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </section>
       </main>
