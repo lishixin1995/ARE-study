@@ -205,3 +205,251 @@ body {
   display: grid;
   gap: 12px;
 }
+.compact-subcard {
+  padding: 14px;
+}
+
+.logic-forest {
+  display: grid;
+  gap: 14px;
+}
+
+.logic-tree-card {
+  border: 1px solid #dfe5f0;
+  border-radius: 14px;
+  padding: 14px;
+  background: #fbfcff;
+}
+
+.logic-tree-level {
+  position: relative;
+}
+
+.logic-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.logic-node-card {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid #d6ddeb;
+  background: #ffffff;
+  color: #172033;
+  font-weight: 600;
+}
+
+.logic-node-card.root {
+  background: #172033;
+  color: #ffffff;
+  border-color: #172033;
+}
+
+.logic-relation-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #eef3fb;
+  color: #5c6780;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.logic-children {
+  margin-left: 28px;
+  padding-left: 16px;
+  border-left: 2px solid #dfe5f0;
+  display: grid;
+  gap: 10px;
+}
+
+.analysis-mini-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.analysis-span-2 {
+  grid-column: span 2;
+}
+
+.upload-nav-pill {
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  user-select: none;
+}
+
+.upload-nav-pill:hover,
+.nav-action-pill:hover {
+  background: #eaf1ff;
+  border-color: #b8c8ea;
+}
+
+.nav-action-pill {
+  text-align: center !important;
+}
+
+.nav-action-pill:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wrongq-button-row {
+  align-items: center;
+}
+
+.wrong-question-textarea {
+  min-height: 180px;
+}
+
+.flashcard-carousel {
+  display: grid;
+  gap: 14px;
+}
+
+.flashcard-carousel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.flashcard-counter {
+  font-weight: 700;
+  color: #5f6c85;
+}
+
+.flashcard-slide {
+  border: 1px solid #dfe5f0;
+  border-radius: 16px;
+  padding: 14px;
+  background: #fbfcff;
+  display: grid;
+  gap: 14px;
+}
+
+.flashcard-slide-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.flashcard-meta {
+  font-size: 13px;
+  color: #5f6c85;
+  font-weight: 600;
+}
+
+.flashcard-thumb-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.flashcard-thumb {
+  width: 110px;
+  height: 74px;
+  object-fit: cover;
+  border-radius: 10px;
+  border: 1px solid #dfe5f0;
+  background: #f8faff;
+  cursor: zoom-in;
+}
+
+.tiny-link-btn {
+  border: none;
+  background: transparent;
+  color: #1d4ed8;
+  cursor: pointer;
+  padding: 0;
+  font-size: 12px;
+}
+
+.flashcard-question {
+  border: 1px solid #dfe5f0;
+  border-radius: 14px;
+  padding: 12px;
+  background: #ffffff;
+}
+
+.flashcard-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.image-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(12, 18, 31, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 1000;
+}
+
+.image-modal-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.image-modal-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  border: 1px solid #d6ddeb;
+  background: #ffffff;
+  cursor: pointer;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.image-modal-img {
+  max-width: 86vw;
+  max-height: 82vh;
+  object-fit: contain;
+  display: block;
+  border-radius: 10px;
+}
+
+.image-preview {
+  width: 100%;
+  max-height: 260px;
+  object-fit: contain;
+  border: 1px solid #dfe5f0;
+  border-radius: 14px;
+  background: #f8faff;
+}
+
+@media (max-width: 1000px) {
+  .analysis-mini-grid,
+  .flashcard-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .analysis-span-2 {
+    grid-column: span 1;
+  }
+
+  .flashcard-slide-top {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
