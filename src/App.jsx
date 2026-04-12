@@ -55,6 +55,15 @@ function splitLines(text) {
     .filter(Boolean);
 }
 
+function capitalizeWords(text) {
+  return (text || "")
+    .split(" ")
+    .map((word) =>
+      word ? word.charAt(0).toUpperCase() + word.slice(1) : word
+    )
+    .join(" ");
+}
+
 function buildCaptureSummary(text) {
   const sentences = splitSentences(text);
   if (sentences.length >= 2) return `${sentences[0]} ${sentences[1]}`;
@@ -97,6 +106,14 @@ function buildCaptureBulletPoints(text) {
     points.push("Trombe wall is a passive thermal strategy and needs space.");
   }
 
+  if (lower.includes("envelope")) {
+    points.push("Envelope design must coordinate water, air, vapor, and thermal control.");
+  }
+
+  if (lower.includes("documentation")) {
+    points.push("Documentation should coordinate dimensions, assemblies, and specifications clearly.");
+  }
+
   if (points.length) return points;
 
   const extraction = buildCaptureExtraction(text);
@@ -136,6 +153,18 @@ function buildCaptureLogicLinks(text) {
     links.push("Trombe Wall → example of → Passive Strategy");
   }
 
+  if (lower.includes("envelope detailing")) {
+    links.push("Envelope Detailing → controls → Water / Air / Vapor / Thermal Transfer");
+  }
+
+  if (lower.includes("material selection")) {
+    links.push("Material Selection → affects → Durability / Constructability / Maintenance");
+  }
+
+  if (lower.includes("documentation")) {
+    links.push("Documentation → coordinates → Assemblies / Dimensions / Specifications");
+  }
+
   if (!links.length) {
     links.push("Start typing or save notes to generate logic links.");
   }
@@ -143,70 +172,135 @@ function buildCaptureLogicLinks(text) {
   return links;
 }
 
-function buildCaptureLogicGraph(text) {
+function node(label, relation = null, children = []) {
+  return { label, relation, children };
+}
+
+function buildCaptureLogicForest(text) {
   const lower = (text || "").toLowerCase();
-  const nodes = [];
-  const edges = [];
+  const trees = [];
 
-  const addNode = (id, label) => {
-    if (!nodes.find((node) => node.id === id)) {
-      nodes.push({ id, label });
-    }
-  };
-
-  const addEdge = (from, to, label) => {
-    if (!edges.find((edge) => edge.from === from && edge.to === to && edge.label === label)) {
-      edges.push({ from, to, label });
-    }
-  };
-
-  if (lower.includes("passive system")) {
-    addNode("passive", "Passive System");
-  }
-
-  if (lower.includes("sun")) {
-    addNode("sun", "Sun");
-    addNode("passive", "Passive System");
-    addEdge("passive", "sun", "depends on");
-  }
-
-  if (lower.includes("air")) {
-    addNode("air", "Air");
-    addNode("passive", "Passive System");
-    addEdge("passive", "air", "depends on");
-  }
-
-  if (lower.includes("wind")) {
-    addNode("wind", "Wind");
-    addNode("passive", "Passive System");
-    addEdge("passive", "wind", "depends on");
-  }
+  const systemsChildren = [];
 
   if (lower.includes("active system") || lower.includes("mechanical equipment")) {
-    addNode("active", "Active System");
-    addNode("mechanical", "Mechanical Equipment");
-    addEdge("active", "mechanical", "relies on");
+    const activeChildren = [];
+
+    if (lower.includes("mechanical equipment")) {
+      activeChildren.push(node("Mechanical Equipment", "relies on"));
+    }
+
+    if (lower.includes("more energy") || lower.includes("energy")) {
+      activeChildren.push(node("Higher Energy Use", "effect"));
+    }
+
+    systemsChildren.push(node("Active System", "category", activeChildren));
   }
 
-  if (lower.includes("cold climate") || lower.includes("heat loss")) {
-    addNode("cold", "Cold Climate");
-    addNode("heatloss", "Reduce Heat Loss");
-    addEdge("cold", "heatloss", "goal");
+  if (
+    lower.includes("passive system") ||
+    lower.includes("sun") ||
+    lower.includes("air") ||
+    lower.includes("wind")
+  ) {
+    const passiveChildren = [];
+
+    if (lower.includes("sun")) passiveChildren.push(node("Sun", "depends on"));
+    if (lower.includes("air")) passiveChildren.push(node("Air", "depends on"));
+    if (lower.includes("wind")) passiveChildren.push(node("Wind", "depends on"));
+
+    systemsChildren.push(node("Passive System", "category", passiveChildren));
   }
 
-  if (lower.includes("hot climate") || lower.includes("heat gain")) {
-    addNode("hot", "Hot Climate");
-    addNode("heatgain", "Control Heat Gain");
-    addEdge("hot", "heatgain", "goal");
+  if (systemsChildren.length) {
+    trees.push(node("Building Systems", null, systemsChildren));
   }
+
+  const climateChildren = [];
+
+  if (lower.includes("cold climate") || lower.includes("heat loss") || lower.includes("solar heat")) {
+    const coldChildren = [];
+    if (lower.includes("heat loss")) coldChildren.push(node("Reduce Heat Loss", "goal"));
+    if (lower.includes("solar heat")) coldChildren.push(node("Gain Solar Heat", "goal"));
+    climateChildren.push(node("Cold Climate", "category", coldChildren));
+  }
+
+  if (lower.includes("hot climate") || lower.includes("heat gain") || lower.includes("ventilation")) {
+    const hotChildren = [];
+    if (lower.includes("heat gain")) hotChildren.push(node("Control Heat Gain", "goal"));
+    if (lower.includes("ventilation")) hotChildren.push(node("Natural Ventilation", "strategy"));
+    climateChildren.push(node("Hot Climate", "category", hotChildren));
+  }
+
+  if (climateChildren.length) {
+    trees.push(node("Climate Strategy", null, climateChildren));
+  }
+
+  const exampleChildren = [];
 
   if (lower.includes("trombe wall")) {
-    addNode("trombe", "Trombe Wall");
-    addNode("passiveStrategy", "Passive Strategy");
-    addEdge("trombe", "passiveStrategy", "example of");
+    const trombeChildren = [];
+    if (lower.includes("stabilize temperature")) {
+      trombeChildren.push(node("Stabilize Temperature", "effect"));
+    }
+    if (lower.includes("more space") || lower.includes("takes more space")) {
+      trombeChildren.push(node("Takes More Space", "tradeoff"));
+    }
+    exampleChildren.push(node("Trombe Wall", "example", trombeChildren));
   }
 
-  return { nodes, edges };
+  if (exampleChildren.length) {
+    trees.push(node("Examples / Tradeoffs", null, exampleChildren));
+  }
+
+  const envelopeChildren = [];
+
+  if (lower.includes("envelope detailing")) {
+    const detailChildren = [];
+    if (lower.includes("water")) detailChildren.push(node("Water", "controls"));
+    if (lower.includes("air")) detailChildren.push(node("Air", "controls"));
+    if (lower.includes("vapor")) detailChildren.push(node("Vapor", "controls"));
+    if (lower.includes("thermal transfer")) {
+      detailChildren.push(node("Thermal Transfer", "controls"));
+    }
+    envelopeChildren.push(node("Envelope Detailing", "category", detailChildren));
+  }
+
+  if (lower.includes("material selection")) {
+    const materialChildren = [];
+    if (lower.includes("durability")) materialChildren.push(node("Durability", "affects"));
+    if (lower.includes("constructability")) {
+      materialChildren.push(node("Constructability", "affects"));
+    }
+    if (lower.includes("maintenance")) materialChildren.push(node("Maintenance", "affects"));
+    envelopeChildren.push(node("Material Selection", "category", materialChildren));
+  }
+
+  if (lower.includes("documentation")) {
+    const documentationChildren = [];
+    if (lower.includes("assemblies")) documentationChildren.push(node("Assemblies", "coordinates"));
+    if (lower.includes("dimensions")) documentationChildren.push(node("Dimensions", "coordinates"));
+    if (lower.includes("specifications")) {
+      documentationChildren.push(node("Specifications", "coordinates"));
+    }
+    envelopeChildren.push(node("Documentation", "category", documentationChildren));
+  }
+
+  if (envelopeChildren.length) {
+    trees.push(node("Envelope / Documentation", null, envelopeChildren));
+  }
+
+  if (!trees.length) {
+    const fallbackLines = buildCaptureExtraction(text).slice(0, 3);
+    trees.push(
+      node(
+        "Key Concepts",
+        null,
+        fallbackLines.map((line) => node(line, "note"))
+      )
+    );
+  }
+
+  return trees;
 }
 
 function parseCorrectAnswer(text) {
@@ -224,6 +318,21 @@ function parseCorrectAnswer(text) {
   }
 
   return raw;
+}
+
+function buildWrongQuestionQuestionText(text) {
+  const lines = splitLines(text).filter(
+    (line) =>
+      !/^correct answer[:\-]/i.test(line) &&
+      !/^summary[:\-]/i.test(line) &&
+      !/^trap point[:\-]/i.test(line) &&
+      !/^memory hook[:\-]/i.test(line) &&
+      !/^reference[:\-]/i.test(line)
+  );
+
+  if (!lines.length) return "No question text yet.";
+
+  return lines.slice(0, 6).join(" ");
 }
 
 function buildWrongQuestionSummary(text) {
@@ -311,6 +420,7 @@ function buildWrongQuestionMemoryHook(text) {
 
 function buildWrongQuestionAnalysis(text) {
   return {
+    questionText: buildWrongQuestionQuestionText(text),
     summary: buildWrongQuestionSummary(text),
     correctAnswer: buildWrongQuestionCorrectAnswer(text),
     answerExtraction: buildWrongQuestionAnswerExtraction(text),
@@ -346,6 +456,32 @@ function formatSavedAt(dateString) {
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${d.toLocaleTimeString()}`;
 }
 
+function LogicTreeNode({ tree, depth = 0 }) {
+  return (
+    <div className={`logic-tree-level depth-${depth}`}>
+      <div className="logic-tree-row">
+        {tree.relation ? (
+          <span className={`logic-relation-pill relation-${tree.relation.replace(/\s+/g, "-")}`}>
+            {capitalizeWords(tree.relation)}
+          </span>
+        ) : null}
+
+        <div className={`logic-node-card ${depth === 0 ? "root" : ""}`}>
+          {tree.label}
+        </div>
+      </div>
+
+      {tree.children?.length ? (
+        <div className="logic-children">
+          {tree.children.map((child, index) => (
+            <LogicTreeNode key={`${child.label}-${index}`} tree={child} depth={depth + 1} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export default function App() {
   const [selectedDivision, setSelectedDivision] = useState("PPD");
   const [selectedRoom, setSelectedRoom] = useState("Site");
@@ -364,6 +500,8 @@ export default function App() {
   const [wrongQuestionFlashcards, setWrongQuestionFlashcards] = useState(() =>
     readWrongQuestionFlashcards()
   );
+  const [flashcardIndex, setFlashcardIndex] = useState(0);
+  const [expandedImage, setExpandedImage] = useState("");
 
   const currentTopicKey = useMemo(() => {
     return `${selectedDivision}::${selectedRoom}`;
@@ -393,6 +531,12 @@ export default function App() {
       JSON.stringify(wrongQuestionFlashcards)
     );
   }, [wrongQuestionFlashcards]);
+
+  useEffect(() => {
+    if (flashcardIndex > wrongQuestionFlashcards.length - 1) {
+      setFlashcardIndex(Math.max(0, wrongQuestionFlashcards.length - 1));
+    }
+  }, [wrongQuestionFlashcards, flashcardIndex]);
 
   const savedTopicText = useMemo(() => {
     return savedNotesForTopic.map((item) => item.text).join("\n\n");
@@ -424,13 +568,15 @@ export default function App() {
     return buildCaptureLogicLinks(effectiveCaptureText);
   }, [effectiveCaptureText]);
 
-  const captureLogicGraph = useMemo(() => {
-    return buildCaptureLogicGraph(effectiveCaptureText);
+  const captureLogicForest = useMemo(() => {
+    return buildCaptureLogicForest(effectiveCaptureText);
   }, [effectiveCaptureText]);
 
   const wrongQuestionAnalysis = useMemo(() => {
     return buildWrongQuestionAnalysis(wrongQuestionDraftText);
   }, [wrongQuestionDraftText]);
+
+  const currentFlashcard = wrongQuestionFlashcards[flashcardIndex] || null;
 
   const handleSaveNote = () => {
     const trimmed = captureDraft.trim();
@@ -546,6 +692,7 @@ export default function App() {
       imagePreview: wrongQuestionImagePreview,
       ocrText: wrongQuestionOcrText,
       editedText: trimmed,
+      questionText: wrongQuestionAnalysis.questionText,
       summary: wrongQuestionAnalysis.summary,
       correctAnswer: wrongQuestionAnalysis.correctAnswer,
       answerExtraction: wrongQuestionAnalysis.answerExtraction,
@@ -555,12 +702,14 @@ export default function App() {
     };
 
     setWrongQuestionFlashcards((prev) => [newCard, ...prev]);
+    setFlashcardIndex(0);
     setWrongQuestionStatus("Wrong question saved as flashcard.");
   };
 
   const handleLoadSavedFlashcards = () => {
     const loaded = readWrongQuestionFlashcards();
     setWrongQuestionFlashcards(loaded);
+    setFlashcardIndex(0);
     setWrongQuestionStatus(`Loaded ${loaded.length} saved flashcards.`);
   };
 
@@ -570,6 +719,16 @@ export default function App() {
     setWrongQuestionOcrText("");
     setWrongQuestionDraftText("");
     setWrongQuestionStatus("Wrong question workspace cleared.");
+  };
+
+  const handlePrevFlashcard = () => {
+    setFlashcardIndex((prev) => Math.max(0, prev - 1));
+  };
+
+  const handleNextFlashcard = () => {
+    setFlashcardIndex((prev) =>
+      Math.min(wrongQuestionFlashcards.length - 1, prev + 1)
+    );
   };
 
   return (
@@ -653,12 +812,12 @@ export default function App() {
             <div className="panel capture-analysis-panel">
               <div className="panel-title">Capture Analysis</div>
 
-              <div className="subcard">
+              <div className="subcard compact-subcard">
                 <div className="subcard-title">Summary</div>
                 <p>{captureSummary}</p>
               </div>
 
-              <div className="subcard">
+              <div className="subcard compact-subcard">
                 <div className="subcard-title">Extraction</div>
                 <ul>
                   {captureExtraction.map((item, index) => (
@@ -667,7 +826,7 @@ export default function App() {
                 </ul>
               </div>
 
-              <div className="subcard">
+              <div className="subcard compact-subcard">
                 <div className="subcard-title">Bullet Points</div>
                 <ul>
                   {captureBulletPoints.map((item, index) => (
@@ -676,7 +835,7 @@ export default function App() {
                 </ul>
               </div>
 
-              <div className="subcard">
+              <div className="subcard compact-subcard">
                 <div className="subcard-title">Logic Links</div>
                 <ul>
                   {captureLogicLinks.map((item, index) => (
@@ -689,33 +848,17 @@ export default function App() {
             <div className="panel live-logic-graph-panel">
               <div className="panel-title">Live Logic Image</div>
 
-              {captureLogicGraph.nodes.length === 0 ? (
+              {captureLogicForest.length === 0 ? (
                 <div className="logic-graph-placeholder">
                   Start typing or save notes in this topic to generate the logic graph.
                 </div>
               ) : (
-                <div>
-                  <div className="subcard">
-                    <div className="subcard-title">Nodes</div>
-                    <div className="button-row">
-                      {captureLogicGraph.nodes.map((node) => (
-                        <button key={node.id} type="button">
-                          {node.label}
-                        </button>
-                      ))}
+                <div className="logic-forest">
+                  {captureLogicForest.map((tree, index) => (
+                    <div key={`${tree.label}-${index}`} className="logic-tree-card">
+                      <LogicTreeNode tree={tree} />
                     </div>
-                  </div>
-
-                  <div className="subcard">
-                    <div className="subcard-title">Edges</div>
-                    <ul>
-                      {captureLogicGraph.edges.map((edge, index) => (
-                        <li key={`${edge.from}-${edge.to}-${index}`}>
-                          {edge.from} → {edge.label} → {edge.to}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -737,7 +880,7 @@ export default function App() {
             <div className="panel wrong-question-input-panel">
               <div className="panel-title">Wrong Question Input</div>
 
-              <div className="subcard">
+              <div className="subcard compact-subcard">
                 <div className="subcard-title">Image Upload</div>
                 {wrongQuestionImagePreview ? (
                   <img
@@ -749,8 +892,8 @@ export default function App() {
                   <div className="image-placeholder">Image Preview</div>
                 )}
 
-                <div className="button-row" style={{ marginTop: 12 }}>
-                  <label className="upload-label">
+                <div className="button-row wrongq-button-row" style={{ marginTop: 12 }}>
+                  <label className="nav-pill upload-nav-pill">
                     Upload Image
                     <input
                       type="file"
@@ -760,16 +903,21 @@ export default function App() {
                     />
                   </label>
 
-                  <button onClick={handleRunOcr} disabled={isRunningOcr}>
+                  <button
+                    className="nav-pill nav-action-pill"
+                    onClick={handleRunOcr}
+                    disabled={isRunningOcr}
+                    type="button"
+                  >
                     {isRunningOcr ? "Running OCR..." : "Run OCR"}
                   </button>
                 </div>
               </div>
 
-              <div className="subcard">
+              <div className="subcard compact-subcard">
                 <div className="subcard-title">Wrong Question Text</div>
                 <textarea
-                  className="panel-textarea"
+                  className="panel-textarea wrong-question-textarea"
                   value={wrongQuestionDraftText}
                   onChange={(e) => setWrongQuestionDraftText(e.target.value)}
                   placeholder="这里输入错题内容，或者让 OCR 结果填进来。"
@@ -780,41 +928,43 @@ export default function App() {
             <div className="panel wrong-question-analysis-panel">
               <div className="panel-title">Wrong Question Analysis</div>
 
-              <div className="subcard">
-                <div className="subcard-title">Summary</div>
-                <p>{wrongQuestionAnalysis.summary}</p>
-              </div>
+              <div className="analysis-mini-grid">
+                <div className="subcard compact-subcard">
+                  <div className="subcard-title">Summary</div>
+                  <p>{wrongQuestionAnalysis.summary}</p>
+                </div>
 
-              <div className="subcard">
-                <div className="subcard-title">Correct Answer</div>
-                {Array.isArray(wrongQuestionAnalysis.correctAnswer) ? (
-                  <p>{wrongQuestionAnalysis.correctAnswer.join(" / ")}</p>
-                ) : (
-                  <p>{wrongQuestionAnalysis.correctAnswer}</p>
-                )}
-              </div>
+                <div className="subcard compact-subcard">
+                  <div className="subcard-title">Correct Answer</div>
+                  {Array.isArray(wrongQuestionAnalysis.correctAnswer) ? (
+                    <p>{wrongQuestionAnalysis.correctAnswer.join(" / ")}</p>
+                  ) : (
+                    <p>{wrongQuestionAnalysis.correctAnswer}</p>
+                  )}
+                </div>
 
-              <div className="subcard">
-                <div className="subcard-title">Answer Extraction</div>
-                <ul>
-                  {wrongQuestionAnalysis.answerExtraction.map((item, index) => (
-                    <li key={index}>{item}</li>
-                  ))}
-                </ul>
-              </div>
+                <div className="subcard compact-subcard analysis-span-2">
+                  <div className="subcard-title">Answer Extraction</div>
+                  <ul>
+                    {wrongQuestionAnalysis.answerExtraction.map((item, index) => (
+                      <li key={index}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
 
-              <div className="subcard">
-                <div className="subcard-title">Trap Point</div>
-                <ul>
-                  {wrongQuestionAnalysis.trapPoint.map((item, index) => (
-                    <li key={index}>{item}</li>
-                  ))}
-                </ul>
-              </div>
+                <div className="subcard compact-subcard">
+                  <div className="subcard-title">Trap Point</div>
+                  <ul>
+                    {wrongQuestionAnalysis.trapPoint.map((item, index) => (
+                      <li key={index}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
 
-              <div className="subcard">
-                <div className="subcard-title">Memory Hook</div>
-                <p>{wrongQuestionAnalysis.memoryHook}</p>
+                <div className="subcard compact-subcard">
+                  <div className="subcard-title">Memory Hook</div>
+                  <p>{wrongQuestionAnalysis.memoryHook}</p>
+                </div>
               </div>
             </div>
           </div>
@@ -837,59 +987,108 @@ export default function App() {
                 No saved flashcards yet.
               </div>
             ) : (
-              <div className="flashcard-list">
-                {wrongQuestionFlashcards.map((card) => (
-                  <div key={card.id} className="subcard">
-                    <div className="subcard-title">
-                      {card.topicKey} · {formatSavedAt(card.savedAt)}
-                    </div>
+              <div className="flashcard-carousel">
+                <div className="flashcard-carousel-header">
+                  <button
+                    onClick={handlePrevFlashcard}
+                    disabled={flashcardIndex === 0}
+                  >
+                    ← Previous
+                  </button>
 
-                    {card.imagePreview ? (
-                      <img
-                        src={card.imagePreview}
-                        alt="Saved wrong question"
-                        className="image-preview"
-                        style={{ marginBottom: 12 }}
-                      />
-                    ) : null}
-
-                    <p><strong>Summary:</strong> {card.summary}</p>
-
-                    <p style={{ marginTop: 8 }}>
-                      <strong>Correct Answer:</strong>{" "}
-                      {Array.isArray(card.correctAnswer)
-                        ? card.correctAnswer.join(" / ")
-                        : card.correctAnswer}
-                    </p>
-
-                    <div style={{ marginTop: 8 }}>
-                      <strong>Answer Extraction:</strong>
-                      <ul>
-                        {card.answerExtraction.map((item, index) => (
-                          <li key={index}>{item}</li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    <div style={{ marginTop: 8 }}>
-                      <strong>Trap Point:</strong>
-                      <ul>
-                        {card.trapPoint.map((item, index) => (
-                          <li key={index}>{item}</li>
-                        ))}
-                      </ul>
-                    </div>
-
-                    <p style={{ marginTop: 8 }}>
-                      <strong>Memory Hook:</strong> {card.memoryHook}
-                    </p>
+                  <div className="flashcard-counter">
+                    {flashcardIndex + 1} / {wrongQuestionFlashcards.length}
                   </div>
-                ))}
+
+                  <button
+                    onClick={handleNextFlashcard}
+                    disabled={flashcardIndex === wrongQuestionFlashcards.length - 1}
+                  >
+                    Next →
+                  </button>
+                </div>
+
+                {currentFlashcard ? (
+                  <div className="flashcard-slide">
+                    <div className="flashcard-slide-top">
+                      <div className="flashcard-meta">
+                        {currentFlashcard.topicKey} · {formatSavedAt(currentFlashcard.savedAt)}
+                      </div>
+
+                      {currentFlashcard.imagePreview ? (
+                        <div className="flashcard-thumb-wrap">
+                          <img
+                            src={currentFlashcard.imagePreview}
+                            alt="Wrong question thumbnail"
+                            className="flashcard-thumb"
+                            onClick={() => setExpandedImage(currentFlashcard.imagePreview)}
+                          />
+                          <button
+                            className="tiny-link-btn"
+                            onClick={() => setExpandedImage(currentFlashcard.imagePreview)}
+                          >
+                            View Image
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="flashcard-question">
+                      <div className="subcard-title">Question</div>
+                      <p>{currentFlashcard.questionText}</p>
+                    </div>
+
+                    <div className="flashcard-detail-grid">
+                      <div className="subcard compact-subcard">
+                        <div className="subcard-title">Correct Answer</div>
+                        {Array.isArray(currentFlashcard.correctAnswer) ? (
+                          <p>{currentFlashcard.correctAnswer.join(" / ")}</p>
+                        ) : (
+                          <p>{currentFlashcard.correctAnswer}</p>
+                        )}
+                      </div>
+
+                      <div className="subcard compact-subcard">
+                        <div className="subcard-title">Memory Hook</div>
+                        <p>{currentFlashcard.memoryHook}</p>
+                      </div>
+
+                      <div className="subcard compact-subcard analysis-span-2">
+                        <div className="subcard-title">Answer Extraction</div>
+                        <ul>
+                          {currentFlashcard.answerExtraction.map((item, index) => (
+                            <li key={index}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+
+                      <div className="subcard compact-subcard analysis-span-2">
+                        <div className="subcard-title">Trap Point</div>
+                        <ul>
+                          {currentFlashcard.trapPoint.map((item, index) => (
+                            <li key={index}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             )}
           </div>
         </section>
       </main>
+
+      {expandedImage ? (
+        <div className="image-modal-backdrop" onClick={() => setExpandedImage("")}>
+          <div className="image-modal-content" onClick={(e) => e.stopPropagation()}>
+            <button className="image-modal-close" onClick={() => setExpandedImage("")}>
+              ×
+            </button>
+            <img src={expandedImage} alt="Expanded wrong question" className="image-modal-img" />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
