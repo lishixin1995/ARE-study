@@ -8,23 +8,15 @@ const DIVISIONS = ["PA", "PPD", "PDD", "PCM", "PJM", "CE"];
 
 const ROOMS_BY_DIVISION = {
   PA: ["Site", "Zoning", "Code", "Programming"],
-  PPD: ["Site", "Climate", "Structure", "Systems"],
+  PPD: ["Site", "Climate", "Structure", "Mechanical", "Envelope", "Codes"],
   PDD: ["Envelope", "Detailing", "Materials", "Documentation"],
   PCM: ["Practice", "Risk", "Contracts", "Finance"],
   PJM: ["Team", "Schedule", "CA", "Delivery"],
   CE: ["Site Visit", "Submittals", "RFI", "Punch List"]
 };
 
-const DEFAULT_NOTES = `Building system: 
-1. Active system relies on mechanical equipment and uses more energy.
-2. Passive system depends on sun, air, and wind flow. It has less direct control, but can improve sustainability.
-
-In cold climates, reduce heat loss, block cold wind, and gain more solar energy.
-In hot climates, control heat gain, provide shading, and improve natural ventilation.
-
-Passive solar heating can use direct gain, thermal mass, and shading control at night.
-Concrete and stone can store heat.
-Trombe walls provide stable indoor temperature, but take up more space.`;
+const DEFAULT_NOTES =
+  "Building system: active system relies on mechanical equipment and uses more energy. Passive system relies on sun, air, and wind flow. In cold climate, reduce heat loss and gain solar heat. In hot climate, control heat gain and optimize natural ventilation. Trombe wall helps stabilize temperature but takes more space.";
 
 const QUESTION_SAMPLE = `Question:
 Which material term should be identified as the final composite material in a basic concrete mixture?
@@ -127,7 +119,6 @@ function detectKeywords(text) {
   ];
 
   const lower = text.toLowerCase();
-
   return bank.filter((item) => lower.includes(item.toLowerCase()));
 }
 
@@ -147,35 +138,138 @@ function parseCorrectAnswer(text) {
   return raw;
 }
 
-function buildAnswerExtraction(text) {
+function buildSummary(text) {
   const sentences = splitSentences(text);
+  if (sentences.length >= 2) return `${sentences[0]} ${sentences[1]}`;
+  if (sentences.length === 1) return sentences[0];
+  return "当前还没有足够内容生成 summary。";
+}
 
-  if (sentences.length >= 3) {
-    return sentences.slice(0, 3);
+function buildKeyPoints(text) {
+  const lines = splitLines(text);
+  const filtered = lines.filter(
+    (item) =>
+      !/^question[:\-]/i.test(item) &&
+      !/^correct answer[:\-]/i.test(item) &&
+      !/^notes[:\-]/i.test(item)
+  );
+
+  if (filtered.length >= 4) return filtered.slice(0, 4);
+
+  const sentences = splitSentences(text);
+  if (sentences.length >= 4) return sentences.slice(0, 4);
+
+  return ["继续补充内容后，这里会自动提取关键点。"];
+}
+
+function buildSystemCards(text) {
+  const lower = text.toLowerCase();
+
+  let activeSystem = "依赖机械设备、控制更强，但通常能耗更高。";
+  let passiveSystem = "依赖太阳、空气和风等自然条件，通常更节能。";
+  let climateCompare = "寒冷气候强调减少热损失，炎热气候强调控制热增益与通风。";
+  let trombeWall = "一种被动式采暖策略，可稳定温度，但占空间。";
+
+  if (lower.includes("active system")) {
+    activeSystem = "Active system relies on mechanical equipment and usually uses more energy.";
   }
+
+  if (lower.includes("passive system")) {
+    passiveSystem = "Passive system depends on sun, air, and wind flow rather than heavy equipment.";
+  }
+
+  if (lower.includes("cold climate") || lower.includes("hot climate")) {
+    climateCompare =
+      "Cold climate design usually reduces heat loss first, while hot climate design controls heat gain and improves ventilation.";
+  }
+
+  if (lower.includes("trombe wall")) {
+    trombeWall =
+      "Trombe wall is a passive thermal strategy that stabilizes indoor temperature, but it needs more space.";
+  }
+
+  return { activeSystem, passiveSystem, climateCompare, trombeWall };
+}
+
+function buildLogicLinks(text) {
+  const lower = text.toLowerCase();
+  const links = [];
+
+  if (lower.includes("passive system") || lower.includes("sun") || lower.includes("wind")) {
+    links.push("Passive System → depends on → Sun / Air / Wind");
+  }
+
+  if (lower.includes("active system") || lower.includes("mechanical equipment")) {
+    links.push("Active System → relies on → Mechanical Equipment");
+  }
+
+  if (lower.includes("cold climate") || lower.includes("heat loss")) {
+    links.push("Cold Climate → goal → Reduce Heat Loss");
+  }
+
+  if (lower.includes("hot climate") || lower.includes("heat gain")) {
+    links.push("Hot Climate → goal → Control Heat Gain");
+  }
+
+  if (lower.includes("cold climate") && lower.includes("hot climate")) {
+    links.push("Cold Climate ↔ contrasts with ↔ Hot Climate");
+  }
+
+  if (lower.includes("trombe wall")) {
+    links.push("Trombe Wall → example of → Passive Strategy");
+  }
+
+  if (!links.length) {
+    links.push("先判断概念依赖什么：设备、气候、材料，还是 code 逻辑。");
+  }
+
+  return links;
+}
+
+function buildSuggestedPlacement(selectedDivision) {
+  return [
+    `${selectedDivision} → Site`,
+    `${selectedDivision} → Core Concepts`,
+    `${selectedDivision} → Review`
+  ];
+}
+
+function buildAnswerExtraction(text) {
+  const lower = text.toLowerCase();
+
+  if (lower.includes("concrete") && lower.includes("cement") && lower.includes("sand")) {
+    return [
+      "Concrete is the final composite material.",
+      "Cement is the binder in the mix.",
+      "Sand is the fine aggregate used in the mixture."
+    ];
+  }
+
+  if (lower.includes("fabrication")) {
+    return [
+      "The question is asking about manufacturing a component.",
+      "Fabrication happens before delivery and installation on site.",
+      "This is about production, not on-site placement."
+    ];
+  }
+
+  const sentences = splitSentences(text);
+  if (sentences.length >= 3) return sentences.slice(0, 3);
 
   const lines = splitLines(text);
-  if (lines.length >= 3) {
-    return lines.slice(0, 3);
-  }
-
-  if (lines.length > 0) return lines;
+  if (lines.length >= 3) return lines.slice(0, 3);
 
   return [
-    "Identify the core concept first.",
-    "Separate similar-looking technical terms.",
-    "Use the wording in the prompt to eliminate close distractors."
+    "先抓题干真正问的概念。",
+    "再把相近术语分开。",
+    "最后用关键词排除干扰项。"
   ];
 }
 
 function buildTrapPoints(text) {
   const lower = text.toLowerCase();
 
-  if (
-    lower.includes("concrete") &&
-    lower.includes("cement") &&
-    lower.includes("sand")
-  ) {
+  if (lower.includes("concrete") && lower.includes("cement") && lower.includes("sand")) {
     return [
       "Mortar is tempting because it also contains cement and sand, but it is not the same as concrete.",
       "Grout is wrong because it has a different purpose and composition."
@@ -189,27 +283,16 @@ function buildTrapPoints(text) {
     ];
   }
 
-  if (lower.includes("active system") || lower.includes("passive system")) {
-    return [
-      "Do not confuse passive strategies with mechanical control systems.",
-      "A term can sound energy-related and still belong to a different system category."
-    ];
-  }
-
   return [
-    "Watch for answer choices that sound related but happen at a different stage.",
-    "Eliminate options that describe a similar process rather than the exact concept asked in the prompt."
+    "注意那些看起来相关、但其实属于不同阶段的选项。",
+    "先排除描述相似过程、而不是题目真正概念的答案。"
   ];
 }
 
 function buildMemoryHook(text) {
   const lower = text.toLowerCase();
 
-  if (
-    lower.includes("concrete") &&
-    lower.includes("cement") &&
-    lower.includes("sand")
-  ) {
+  if (lower.includes("concrete") && lower.includes("cement") && lower.includes("sand")) {
     return "When material terms look similar, separate the binder, aggregate, and final composite first.";
   }
 
@@ -221,155 +304,38 @@ function buildMemoryHook(text) {
     return "When systems are easy to mix up, first ask whether the strategy depends on equipment or climate.";
   }
 
-  if (lower.includes("code minimum") || lower.includes("best practice")) {
-    return "For code questions, separate minimum requirement from best-practice language first.";
-  }
-
-  return "Start by identifying the exact concept the prompt is testing before comparing similar terms.";
-}
-
-function buildLogicLinks(text) {
-  const lower = text.toLowerCase();
-  const links = [];
-
-  if (
-    lower.includes("active system") ||
-    lower.includes("mechanical equipment")
-  ) {
-    links.push("Active system depends on mechanical equipment and usually uses more energy.");
-  }
-
-  if (
-    lower.includes("passive system") ||
-    lower.includes("sun") ||
-    lower.includes("wind") ||
-    lower.includes("natural ventilation")
-  ) {
-    links.push("Passive strategy depends on sun, air, wind, shading, or building form rather than heavy equipment.");
-  }
-
-  if (lower.includes("concrete") || lower.includes("stone") || lower.includes("thermal mass")) {
-    links.push("Concrete, stone, and thermal mass connect to heat storage and delayed temperature change.");
-  }
-
-  if (lower.includes("heat gain") || lower.includes("shading")) {
-    links.push("Heat gain control and shading usually work together in hot-climate strategies.");
-  }
-
-  if (lower.includes("heat loss") || lower.includes("cold")) {
-    links.push("Cold-climate design usually prioritizes reducing heat loss before adding more systems.");
-  }
-
-  if (links.length === 0) {
-    links.push("Ask what the system relies on first: equipment, climate, material behavior, or code logic.");
-  }
-
-  return links;
-}
-
-function buildSummary(text) {
-  const sentences = splitSentences(text);
-
-  if (sentences.length >= 2) {
-    return `${sentences[0]} ${sentences[1]}`;
-  }
-
-  if (sentences.length === 1) {
-    return sentences[0];
-  }
-
-  return "Add notes or paste a question to generate a summary.";
-}
-
-function buildKeyPoints(text) {
-  const lines = splitLines(text);
-
-  const filtered = lines.filter(
-    (item) =>
-      !/^question[:\-]/i.test(item) &&
-      !/^correct answer[:\-]/i.test(item) &&
-      !/^notes[:\-]/i.test(item)
-  );
-
-  if (filtered.length >= 4) {
-    return filtered.slice(0, 4);
-  }
-
-  const sentences = splitSentences(text);
-  if (sentences.length >= 4) {
-    return sentences.slice(0, 4);
-  }
-
-  return filtered.length ? filtered : ["Add more study notes to generate key points."];
-}
-
-function buildSystemCards(text) {
-  const lower = text.toLowerCase();
-  let activeSystem =
-    "Mechanical equipment, direct control, and higher energy use usually indicate an active system.";
-  let passiveSystem =
-    "Sun, wind, daylight, shading, airflow, and thermal mass usually indicate a passive system.";
-
-  const sentences = splitSentences(text);
-
-  const activeMatch = sentences.find(
-    (item) =>
-      item.toLowerCase().includes("active system") ||
-      item.toLowerCase().includes("mechanical")
-  );
-
-  const passiveMatch = sentences.find(
-    (item) =>
-      item.toLowerCase().includes("passive system") ||
-      item.toLowerCase().includes("ventilation") ||
-      item.toLowerCase().includes("shading") ||
-      item.toLowerCase().includes("solar")
-  );
-
-  if (activeMatch) activeSystem = activeMatch;
-  if (passiveMatch) passiveSystem = passiveMatch;
-
-  if (!lower.includes("active") && !lower.includes("passive")) {
-    activeSystem =
-      "Use this card for equipment-driven concepts such as HVAC, fans, pumps, and controlled mechanical systems.";
-    passiveSystem =
-      "Use this card for climate-responsive concepts such as orientation, shading, ventilation, and thermal mass.";
-  }
-
-  return { activeSystem, passiveSystem };
+  return "先确认题目真正考的是哪一个核心概念，再比较相似术语。";
 }
 
 function buildReview(text) {
   const correctAnswer = parseCorrectAnswer(text);
-  const answerExtraction = buildAnswerExtraction(text);
-  const trapPoints = buildTrapPoints(text);
-  const memoryHook = buildMemoryHook(text);
   const keywords = detectKeywords(text);
 
   return {
     correctAnswer:
       correctAnswer ||
-      "No direct question detected yet. Paste a question with “Correct Answer:” to fill this block cleanly.",
-    answerExtraction,
-    trapPoints,
-    memoryHook,
+      "还没有识别到明确的 Correct Answer。可以直接 paste 一道题和标准答案。",
+    answerExtraction: buildAnswerExtraction(text),
+    trapPoints: buildTrapPoints(text),
+    memoryHook: buildMemoryHook(text),
     keywords
   };
 }
 
-function buildStudyData(text) {
+function buildStudyData(text, selectedDivision) {
   const summary = buildSummary(text);
   const keyPoints = buildKeyPoints(text);
-  const { activeSystem, passiveSystem } = buildSystemCards(text);
+  const systems = buildSystemCards(text);
   const logicLinks = buildLogicLinks(text);
+  const suggestedPlacement = buildSuggestedPlacement(selectedDivision);
   const review = buildReview(text);
 
   return {
     summary,
     keyPoints,
-    activeSystem,
-    passiveSystem,
+    ...systems,
     logicLinks,
+    suggestedPlacement,
     review
   };
 }
@@ -378,101 +344,107 @@ export default function App() {
   const [selectedDivision, setSelectedDivision] = useState("PPD");
   const [selectedRoom, setSelectedRoom] = useState("Site");
   const [captureText, setCaptureText] = useState(DEFAULT_NOTES);
-  const [savedNote, setSavedNote] = useState("");
-  const [statusMessage, setStatusMessage] = useState("Ready.");
+  const [savedAt, setSavedAt] = useState("");
+  const [statusMessage, setStatusMessage] = useState("现在这版已经支持本地保存。刷新页面后，当前浏览器里的内容会自动恢复。");
   const [emphasisMode, setEmphasisMode] = useState("bold");
+
   const [imageFile, setImageFile] = useState(null);
   const [isScanning, setIsScanning] = useState(false);
+  const [ocrStatus, setOcrStatus] = useState("");
+  const [ocrPreviewName, setOcrPreviewName] = useState("");
 
   const rooms = ROOMS_BY_DIVISION[selectedDivision] || [];
 
-  const studyData = useMemo(() => buildStudyData(captureText), [captureText]);
+  const studyData = useMemo(() => {
+    return buildStudyData(captureText, selectedDivision);
+  }, [captureText, selectedDivision]);
 
   const correctAnswerDisplay = useMemo(() => {
     const value = studyData.review.correctAnswer;
-
-    if (Array.isArray(value)) {
-      return value.join(" / ");
-    }
-
-    return value;
+    return Array.isArray(value) ? value.join(" / ") : value;
   }, [studyData]);
-
-  const emphasizedSummary = emphasizeKeywords(
-    studyData.summary,
-    studyData.review.keywords,
-    emphasisMode
-  );
-
-  const emphasizedCorrectAnswer = emphasizeKeywords(
-    correctAnswerDisplay,
-    studyData.review.keywords,
-    emphasisMode
-  );
 
   const saveNote = () => {
     localStorage.setItem("are-study-note", captureText);
-    setSavedNote(captureText);
-    setStatusMessage("Note saved in browser.");
+    const now = new Date();
+    const stamp = `${now.getFullYear()}/${now.getMonth() + 1}/${now.getDate()} ${now.toLocaleTimeString()}`;
+    setSavedAt(stamp);
+    setStatusMessage("现在这版已经支持本地保存。刷新页面后，当前浏览器里的内容会自动恢复。");
   };
 
   const loadSavedNote = () => {
-    const note = localStorage.getItem("are-study-note");
-    if (!note) {
-      setStatusMessage("No saved note found yet.");
+    const saved = localStorage.getItem("are-study-note");
+    if (!saved) {
+      setStatusMessage("还没有找到已保存内容。");
       return;
     }
-    setCaptureText(note);
-    setSavedNote(note);
-    setStatusMessage("Saved note loaded.");
+    setCaptureText(saved);
+    setStatusMessage("已加载本地保存内容。");
   };
 
-  const loadStudySample = () => {
+  const loadPPDSample = () => {
     setCaptureText(DEFAULT_NOTES);
-    setStatusMessage("PPD study sample loaded.");
+    setStatusMessage("已加载 PPD 示例内容。");
   };
 
   const loadQuestionSample = () => {
     setCaptureText(QUESTION_SAMPLE);
-    setStatusMessage("Question sample loaded.");
+    setStatusMessage("已加载题目示例内容。");
   };
 
   const clearAll = () => {
     setCaptureText("");
-    setStatusMessage("Capture cleared.");
+    setStatusMessage("已清空 Capture。");
+    setOcrStatus("");
+    setOcrPreviewName("");
+    setImageFile(null);
   };
 
   const handleImageChange = (event) => {
     const file = event.target.files?.[0] || null;
-    setImageFile(file);
-    if (file) {
-      setStatusMessage(`Selected image: ${file.name}`);
+
+    if (!file) {
+      setImageFile(null);
+      setOcrPreviewName("");
+      setOcrStatus("No image selected.");
+      return;
     }
+
+    setImageFile(file);
+    setOcrPreviewName(file.name);
+    setOcrStatus(`Selected image: ${file.name}`);
   };
 
   const runOCR = async () => {
     if (!imageFile) {
-      setStatusMessage("Select an image first.");
+      setOcrStatus("Please select an image first.");
       return;
     }
 
     try {
       setIsScanning(true);
-      setStatusMessage("Reading image text...");
+      setOcrStatus("Reading image text...");
+
       const result = await Tesseract.recognize(imageFile, "eng");
-      const extracted = result?.data?.text || "";
+      const extractedText = result?.data?.text?.trim() || "";
+
+      if (!extractedText) {
+        setOcrStatus("No text detected from this image.");
+        return;
+      }
 
       setCaptureText((prev) => {
-        const base = prev.trim();
-        const next = extracted.trim();
-        if (!base) return next;
-        return `${base}\n\n${next}`;
+        const oldText = prev?.trim() || "";
+        if (!oldText) return extractedText;
+        return `${oldText}\n\n${extractedText}`;
       });
 
-      setStatusMessage("Image text added to capture.");
+      setOcrStatus("Image text added to Capture.");
+      setStatusMessage("OCR 完成，文字已加入 Capture。");
     } catch (error) {
       console.error(error);
-      setStatusMessage("OCR failed. Try another image.");
+      setOcrStatus("OCR failed. Try another image.");
+      setStatusMessage("OCR 失败，请换一张更清晰的图片。");
     } finally {
       setIsScanning(false);
     }
@@ -483,7 +455,7 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand-card">
           <div className="brand-title">ARE Study Vault</div>
-          <div className="brand-subtitle">Spatial learning + chunked review</div>
+          <div className="brand-subtitle">空间结构 + 自动分块</div>
         </div>
 
         <div className="sidebar-section">
@@ -492,9 +464,7 @@ export default function App() {
             {DIVISIONS.map((division) => (
               <button
                 key={division}
-                className={`nav-pill ${
-                  selectedDivision === division ? "active" : ""
-                }`}
+                className={`nav-pill ${selectedDivision === division ? "active" : ""}`}
                 onClick={() => {
                   setSelectedDivision(division);
                   setSelectedRoom(ROOMS_BY_DIVISION[division][0]);
@@ -520,11 +490,6 @@ export default function App() {
             ))}
           </div>
         </div>
-
-        <div className="sidebar-section small-note">
-          <div className="sidebar-label">Status</div>
-          <div className="status-box">{statusMessage}</div>
-        </div>
       </aside>
 
       <main className="main-panel">
@@ -532,30 +497,25 @@ export default function App() {
           <div className="capture-header">
             <div>
               <div className="card-title">Capture</div>
-              <div className="card-subtitle">
-                Paste notes, question explanations, or OCR text here.
-              </div>
-            </div>
-
-            <div className="emphasis-switch">
-              <button
-                className={emphasisMode === "bold" ? "active" : ""}
-                onClick={() => setEmphasisMode("bold")}
-              >
-                Bold
-              </button>
-              <button
-                className={emphasisMode === "underline" ? "active" : ""}
-                onClick={() => setEmphasisMode("underline")}
-              >
-                Underline
-              </button>
+              <div className="card-subtitle">把你的视频笔记、聊天整理、手写转录内容先丢进来。</div>
             </div>
           </div>
 
+          <div className="capture-meta">
+            <span className="meta-pill">Division: {selectedDivision}</span>
+            <span className="meta-pill">Room: {selectedRoom}</span>
+            {savedAt ? <span className="meta-pill">Saved: {savedAt}</span> : null}
+          </div>
+
+          <textarea
+            className="capture-textarea"
+            value={captureText}
+            onChange={(e) => setCaptureText(e.target.value)}
+          />
+
           <div className="capture-tools">
-            <label className="file-pill">
-              Select Image
+            <label className="file-upload-pill">
+              Upload Image
               <input type="file" accept="image/*" onChange={handleImageChange} />
             </label>
 
@@ -565,17 +525,34 @@ export default function App() {
 
             <button onClick={saveNote}>Save Note</button>
             <button onClick={loadSavedNote}>Load Saved</button>
-            <button onClick={loadStudySample}>Load PPD Sample</button>
+            <button onClick={loadPPDSample}>Load PPD Sample</button>
             <button onClick={loadQuestionSample}>Load Question Sample</button>
             <button onClick={clearAll}>Clear</button>
+
+            <button
+              className={emphasisMode === "bold" ? "active" : ""}
+              onClick={() => setEmphasisMode("bold")}
+            >
+              Bold
+            </button>
+
+            <button
+              className={emphasisMode === "underline" ? "active" : ""}
+              onClick={() => setEmphasisMode("underline")}
+            >
+              Underline
+            </button>
           </div>
 
-          <textarea
-            className="capture-textarea"
-            value={captureText}
-            onChange={(e) => setCaptureText(e.target.value)}
-            placeholder="Paste your notes, OCR result, or a question explanation here..."
-          />
+          {ocrPreviewName ? (
+            <div className="ocr-file-name">Selected: {ocrPreviewName}</div>
+          ) : null}
+
+          {ocrStatus ? (
+            <div className="ocr-status">{ocrStatus}</div>
+          ) : null}
+
+          <div className="status-box">{statusMessage}</div>
         </section>
 
         <section className="content-grid">
@@ -586,24 +563,13 @@ export default function App() {
               <div className="mini-grid">
                 <div className="mini-card wide">
                   <div className="mini-title">Summary</div>
-                  <MarkdownText text={emphasizedSummary} />
-                </div>
-
-                <div className="mini-card wide">
-                  <div className="mini-title">Key Points</div>
-                  <ol className="plain-list numbered">
-                    {studyData.keyPoints.map((item, index) => (
-                      <li key={index}>
-                        <MarkdownText
-                          text={emphasizeKeywords(
-                            item,
-                            studyData.review.keywords,
-                            emphasisMode
-                          )}
-                        />
-                      </li>
-                    ))}
-                  </ol>
+                  <MarkdownText
+                    text={emphasizeKeywords(
+                      studyData.summary,
+                      studyData.review.keywords,
+                      emphasisMode
+                    )}
+                  />
                 </div>
 
                 <div className="mini-card">
@@ -627,9 +593,42 @@ export default function App() {
                     )}
                   />
                 </div>
+
+                <div className="mini-card">
+                  <div className="mini-title">Cold Climate vs Hot Climate</div>
+                  <MarkdownText
+                    text={emphasizeKeywords(
+                      studyData.climateCompare,
+                      studyData.review.keywords,
+                      emphasisMode
+                    )}
+                  />
+                </div>
+
+                <div className="mini-card">
+                  <div className="mini-title">Trombe Wall</div>
+                  <MarkdownText
+                    text={emphasizeKeywords(
+                      studyData.trombeWall,
+                      studyData.review.keywords,
+                      emphasisMode
+                    )}
+                  />
+                </div>
               </div>
             </div>
 
+            <div className="info-card">
+              <div className="card-title">Suggested Placement</div>
+              <ul className="plain-list">
+                {studyData.suggestedPlacement.map((item, index) => (
+                  <li key={index}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          </div>
+
+          <div className="right-column">
             <div className="info-card">
               <div className="card-title">Logic Links</div>
               <ul className="plain-list">
@@ -646,14 +645,18 @@ export default function App() {
                 ))}
               </ul>
             </div>
-          </div>
 
-          <div className="right-column">
             <div className="review-grid">
               <div className="review-card">
                 <div className="review-card-title">Correct Answer</div>
                 <div className="review-card-content">
-                  <MarkdownText text={emphasizedCorrectAnswer} />
+                  <MarkdownText
+                    text={emphasizeKeywords(
+                      correctAnswerDisplay,
+                      studyData.review.keywords,
+                      emphasisMode
+                    )}
+                  />
                 </div>
               </div>
 
