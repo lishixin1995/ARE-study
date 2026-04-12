@@ -58,7 +58,7 @@ function buildCaptureSummary(text) {
   const sentences = splitSentences(text);
   if (sentences.length >= 2) return `${sentences[0]} ${sentences[1]}`;
   if (sentences.length === 1) return sentences[0];
-  return "No saved notes yet for this topic.";
+  return "No notes yet for this topic.";
 }
 
 function buildCaptureExtraction(text) {
@@ -69,7 +69,7 @@ function buildCaptureExtraction(text) {
   if (sentences.length >= 4) return sentences.slice(0, 4);
 
   if (lines.length > 0) return lines;
-  return ["Save notes in this topic to generate extraction."];
+  return ["Start typing or save notes in this topic to generate extraction."];
 }
 
 function buildCaptureBulletPoints(text) {
@@ -106,7 +106,12 @@ function buildCaptureLogicLinks(text) {
   const lower = text.toLowerCase();
   const links = [];
 
-  if (lower.includes("passive system") || lower.includes("sun") || lower.includes("air") || lower.includes("wind")) {
+  if (
+    lower.includes("passive system") ||
+    lower.includes("sun") ||
+    lower.includes("air") ||
+    lower.includes("wind")
+  ) {
     links.push("Passive System → depends on → Sun / Air / Wind");
   }
 
@@ -131,7 +136,7 @@ function buildCaptureLogicLinks(text) {
   }
 
   if (!links.length) {
-    links.push("Save more notes to generate logic links.");
+    links.push("Start typing or save notes to generate logic links.");
   }
 
   return links;
@@ -218,6 +223,7 @@ export default function App() {
   const [selectedRoom, setSelectedRoom] = useState("Site");
 
   const [captureDraft, setCaptureDraft] = useState("");
+  const [debouncedCaptureDraft, setDebouncedCaptureDraft] = useState("");
   const [savedNotesByTopic, setSavedNotesByTopic] = useState(() => readSavedNotesByTopic());
   const [captureStatus, setCaptureStatus] = useState("Ready.");
 
@@ -231,33 +237,51 @@ export default function App() {
     return savedNotesByTopic[currentTopicKey] || [];
   }, [savedNotesByTopic, currentTopicKey]);
 
-  const captureSourceText = useMemo(() => {
-    return savedNotesForTopic.map((item) => item.text).join("\n\n");
-  }, [savedNotesForTopic]);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedCaptureDraft(captureDraft);
+    }, 1200);
 
-  const captureSummary = useMemo(() => {
-    return buildCaptureSummary(captureSourceText);
-  }, [captureSourceText]);
-
-  const captureExtraction = useMemo(() => {
-    return buildCaptureExtraction(captureSourceText);
-  }, [captureSourceText]);
-
-  const captureBulletPoints = useMemo(() => {
-    return buildCaptureBulletPoints(captureSourceText);
-  }, [captureSourceText]);
-
-  const captureLogicLinks = useMemo(() => {
-    return buildCaptureLogicLinks(captureSourceText);
-  }, [captureSourceText]);
-
-  const captureLogicGraph = useMemo(() => {
-    return buildCaptureLogicGraph(captureSourceText);
-  }, [captureSourceText]);
+    return () => clearTimeout(timer);
+  }, [captureDraft]);
 
   useEffect(() => {
     localStorage.setItem("savedNotesByTopic", JSON.stringify(savedNotesByTopic));
   }, [savedNotesByTopic]);
+
+  const savedTopicText = useMemo(() => {
+    return savedNotesForTopic.map((item) => item.text).join("\n\n");
+  }, [savedNotesForTopic]);
+
+  const effectiveCaptureText = useMemo(() => {
+    const saved = savedTopicText.trim();
+    const draft = debouncedCaptureDraft.trim();
+
+    if (saved && draft) return `${saved}\n\n${draft}`;
+    if (saved) return saved;
+    if (draft) return draft;
+    return "";
+  }, [savedTopicText, debouncedCaptureDraft]);
+
+  const captureSummary = useMemo(() => {
+    return buildCaptureSummary(effectiveCaptureText);
+  }, [effectiveCaptureText]);
+
+  const captureExtraction = useMemo(() => {
+    return buildCaptureExtraction(effectiveCaptureText);
+  }, [effectiveCaptureText]);
+
+  const captureBulletPoints = useMemo(() => {
+    return buildCaptureBulletPoints(effectiveCaptureText);
+  }, [effectiveCaptureText]);
+
+  const captureLogicLinks = useMemo(() => {
+    return buildCaptureLogicLinks(effectiveCaptureText);
+  }, [effectiveCaptureText]);
+
+  const captureLogicGraph = useMemo(() => {
+    return buildCaptureLogicGraph(effectiveCaptureText);
+  }, [effectiveCaptureText]);
 
   const handleSaveNote = () => {
     const trimmed = captureDraft.trim();
@@ -281,6 +305,7 @@ export default function App() {
     });
 
     setCaptureDraft("");
+    setDebouncedCaptureDraft("");
     setCaptureStatus(`Saved 1 note to ${currentTopicKey}.`);
   };
 
@@ -290,19 +315,20 @@ export default function App() {
       return;
     }
 
-    const combined = savedNotesForTopic.map((item) => item.text).join("\n\n");
-    setCaptureDraft(combined);
-    setCaptureStatus(`Loaded ${savedNotesForTopic.length} saved notes for ${currentTopicKey}.`);
+    setCaptureStatus(
+      `${currentTopicKey} already has ${savedNotesForTopic.length} saved notes. Current analysis is already using them.`
+    );
   };
 
   const handleLoadTopicSample = () => {
     const sample = SAMPLE_BY_DIVISION[selectedDivision] || "";
     setCaptureDraft(sample);
-    setCaptureStatus(`Loaded ${selectedDivision} sample.`);
+    setCaptureStatus(`Loaded ${selectedDivision} sample. Analysis will update in about 1 second.`);
   };
 
   const handleClearEditor = () => {
     setCaptureDraft("");
+    setDebouncedCaptureDraft("");
     setCaptureStatus("Capture editor cleared.");
   };
 
@@ -425,7 +451,7 @@ export default function App() {
 
               {captureLogicGraph.nodes.length === 0 ? (
                 <div className="logic-graph-placeholder">
-                  Save notes in this topic to generate the logic graph.
+                  Start typing or save notes in this topic to generate the logic graph.
                 </div>
               ) : (
                 <div>
