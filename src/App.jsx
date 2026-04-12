@@ -168,6 +168,132 @@ function summarizeWrongAnswer(text, division, room) {
 
   const lines = clean
     .split('\n')
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+
+  const ignoredPatterns = [
+    /^question[:：]?/i,
+    /^reference[:：]?/i,
+    /^which of the following/i,
+    /^an architect is working/i,
+    /^check the four/i,
+    /^incorrect!?$/i,
+  ]
+
+  function isOptionLine(line) {
+    if (/^(correct|incorrect)\b/i.test(line)) return false
+    if (ignoredPatterns.some((pattern) => pattern.test(line))) return false
+    if (line.length > 120) return false
+    if (line.endsWith('?')) return false
+    return true
+  }
+
+  const options = []
+  let currentOption = null
+
+  for (const line of lines) {
+    if (isOptionLine(line)) {
+      currentOption = {
+        label: line.replace(/^[•\-✓✔☐☑]\s*/, '').replace(/\.$/, '').trim(),
+        status: 'unknown',
+        explanations: [],
+      }
+      options.push(currentOption)
+      continue
+    }
+
+    if (/^correct\b/i.test(line) && currentOption) {
+      currentOption.status = 'correct'
+      currentOption.explanations.push(
+        line.replace(/^correct[.:]?\s*/i, '').trim()
+      )
+      continue
+    }
+
+    if (/^incorrect\b/i.test(line) && currentOption) {
+      currentOption.status = 'incorrect'
+      currentOption.explanations.push(
+        line.replace(/^incorrect[.:]?\s*/i, '').trim()
+      )
+      continue
+    }
+
+    if (currentOption) {
+      currentOption.explanations.push(line)
+    }
+  }
+
+  const correctOptions = options.filter((item) => item.status === 'correct')
+  const incorrectOptions = options.filter((item) => item.status === 'incorrect')
+
+  const correctAnswer = correctOptions.length
+    ? correctOptions.map((item) => item.label).join(' / ')
+    : '未明确识别，请手动补充正确答案。'
+
+  const whyRight = correctOptions.length
+    ? correctOptions
+        .map((item) => {
+          const explanation = item.explanations.join(' ').trim()
+          return `${item.label}: ${explanation}`
+        })
+        .join(' ')
+    : '请从答案分析里提炼一句：这些正确选项为什么符合题干目标。'
+
+  const trapPoint = incorrectOptions.length
+    ? incorrectOptions
+        .slice(0, 2)
+        .map((item) => {
+          const explanation = item.explanations.join(' ').trim()
+          return `${item.label}: ${explanation}`
+        })
+        .join(' ')
+    : '最容易错在只看到表面关键词，却没有先判断题目真正考的目标和筛选条件。'
+
+  const keyPoints = []
+
+  if (/prefabricat/i.test(clean)) {
+    keyPoints.push('预制构件常对应减少现场切割、施工废料和现场污染。')
+  }
+
+  if (/recycled/i.test(clean)) {
+    keyPoints.push('高 recycled content 常对应减少新原材料开采，是材料可持续性的常见正向选项。')
+  }
+
+  if (/smart technology|smart thermostat|occupancy sensor|automation/i.test(clean)) {
+    keyPoints.push('smart technology 更偏 building operation efficiency 和 performance。')
+  }
+
+  if (/high-?voc|low-?voc/i.test(clean)) {
+    keyPoints.push('VOC 题要先分清 high VOC 和 low VOC，通常 low VOC 才是正确方向。')
+  }
+
+  if (/field finishing|factory/i.test(clean)) {
+    keyPoints.push('减少现场 finishing、转向工厂完成，常有助于降低现场污染和粉尘。')
+  }
+
+  if (keyPoints.length === 0) {
+    keyPoints.push('先判断题目真正考的是概念、系统、流程，还是规范逻辑。')
+    keyPoints.push('不要只记正确选项，要记为什么其他项错。')
+    keyPoints.push('把这题归到固定房间里，后面复习时更容易回忆。')
+  }
+
+  const memoryHook =
+    correctOptions.length > 1
+      ? '这类多选题先抓题干目标，再逐项筛掉“看起来不错但不直接服务目标”的选项。'
+      : '先抓题干目标，再判断哪个选项最直接满足它。'
+
+  return {
+    correctAnswer,
+    whyRight,
+    trapPoint,
+    topicGuess: `${division} → ${room}`,
+    keyPoints,
+    memoryHook,
+  }
+}
+
+  const lines = clean
+    .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
 
