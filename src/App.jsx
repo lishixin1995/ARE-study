@@ -352,7 +352,10 @@ export default function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [ocrStatus, setOcrStatus] = useState("");
   const [ocrPreviewName, setOcrPreviewName] = useState("");
-
+  const [imagePreview, setImagePreview] = useState("");
+  const [ocrText, setOcrText] = useState("");
+  const [wrongQuestionSavedAt, setWrongQuestionSavedAt] = useState("");
+  
   const rooms = ROOMS_BY_DIVISION[selectedDivision] || [];
 
   const studyData = useMemo(() => {
