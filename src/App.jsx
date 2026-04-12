@@ -170,12 +170,12 @@ function extractData(text, selectedDivision, selectedRoom) {
   return { summary, chunks, links, locations }
 }
 
-function summarizeWrongAnswer(text, division, room) {
+function parseWrongAnswerBlocks(text) {
   const clean = text.trim()
-  if (!clean) return null
+  if (!clean) return []
 
-  const normalized = clean.replace(/\r/g, '')
-  const lines = normalized
+  const lines = clean
+    .replace(/\r/g, '')
     .split('\n')
     .map((line) => line.replace(/\s+/g, ' ').trim())
     .filter(Boolean)
@@ -188,9 +188,6 @@ function summarizeWrongAnswer(text, division, room) {
     /^check the four/i,
   ]
 
-  const options = []
-  let currentOption = null
-
   function cleanOptionLabel(line) {
     return line
       .replace(/^[•\-✓✔☐☑■□]+\s*/, '')
@@ -199,82 +196,107 @@ function summarizeWrongAnswer(text, division, room) {
       .trim()
   }
 
+  const blocks = []
+  let currentBlock = null
+
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i]
     const nextLine = lines[i + 1] || ''
-
-    if (ignoredPatterns.some((pattern) => pattern.test(line))) {
-      continue
-    }
 
     if (/^reference[:：]?/i.test(line)) {
       break
     }
 
-    if (/^(correct|incorrect)\b/i.test(line) && currentOption) {
-      currentOption.status = /^correct/i.test(line) ? 'correct' : 'incorrect'
-      currentOption.explanations.push(
-        line.replace(/^(correct|incorrect)[\.:]?\s*/i, '').trim()
-      )
+    if (ignoredPatterns.some((pattern) => pattern.test(line))) {
       continue
     }
 
-    const looksLikeOption =
-      !/^(correct|incorrect)\b/i.test(line) &&
-      /^(correct|incorrect)\b/i.test(nextLine) &&
-      line.length < 140
+    const isStatusLine = /^(correct|incorrect)\b/i.test(line)
+    const nextIsStatusLine = /^(correct|incorrect)\b/i.test(nextLine)
 
-    if (looksLikeOption) {
-      currentOption = {
+    if (!isStatusLine && nextIsStatusLine && line.length < 150) {
+      currentBlock = {
         label: cleanOptionLabel(line),
         status: 'unknown',
-        explanations: [],
+        explanation: '',
       }
-      options.push(currentOption)
+      blocks.push(currentBlock)
       continue
     }
 
-    if (currentOption && currentOption.status !== 'unknown') {
-      currentOption.explanations.push(line)
+    if (isStatusLine && currentBlock) {
+      currentBlock.status = /^correct/i.test(line) ? 'correct' : 'incorrect'
+      currentBlock.explanation = line
+        .replace(/^(correct|incorrect)[\.:]?\s*/i, '')
+        .trim()
+      continue
+    }
+
+    if (currentBlock && currentBlock.status !== 'unknown') {
+      currentBlock.explanation = `${currentBlock.explanation} ${line}`.trim()
     }
   }
 
-  const correctOptions = options.filter((item) => item.status === 'correct')
-  const incorrectOptions = options.filter((item) => item.status === 'incorrect')
+  return blocks
+}
 
-  const correctAnswer = correctOptions.length
-    ? correctOptions.map((item) => item.label).join(' / ')
+function simplifyTrapReason(block) {
+  const label = block.label || ''
+  const explanation = block.explanation || ''
+  const lower = `${label} ${explanation}`.toLowerCase()
+
+  if (
+    lower.includes("doesn't specifically contribute") ||
+    lower.includes('does not specifically contribute')
+  ) {
+    return '这个选项不一定错，但不直接回应题干目标。'
+  }
+
+  if (lower.includes('high-voc') || lower.includes('high voc')) {
+    return '方向反了，这题应避免 high-VOC。'
+  }
+
+  if (lower.includes('local labor')) {
+    return '听起来是好事，但不直接服务 sustainability 目标。'
+  }
+
+  if (lower.includes('goal')) {
+    return '没有直接服务题干目标。'
+  }
+
+  if (explanation) {
+    const firstSentence = explanation.split('. ')[0].trim()
+    if (firstSentence.length <= 45) return firstSentence
+    return `${firstSentence.slice(0, 45)}...`
+  }
+
+  return '看起来合理，但不符合这题真正要筛选的方向。'
+}
+
+function summarizeWrongAnswer(text, division, room) {
+  const clean = text.trim()
+  if (!clean) return null
+
+  const blocks = parseWrongAnswerBlocks(clean)
+  const correctBlocks = blocks.filter((item) => item.status === 'correct')
+  const incorrectBlocks = blocks.filter((item) => item.status === 'incorrect')
+
+  const correctAnswer = correctBlocks.length
+    ? correctBlocks.map((item) => item.label).join(' / ')
     : '未明确识别，请手动补充正确答案。'
 
-  const whyRight = correctOptions.length
-    ? correctOptions
-        .map((item) => {
-          const explanation = item.explanations.join(' ').trim()
-          return `${item.label}: ${explanation}`
-        })
+  const whyRight = correctBlocks.length
+    ? correctBlocks
+        .map((item) => `${item.label}: ${item.explanation}`)
         .join(' ')
     : '没有稳定识别到正确选项，请手动检查 OCR 结果。'
 
-const trapPoint = incorrectOptions.length
-  ? incorrectOptions
-      .slice(0, 2)
-      .map((item) => {
-        const explanation = item.explanations.join(' ').trim()
-
-        let shortReason = explanation
-
-        if (/doesn't specifically contribute|does not specifically contribute/i.test(explanation)) {
-          shortReason = '听起来是好事，但不直接服务题干目标。'
-        } else if (/low-?voc/i.test(explanation) || /high-?voc/i.test(explanation)) {
-          shortReason = '方向反了，这题应选 low-VOC 而不是 high-VOC。'
-        } else if (explanation.length > 60) {
-          shortReason = explanation.slice(0, 60) + '...'
-        }
-
-        return `${item.label}: ${shortReason}`
-      })
-      .join(' ')
-  : '最容易错在只看到表面关键词，却没有先判断题干真正目标。'
+  const trapPoint = incorrectBlocks.length
+    ? incorrectBlocks
+        .slice(0, 2)
+        .map((item) => simplifyTrapReason(item))
+        .join(' ')
+    : '最容易错在只看表面关键词，没有先抓题干真正目标。'
 
   const keyPoints = []
 
@@ -301,8 +323,8 @@ const trapPoint = incorrectOptions.length
   }
 
   const memoryHook =
-    correctOptions.length > 1
-      ? '多选题先抓题干目标，再逐项筛掉“听起来不错但不直接服务目标”的选项。'
+    correctBlocks.length > 1
+      ? '多选题先抓题干目标，再逐项筛掉“看起来不错但不直接服务目标”的选项。'
       : '先抓题干目标，再找最直接满足目标的选项。'
 
   return {
@@ -341,6 +363,10 @@ export default function App() {
   const [ocrError, setOcrError] = useState('')
 
   const currentRooms = palaceData[selectedDivision].rooms
+  const parsedBlocks = useMemo(
+    () => parseWrongAnswerBlocks(wrongAnswerText),
+    [wrongAnswerText]
+  )
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.division, selectedDivision)
@@ -441,9 +467,7 @@ export default function App() {
 
       const result = await Tesseract.recognize(wrongAnswerImage, 'eng', {
         logger: (message) => {
-          if (message.status) {
-            setOcrStatus(message.status)
-          }
+          if (message.status) setOcrStatus(message.status)
           if (typeof message.progress === 'number') {
             setOcrProgress(Math.round(message.progress * 100))
           }
@@ -452,16 +476,7 @@ export default function App() {
 
       const extractedText = result?.data?.text?.trim() || ''
       setWrongAnswerText(extractedText)
-
-      if (extractedText) {
-        const summary = summarizeWrongAnswer(
-          extractedText,
-          selectedDivision,
-          selectedRoom
-        )
-        setWrongAnswerSummary(summary)
-      }
-
+      setWrongAnswerSummary(null)
       setOcrStatus('OCR finished')
       setOcrProgress(100)
     } catch (error) {
@@ -522,11 +537,13 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
 
     const newCard = {
       id: Date.now(),
+      image: wrongAnswerImage || '',
       rawText: wrongAnswerText,
       division: selectedDivision,
       room: selectedRoom,
       savedAt: new Date().toLocaleString(),
       summary: wrongAnswerSummary,
+      parsedBlocks,
     }
 
     setSavedWrongCards((prev) => [newCard, ...prev])
@@ -699,13 +716,7 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
                 </div>
               )}
 
-              <div
-                style={{
-                  marginTop: '14px',
-                  display: 'grid',
-                  gap: '10px',
-                }}
-              >
+              <div style={{ marginTop: '14px', display: 'grid', gap: '10px' }}>
                 <button
                   className="small-action"
                   onClick={handleRunOCR}
@@ -804,6 +815,67 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
             </div>
           </div>
 
+          {parsedBlocks.length > 0 && (
+            <div className="wrong-answer-result">
+              <div className="card soft">
+                <div className="card-title">Parsed Blocks</div>
+                <div
+                  style={{
+                    display: 'grid',
+                    gap: '10px',
+                    marginTop: '12px',
+                  }}
+                >
+                  {parsedBlocks.map((block, index) => (
+                    <div
+                      key={`${block.label}-${index}`}
+                      style={{
+                        border: '1px solid #e5e7eb',
+                        borderRadius: '14px',
+                        padding: '12px',
+                        background: '#fff',
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: 'flex',
+                          gap: '8px',
+                          flexWrap: 'wrap',
+                          marginBottom: '8px',
+                          alignItems: 'center',
+                        }}
+                      >
+                        <strong>{block.label}</strong>
+                        <span
+                          style={{
+                            fontSize: '12px',
+                            borderRadius: '999px',
+                            padding: '4px 8px',
+                            background:
+                              block.status === 'correct'
+                                ? '#dcfce7'
+                                : block.status === 'incorrect'
+                                ? '#fee2e2'
+                                : '#e5e7eb',
+                            color:
+                              block.status === 'correct'
+                                ? '#166534'
+                                : block.status === 'incorrect'
+                                ? '#991b1b'
+                                : '#374151',
+                          }}
+                        >
+                          {block.status || 'unknown'}
+                        </span>
+                      </div>
+                      <div className="card-text">{block.explanation || 'No explanation detected.'}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {wrongAnswerSummary && (
             <div className="wrong-answer-result">
               <div className="card soft">
@@ -856,13 +928,7 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
               还没有保存的 flashcards。先分析一题，再点 Save to Flashcards。
             </div>
           ) : (
-            <div
-              style={{
-                display: 'grid',
-                gap: '16px',
-                marginTop: '16px',
-              }}
-            >
+            <div style={{ display: 'grid', gap: '16px', marginTop: '16px' }}>
               {savedWrongCards.map((card) => (
                 <div
                   key={card.id}
@@ -870,109 +936,179 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
                     border: '1px solid #e5e7eb',
                     borderRadius: '20px',
                     background: '#fff',
-                    padding: '16px',
+                    overflow: 'hidden',
                   }}
                 >
-                  <div
-                    style={{
-                      display: 'flex',
-                      gap: '8px',
-                      flexWrap: 'wrap',
-                      marginBottom: '10px',
-                    }}
-                  >
-                    <span
+                  {card.image ? (
+                    <img
+                      src={card.image}
+                      alt="Saved flashcard"
                       style={{
-                        background: '#eef2ff',
-                        color: '#3730a3',
-                        borderRadius: '999px',
-                        padding: '6px 10px',
-                        fontSize: '12px',
+                        width: '100%',
+                        maxHeight: '220px',
+                        objectFit: 'cover',
+                        display: 'block',
+                        background: '#f3f4f6',
                       }}
-                    >
-                      {card.division}
-                    </span>
-                    <span
-                      style={{
-                        background: '#eef2ff',
-                        color: '#3730a3',
-                        borderRadius: '999px',
-                        padding: '6px 10px',
-                        fontSize: '12px',
-                      }}
-                    >
-                      {card.room}
-                    </span>
-                  </div>
-
-                  <div style={{ fontWeight: 700, marginBottom: '8px' }}>
-                    {card.summary.correctAnswer}
-                  </div>
-
-                  <div
-                    style={{
-                      color: '#6b7280',
-                      fontSize: '13px',
-                      marginBottom: '12px',
-                    }}
-                  >
-                    Saved: {card.savedAt}
-                  </div>
-
-                  <div className="flashcard-actions">
-                    <button
-                      className="small-action"
-                      onClick={() => toggleCard(card.id)}
-                    >
-                      {expandedCardId === card.id ? 'Hide' : 'View'}
-                    </button>
-
-                    <button
-                      className="small-action ghost"
-                      onClick={() => handleDeleteCard(card.id)}
-                    >
-                      Delete
-                    </button>
-                  </div>
-
-                  {expandedCardId === card.id && (
+                    />
+                  ) : (
                     <div
                       style={{
-                        marginTop: '14px',
-                        display: 'grid',
-                        gap: '12px',
+                        minHeight: '120px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#6b7280',
+                        background: '#f9fafb',
                       }}
                     >
-                      <div className="card soft">
-                        <div className="card-title">Why It Is Right</div>
-                        <div className="card-text">{card.summary.whyRight}</div>
-                      </div>
-
-                      <div className="card soft">
-                        <div className="card-title">Trap Point</div>
-                        <div className="card-text">{card.summary.trapPoint}</div>
-                      </div>
-
-                      <div className="card soft">
-                        <div className="card-title">Memory Hook</div>
-                        <div className="card-text">{card.summary.memoryHook}</div>
-                      </div>
-
-                      <div className="card soft">
-                        <div className="card-title">Key Points</div>
-                        <ul className="key-points-list">
-                          {card.summary.keyPoints.map((point, index) => (
-                            <li key={index}>{point}</li>
-                          ))}
-                        </ul>
-                      </div>
-
-                      <div className="card soft">
-                        <div className="card-title">Raw OCR Text</div>
-                        <div className="card-text">{card.rawText}</div>
-                      </div>
+                      No Image
                     </div>
                   )}
+
+                  <div style={{ padding: '16px' }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        gap: '8px',
+                        flexWrap: 'wrap',
+                        marginBottom: '10px',
+                      }}
+                    >
+                      <span
+                        style={{
+                          background: '#eef2ff',
+                          color: '#3730a3',
+                          borderRadius: '999px',
+                          padding: '6px 10px',
+                          fontSize: '12px',
+                        }}
+                      >
+                        {card.division}
+                      </span>
+                      <span
+                        style={{
+                          background: '#eef2ff',
+                          color: '#3730a3',
+                          borderRadius: '999px',
+                          padding: '6px 10px',
+                          fontSize: '12px',
+                        }}
+                      >
+                        {card.room}
+                      </span>
+                    </div>
+
+                    <div style={{ fontWeight: 700, marginBottom: '8px' }}>
+                      {card.summary.correctAnswer}
+                    </div>
+
+                    <div
+                      style={{
+                        color: '#6b7280',
+                        fontSize: '13px',
+                        marginBottom: '12px',
+                      }}
+                    >
+                      Saved: {card.savedAt}
+                    </div>
+
+                    <div className="flashcard-actions">
+                      <button
+                        className="small-action"
+                        onClick={() => toggleCard(card.id)}
+                      >
+                        {expandedCardId === card.id ? 'Hide' : 'View'}
+                      </button>
+
+                      <button
+                        className="small-action ghost"
+                        onClick={() => handleDeleteCard(card.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+
+                    {expandedCardId === card.id && (
+                      <div style={{ marginTop: '14px', display: 'grid', gap: '12px' }}>
+                        {card.parsedBlocks?.length > 0 && (
+                          <div className="card soft">
+                            <div className="card-title">Parsed Blocks</div>
+                            <div style={{ display: 'grid', gap: '10px', marginTop: '12px' }}>
+                              {card.parsedBlocks.map((block, index) => (
+                                <div
+                                  key={`${block.label}-${index}`}
+                                  style={{
+                                    border: '1px solid #e5e7eb',
+                                    borderRadius: '14px',
+                                    padding: '12px',
+                                    background: '#fff',
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      display: 'flex',
+                                      gap: '8px',
+                                      flexWrap: 'wrap',
+                                      marginBottom: '8px',
+                                      alignItems: 'center',
+                                    }}
+                                  >
+                                    <strong>{block.label}</strong>
+                                    <span
+                                      style={{
+                                        fontSize: '12px',
+                                        borderRadius: '999px',
+                                        padding: '4px 8px',
+                                        background:
+                                          block.status === 'correct'
+                                            ? '#dcfce7'
+                                            : block.status === 'incorrect'
+                                            ? '#fee2e2'
+                                            : '#e5e7eb',
+                                      }}
+                                    >
+                                      {block.status}
+                                    </span>
+                                  </div>
+                                  <div className="card-text">{block.explanation}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="card soft">
+                          <div className="card-title">Why It Is Right</div>
+                          <div className="card-text">{card.summary.whyRight}</div>
+                        </div>
+
+                        <div className="card soft">
+                          <div className="card-title">Trap Point</div>
+                          <div className="card-text">{card.summary.trapPoint}</div>
+                        </div>
+
+                        <div className="card soft">
+                          <div className="card-title">Memory Hook</div>
+                          <div className="card-text">{card.summary.memoryHook}</div>
+                        </div>
+
+                        <div className="card soft">
+                          <div className="card-title">Key Points</div>
+                          <ul className="key-points-list">
+                            {card.summary.keyPoints.map((point, index) => (
+                              <li key={index}>{point}</li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        <div className="card soft">
+                          <div className="card-title">Raw OCR Text</div>
+                          <div className="card-text">{card.rawText}</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
