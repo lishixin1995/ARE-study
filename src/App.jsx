@@ -1,9 +1,39 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
-const starterText =
-  'Building system: active system relies on mechanical equipment and uses more energy. Passive system relies on sun, air, and wind flow. In cold climate, reduce heat loss and gain solar heat. In hot climate, control heat gain and optimize natural ventilation. Trombe wall helps stabilize temperature but takes more space.'
+const palaceData = {
+  PA: {
+    rooms: ['Site Analysis', 'Codes', 'Programming', 'Environmental Context'],
+    starter:
+      'Programming and analysis notes go here. Think about site conditions, zoning, adjacency, and early project constraints.',
+  },
+  PPD: {
+    rooms: ['Site', 'Climate', 'Structure', 'Mechanical', 'Envelope', 'Codes'],
+    starter:
+      'Building system: active system relies on mechanical equipment and uses more energy. Passive system relies on sun, air, and wind flow. In cold climate, reduce heat loss and gain solar heat. In hot climate, control heat gain and optimize natural ventilation. Trombe wall helps stabilize temperature but takes more space.',
+  },
+  PDD: {
+    rooms: ['Assemblies', 'Detailing', 'Specifications', 'Coordination'],
+    starter:
+      'Detailing notes go here. Think about wall assemblies, membranes, flashing, thermal continuity, specifications, and coordination between systems.',
+  },
+  PCM: {
+    rooms: ['Practice Ops', 'Risk', 'Finance'],
+    starter:
+      'Practice management notes go here. Think about firm operations, liability, staffing, billing, and financial planning.',
+  },
+  PJM: {
+    rooms: ['Contracts', 'Bidding', 'Construction Admin'],
+    starter:
+      'Project management notes go here. Think about scope, schedule, consultant coordination, bidding, and CA workflows.',
+  },
+  CE: {
+    rooms: ['Site Visits', 'Documentation', 'Observation Reports'],
+    starter:
+      'Construction evaluation notes go here. Think about field reports, submittals, RFIs, observations, and closeout.',
+  },
+}
 
-function extractData(text) {
+function extractData(text, selectedDivision, selectedRoom) {
   const clean = text.trim()
 
   if (!clean) {
@@ -11,7 +41,7 @@ function extractData(text) {
       summary: '还没有内容，先把你的视频笔记、手写转录内容或课堂总结贴进来。',
       chunks: [],
       links: [],
-      locations: [],
+      locations: [`${selectedDivision} → ${selectedRoom}`],
     }
   }
 
@@ -79,18 +109,31 @@ function extractData(text) {
     links.push('Trombe Wall → example of → Passive Strategy')
   }
 
-  const locations = ['PPD → Climate', 'PPD → Systems', 'PPD → Site']
+  const locations = [
+    `${selectedDivision} → ${selectedRoom}`,
+    `${selectedDivision} → Core Concepts`,
+    `${selectedDivision} → Review`,
+  ]
 
-  const summary =
-    '这个页面会把原始笔记先收进来，再自动拆成小知识块、关系和建议归类位置。第一版先做 typed note + 自动提炼，后面再接手写笔记上传和真正的知识图谱。'
+  const summary = `当前定位：${selectedDivision} / ${selectedRoom}。这个页面会把原始笔记先收进来，再自动拆成小知识块、关系和建议归类位置。`
 
   return { summary, chunks, links, locations }
 }
 
 export default function App() {
-  const [note, setNote] = useState(starterText)
+  const [selectedDivision, setSelectedDivision] = useState('PPD')
+  const [selectedRoom, setSelectedRoom] = useState(palaceData['PPD'].rooms[0])
+  const [note, setNote] = useState(palaceData['PPD'].starter)
 
-  const result = useMemo(() => extractData(note), [note])
+  const currentRooms = palaceData[selectedDivision].rooms
+
+  useEffect(() => {
+    setSelectedRoom(palaceData[selectedDivision].rooms[0])
+  }, [selectedDivision])
+
+  const result = useMemo(() => {
+    return extractData(note, selectedDivision, selectedRoom)
+  }, [note, selectedDivision, selectedRoom])
 
   return (
     <div className="app-shell">
@@ -102,22 +145,28 @@ export default function App() {
 
         <div className="panel">
           <div className="section-title">Memory Palace</div>
-          <div className="pill">PA</div>
-          <div className="pill active">PPD</div>
-          <div className="pill">PDD</div>
-          <div className="pill">PCM</div>
-          <div className="pill">PJM</div>
-          <div className="pill">CE</div>
+          {Object.keys(palaceData).map((division) => (
+            <button
+              key={division}
+              className={`pill ${selectedDivision === division ? 'active' : ''}`}
+              onClick={() => setSelectedDivision(division)}
+            >
+              {division}
+            </button>
+          ))}
         </div>
 
         <div className="panel">
-          <div className="section-title">PPD Rooms</div>
-          <div className="list-item">Site</div>
-          <div className="list-item">Climate</div>
-          <div className="list-item">Structure</div>
-          <div className="list-item">Mechanical</div>
-          <div className="list-item">Envelope</div>
-          <div className="list-item">Codes</div>
+          <div className="section-title">{selectedDivision} Rooms</div>
+          {currentRooms.map((room) => (
+            <button
+              key={room}
+              className={`list-button ${selectedRoom === room ? 'active-room' : ''}`}
+              onClick={() => setSelectedRoom(room)}
+            >
+              {room}
+            </button>
+          ))}
         </div>
       </aside>
 
@@ -128,6 +177,11 @@ export default function App() {
             把你的视频笔记、聊天整理、手写转录内容先丢进来。
           </div>
 
+          <div className="status-row">
+            <span className="status-tag">Division: {selectedDivision}</span>
+            <span className="status-tag">Room: {selectedRoom}</span>
+          </div>
+
           <textarea
             className="note-input"
             value={note}
@@ -135,9 +189,22 @@ export default function App() {
             placeholder="Paste your ARE notes here..."
           />
 
+          <div className="action-row">
+            <button
+              className="small-action"
+              onClick={() => setNote(palaceData[selectedDivision].starter)}
+            >
+              Load {selectedDivision} Sample
+            </button>
+
+            <button className="small-action ghost" onClick={() => setNote('')}>
+              Clear
+            </button>
+          </div>
+
           <div className="hint-box">
-            现在这版先支持 typed note。后面可以继续加：
-            手写笔记上传、自动 OCR、自动连线、复习计划。
+            现在这版已经支持点击 division 和 room。下一步可以继续加：
+            自动保存、手写笔记上传、自动 OCR、自动连线、复习计划。
           </div>
         </section>
 
