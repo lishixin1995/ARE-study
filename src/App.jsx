@@ -39,6 +39,7 @@ const STORAGE_KEYS = {
   notes: 'are-study-notes-map',
   savedAt: 'are-study-last-saved-at',
   wrongAnswerText: 'are-study-wrong-answer-text',
+  wrongAnswerCards: 'are-study-wrong-answer-cards',
 }
 
 function getNoteKey(division, room) {
@@ -63,6 +64,15 @@ function getStoredNotes() {
     return raw ? JSON.parse(raw) : {}
   } catch {
     return {}
+  }
+}
+
+function getStoredCards() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.wrongAnswerCards)
+    return raw ? JSON.parse(raw) : []
+  } catch {
+    return []
   }
 }
 
@@ -161,10 +171,7 @@ function extractData(text, selectedDivision, selectedRoom) {
 
 function summarizeWrongAnswer(text, division, room) {
   const clean = text.trim()
-
-  if (!clean) {
-    return null
-  }
+  if (!clean) return null
 
   const lines = clean
     .split('\n')
@@ -241,7 +248,7 @@ function summarizeWrongAnswer(text, division, room) {
 
   const trapPoint = incorrectOptions.length
     ? incorrectOptions
-        .slice(0, 2)
+        .slice(0, 3)
         .map((item) => {
           const explanation = item.explanations.join(' ').trim()
           return `${item.label}: ${explanation}`
@@ -292,53 +299,6 @@ function summarizeWrongAnswer(text, division, room) {
   }
 }
 
-  const lines = clean
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean)
-
-  const correctLine =
-    lines.find((line) =>
-      /correct answer|answer|正确答案|答案[:：]?/i.test(line)
-    ) || '未明确识别，请手动补充正确答案。'
-
-  const explanationLines = lines.filter((line) =>
-    /because|therefore|so|reason|explanation|because|解析|原因|因为|所以|因此/i.test(
-      line
-    )
-  )
-
-  const topicGuess = `${division} → ${room}`
-
-  const keyPoints = [
-    '先判断题目真正考的是概念、系统、流程，还是规范逻辑。',
-    '不要只记正确选项，要记“为什么其他项错”。',
-    '把这题归到固定房间里，后面复习时更容易回忆。',
-  ]
-
-  if (/climate|solar|heat|passive|active|thermal|sun|wind/i.test(clean)) {
-    keyPoints.unshift(
-      '这题更像环境策略 / building systems 逻辑题，先抓性能目标，再看手段。'
-    )
-  }
-
-  const memoryHook =
-    '复习时不要背整题，改记成：题目考点 + 正确逻辑 + 最容易误判的点。'
-
-  return {
-    correctAnswer: correctLine,
-    whyRight:
-      explanationLines[0] ||
-      '请从答案分析里提炼一句：这个选项为什么最符合题干条件。',
-    trapPoint:
-      explanationLines[1] ||
-      '最容易错在只看到表面关键词，却没有先判断题目真正考的系统逻辑。',
-    topicGuess,
-    keyPoints,
-    memoryHook,
-  }
-}
-
 export default function App() {
   const [selectedDivision, setSelectedDivision] = useState(() => getInitialDivision())
   const [selectedRoom, setSelectedRoom] = useState(() =>
@@ -356,6 +316,8 @@ export default function App() {
   )
   const [wrongAnswerImage, setWrongAnswerImage] = useState(null)
   const [wrongAnswerSummary, setWrongAnswerSummary] = useState(null)
+  const [savedWrongCards, setSavedWrongCards] = useState(() => getStoredCards())
+  const [expandedCardId, setExpandedCardId] = useState(null)
 
   const currentRooms = palaceData[selectedDivision].rooms
 
@@ -394,6 +356,13 @@ export default function App() {
     localStorage.setItem(STORAGE_KEYS.wrongAnswerText, wrongAnswerText)
   }, [wrongAnswerText])
 
+  useEffect(() => {
+    localStorage.setItem(
+      STORAGE_KEYS.wrongAnswerCards,
+      JSON.stringify(savedWrongCards)
+    )
+  }, [savedWrongCards])
+
   const result = useMemo(() => {
     return extractData(note, selectedDivision, selectedRoom)
   }, [note, selectedDivision, selectedRoom])
@@ -427,8 +396,11 @@ export default function App() {
     const file = event.target.files?.[0]
     if (!file) return
 
-    const imageUrl = URL.createObjectURL(file)
-    setWrongAnswerImage(imageUrl)
+    const reader = new FileReader()
+    reader.onloadend = () => {
+      setWrongAnswerImage(reader.result)
+    }
+    reader.readAsDataURL(file)
   }
 
   function handleAnalyzeWrongAnswer() {
@@ -451,17 +423,66 @@ export default function App() {
     const sample = `Question:
 Which strategy is most appropriate for reducing heat loss in a cold climate building?
 
-Correct Answer: Increase insulation and take advantage of solar heat gain.
+Utilize prefabricated building elements.
+Correct. By utilizing prefabricated building elements, there is less field-cutting of materials and job site waste can be decreased.
 
-Explanation:
-In cold climates, the building envelope should minimize heat loss and use passive solar gain when possible.
-A common trap is choosing a strategy focused mainly on reducing heat gain, which is more appropriate for hot climates.
-This question is testing climate-based passive design logic rather than a random isolated fact.`
+Utilize local labor.
+Incorrect. While it is always beneficial to utilize local labor, it does not specifically contribute to the client's goal of a sustainable project.
+
+Select products with high recycled content.
+Correct. By selecting products with high recycled content, fewer raw materials need to be harvested.
+
+Utilize smart technology.
+Correct. Utilizing smart technology within the building is a great way to allow for the property to be more efficient in its operation.
+
+Specify high-VOC paint.
+Incorrect. Specifying low-VOC paint would help the client achieve their goal of a sustainable project.
+
+Minimize field finishing of materials.
+Correct. By finishing materials in the factory, the contaminants in the air on the job site can be reduced.`
 
     setWrongAnswerText(sample)
     setWrongAnswerSummary(
       summarizeWrongAnswer(sample, selectedDivision, selectedRoom)
     )
+  }
+
+  function handleSaveToFlashcards() {
+    if (!wrongAnswerSummary) {
+      alert('请先先分析这道题，再保存成 flashcard。')
+      return
+    }
+
+    const newCard = {
+      id: Date.now(),
+      image: wrongAnswerImage || '',
+      rawText: wrongAnswerText,
+      division: selectedDivision,
+      room: selectedRoom,
+      savedAt: new Date().toLocaleString(),
+      summary: wrongAnswerSummary,
+    }
+
+    setSavedWrongCards((prev) => [newCard, ...prev])
+    setExpandedCardId(newCard.id)
+  }
+
+  function handleClearCurrentWrongAnswer() {
+    setWrongAnswerImage(null)
+    setWrongAnswerText('')
+    setWrongAnswerSummary(null)
+    localStorage.removeItem(STORAGE_KEYS.wrongAnswerText)
+  }
+
+  function handleDeleteCard(id) {
+    setSavedWrongCards((prev) => prev.filter((card) => card.id !== id))
+    if (expandedCardId === id) {
+      setExpandedCardId(null)
+    }
+  }
+
+  function toggleCard(id) {
+    setExpandedCardId((prev) => (prev === id ? null : id))
   }
 
   return (
@@ -629,6 +650,17 @@ This question is testing climate-based passive design logic rather than a random
                 >
                   Load Sample
                 </button>
+
+                <button className="small-action" onClick={handleSaveToFlashcards}>
+                  Save to Flashcards
+                </button>
+
+                <button
+                  className="small-action ghost"
+                  onClick={handleClearCurrentWrongAnswer}
+                >
+                  Clear Current
+                </button>
               </div>
             </div>
           </div>
@@ -670,6 +702,102 @@ This question is testing climate-based passive design logic rather than a random
                 <div className="card-title">Memory Hook</div>
                 <div className="card-text">{wrongAnswerSummary.memoryHook}</div>
               </div>
+            </div>
+          )}
+        </section>
+
+        <section className="panel big-panel">
+          <div className="section-title">Wrong Answer Flashcards</div>
+          <div className="section-subtitle">
+            分析完成后保存到这里，慢慢累积成你的错题记忆卡片库。
+          </div>
+
+          {savedWrongCards.length === 0 ? (
+            <div className="image-placeholder">
+              还没有保存的 flashcards。先分析一题，再点 Save to Flashcards。
+            </div>
+          ) : (
+            <div className="saved-cards-grid">
+              {savedWrongCards.map((card) => (
+                <div className="flashcard-card" key={card.id}>
+                  {card.image ? (
+                    <img
+                      src={card.image}
+                      alt="Saved flashcard"
+                      className="flashcard-thumb"
+                    />
+                  ) : (
+                    <div className="flashcard-thumb placeholder-thumb">
+                      No Image
+                    </div>
+                  )}
+
+                  <div className="flashcard-body">
+                    <div className="flashcard-tags">
+                      <span className="mini-tag">{card.division}</span>
+                      <span className="mini-tag">{card.room}</span>
+                    </div>
+
+                    <div className="flashcard-title">
+                      {card.summary.correctAnswer}
+                    </div>
+
+                    <div className="flashcard-meta">
+                      Saved: {card.savedAt}
+                    </div>
+
+                    <div className="flashcard-actions">
+                      <button
+                        className="small-action"
+                        onClick={() => toggleCard(card.id)}
+                      >
+                        {expandedCardId === card.id ? 'Hide' : 'View'}
+                      </button>
+
+                      <button
+                        className="small-action ghost"
+                        onClick={() => handleDeleteCard(card.id)}
+                      >
+                        Delete
+                      </button>
+                    </div>
+
+                    {expandedCardId === card.id && (
+                      <div className="flashcard-detail">
+                        <div className="card soft">
+                          <div className="card-title">Why It Is Right</div>
+                          <div className="card-text">
+                            {card.summary.whyRight}
+                          </div>
+                        </div>
+
+                        <div className="card soft">
+                          <div className="card-title">Trap Point</div>
+                          <div className="card-text">
+                            {card.summary.trapPoint}
+                          </div>
+                        </div>
+
+                        <div className="card soft">
+                          <div className="card-title">Memory Hook</div>
+                          <div className="card-text">
+                            {card.summary.memoryHook}
+                          </div>
+                        </div>
+
+                        <div className="card soft">
+                          <div className="card-title">Key Points</div>
+                          <ul className="key-points-list">
+                            {card.summary.keyPoints.map((point, index) => (
+                              <li key={index}>{point}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </section>
