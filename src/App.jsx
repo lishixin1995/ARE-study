@@ -240,6 +240,38 @@ function parseWrongAnswerBlocks(text) {
   return blocks
 }
 
+function buildWhyRightSummary(correctBlocks, clean) {
+  const themes = []
+
+  if (/prefabricat/i.test(clean)) {
+    themes.push('减少现场切割、施工废料和现场污染')
+  }
+  if (/recycled/i.test(clean)) {
+    themes.push('减少新原材料开采')
+  }
+  if (/smart technology|smart thermostat|occupancy sensor|automation/i.test(clean)) {
+    themes.push('提升建筑运行效率和 performance')
+  }
+  if (/field finishing|factory/i.test(clean)) {
+    themes.push('减少现场 VOC、粉尘和污染物')
+  }
+  if (/low-?voc/i.test(clean)) {
+    themes.push('降低有害排放')
+  }
+
+  if (themes.length > 0) {
+    return `这些正确选项共同点是：它们都直接服务题干目标，比如 ${themes.join('、')}。`
+  }
+
+  if (correctBlocks.length > 0) {
+    return correctBlocks
+      .map((item) => `${item.label}: ${item.explanation}`)
+      .join(' ')
+  }
+
+  return '没有稳定识别到正确选项，请先检查 OCR 文本。'
+}
+
 function simplifyTrapReason(block) {
   const label = block.label || ''
   const explanation = block.explanation || ''
@@ -249,7 +281,7 @@ function simplifyTrapReason(block) {
     lower.includes("doesn't specifically contribute") ||
     lower.includes('does not specifically contribute')
   ) {
-    return '这个选项不一定错，但不直接回应题干目标。'
+    return '不直接回应题干目标。'
   }
 
   if (lower.includes('high-voc') || lower.includes('high voc')) {
@@ -264,13 +296,38 @@ function simplifyTrapReason(block) {
     return '没有直接服务题干目标。'
   }
 
-  if (explanation) {
-    const firstSentence = explanation.split('. ')[0].trim()
-    if (firstSentence.length <= 45) return firstSentence
-    return `${firstSentence.slice(0, 45)}...`
+  return '看起来合理，但不属于这题真正要筛选的方向。'
+}
+
+function buildMemoryHook(clean, correctBlocks) {
+  const lower = clean.toLowerCase()
+  const hooks = []
+
+  if (lower.includes('sustainable') || lower.includes('recycled') || lower.includes('voc')) {
+    hooks.push('看到 sustainable materials / practices，要优先找减少 waste、减少 virgin materials、减少污染、提升运行效率的选项。')
   }
 
-  return '看起来合理，但不符合这题真正要筛选的方向。'
+  if (lower.includes('cold climate') || lower.includes('heat loss')) {
+    hooks.push('看到 cold climate / heat loss，先想保温、减少热损失、利用 solar gain。')
+  }
+
+  if (lower.includes('hot climate') || lower.includes('heat gain')) {
+    hooks.push('看到 hot climate / heat gain，先想遮阳、通风、控制热增益。')
+  }
+
+  if (lower.includes('voc')) {
+    hooks.push('看到 VOC，先判断方向，通常 low-VOC 才是可持续方向。')
+  }
+
+  if (correctBlocks.length > 1) {
+    hooks.push('多选题先抓题干目标，再逐项筛掉“听起来不错但不直接服务目标”的选项。')
+  }
+
+  if (hooks.length === 0) {
+    return '先抓题干目标，再判断哪个选项最直接满足它。'
+  }
+
+  return hooks.join(' ')
 }
 
 function summarizeWrongAnswer(text, division, room) {
@@ -285,11 +342,7 @@ function summarizeWrongAnswer(text, division, room) {
     ? correctBlocks.map((item) => item.label).join(' / ')
     : '未明确识别，请手动补充正确答案。'
 
-  const whyRight = correctBlocks.length
-    ? correctBlocks
-        .map((item) => `${item.label}: ${item.explanation}`)
-        .join(' ')
-    : '没有稳定识别到正确选项，请手动检查 OCR 结果。'
+  const whyRight = buildWhyRightSummary(correctBlocks, clean)
 
   const trapPoint = incorrectBlocks.length
     ? incorrectBlocks
@@ -298,41 +351,13 @@ function summarizeWrongAnswer(text, division, room) {
         .join(' ')
     : '最容易错在只看表面关键词，没有先抓题干真正目标。'
 
-  const keyPoints = []
-
-  if (/prefabricat/i.test(clean)) {
-    keyPoints.push('预制构件通常对应减少现场切割、减少施工废料和现场污染。')
-  }
-  if (/recycled/i.test(clean)) {
-    keyPoints.push('高 recycled content 常对应减少新原材料开采。')
-  }
-  if (/smart technology|smart thermostat|occupancy sensor|automation/i.test(clean)) {
-    keyPoints.push('smart technology 更偏建筑运营效率和 performance。')
-  }
-  if (/high-?voc|low-?voc/i.test(clean)) {
-    keyPoints.push('VOC 题先分清方向，通常 low VOC 才是可持续方向。')
-  }
-  if (/field finishing|factory/i.test(clean)) {
-    keyPoints.push('减少现场 finishing、转向工厂完成，通常有助于减少污染物和粉尘。')
-  }
-
-  if (keyPoints.length === 0) {
-    keyPoints.push('先判断题干真正目标，再筛选哪些选项直接服务这个目标。')
-    keyPoints.push('不要只背正确项，也要记为什么其他项错。')
-    keyPoints.push('把这题归进固定房间，后面复习更容易提取。')
-  }
-
-  const memoryHook =
-    correctBlocks.length > 1
-      ? '多选题先抓题干目标，再逐项筛掉“看起来不错但不直接服务目标”的选项。'
-      : '先抓题干目标，再找最直接满足目标的选项。'
+  const memoryHook = buildMemoryHook(clean, correctBlocks)
 
   return {
     correctAnswer,
     whyRight,
     trapPoint,
     topicGuess: `${division} → ${room}`,
-    keyPoints,
     memoryHook,
   }
 }
@@ -356,6 +381,7 @@ export default function App() {
   const [wrongAnswerSummary, setWrongAnswerSummary] = useState(null)
   const [savedWrongCards, setSavedWrongCards] = useState(() => getStoredCards())
   const [expandedCardId, setExpandedCardId] = useState(null)
+  const [showDebugPreview, setShowDebugPreview] = useState(false)
 
   const [ocrLoading, setOcrLoading] = useState(false)
   const [ocrStatus, setOcrStatus] = useState('')
@@ -465,7 +491,7 @@ export default function App() {
       setOcrStatus('Starting OCR...')
       setOcrProgress(0)
 
-      const result = await Tesseract.recognize(wrongAnswerImage, 'eng', {
+      const ocrResult = await Tesseract.recognize(wrongAnswerImage, 'eng', {
         logger: (message) => {
           if (message.status) setOcrStatus(message.status)
           if (typeof message.progress === 'number') {
@@ -474,7 +500,7 @@ export default function App() {
         },
       })
 
-      const extractedText = result?.data?.text?.trim() || ''
+      const extractedText = ocrResult?.data?.text?.trim() || ''
       setWrongAnswerText(extractedText)
       setWrongAnswerSummary(null)
       setOcrStatus('OCR finished')
@@ -818,60 +844,80 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
           {parsedBlocks.length > 0 && (
             <div className="wrong-answer-result">
               <div className="card soft">
-                <div className="card-title">Parsed Blocks</div>
                 <div
                   style={{
-                    display: 'grid',
-                    gap: '10px',
-                    marginTop: '12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: '12px',
                   }}
                 >
-                  {parsedBlocks.map((block, index) => (
-                    <div
-                      key={`${block.label}-${index}`}
-                      style={{
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '14px',
-                        padding: '12px',
-                        background: '#fff',
-                      }}
-                    >
+                  <div className="card-title">Debug Parse Preview</div>
+                  <button
+                    className="small-action ghost"
+                    onClick={() => setShowDebugPreview((prev) => !prev)}
+                  >
+                    {showDebugPreview ? 'Hide Debug' : 'Show Debug'}
+                  </button>
+                </div>
+
+                {showDebugPreview && (
+                  <div
+                    style={{
+                      display: 'grid',
+                      gap: '10px',
+                      marginTop: '12px',
+                    }}
+                  >
+                    {parsedBlocks.map((block, index) => (
                       <div
+                        key={`${block.label}-${index}`}
                         style={{
-                          display: 'flex',
-                          gap: '8px',
-                          flexWrap: 'wrap',
-                          marginBottom: '8px',
-                          alignItems: 'center',
+                          border: '1px solid #e5e7eb',
+                          borderRadius: '14px',
+                          padding: '12px',
+                          background: '#fff',
                         }}
                       >
-                        <strong>{block.label}</strong>
-                        <span
+                        <div
                           style={{
-                            fontSize: '12px',
-                            borderRadius: '999px',
-                            padding: '4px 8px',
-                            background:
-                              block.status === 'correct'
-                                ? '#dcfce7'
-                                : block.status === 'incorrect'
-                                ? '#fee2e2'
-                                : '#e5e7eb',
-                            color:
-                              block.status === 'correct'
-                                ? '#166534'
-                                : block.status === 'incorrect'
-                                ? '#991b1b'
-                                : '#374151',
+                            display: 'flex',
+                            gap: '8px',
+                            flexWrap: 'wrap',
+                            marginBottom: '8px',
+                            alignItems: 'center',
                           }}
                         >
-                          {block.status || 'unknown'}
-                        </span>
+                          <strong>{block.label}</strong>
+                          <span
+                            style={{
+                              fontSize: '12px',
+                              borderRadius: '999px',
+                              padding: '4px 8px',
+                              background:
+                                block.status === 'correct'
+                                  ? '#dcfce7'
+                                  : block.status === 'incorrect'
+                                  ? '#fee2e2'
+                                  : '#e5e7eb',
+                              color:
+                                block.status === 'correct'
+                                  ? '#166534'
+                                  : block.status === 'incorrect'
+                                  ? '#991b1b'
+                                  : '#374151',
+                            }}
+                          >
+                            {block.status}
+                          </span>
+                        </div>
+                        <div className="card-text">
+                          {block.explanation || 'No explanation detected.'}
+                        </div>
                       </div>
-                      <div className="card-text">{block.explanation || 'No explanation detected.'}</div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -879,13 +925,13 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
           {wrongAnswerSummary && (
             <div className="wrong-answer-result">
               <div className="card soft">
-                <div className="card-title">Correct Answer</div>
+                <div className="card-title">Correct Answers</div>
                 <div className="card-text">{wrongAnswerSummary.correctAnswer}</div>
               </div>
 
               <div className="card-grid three-col">
                 <div className="card">
-                  <div className="card-title">Why It Is Right</div>
+                  <div className="card-title">Why These Are Right</div>
                   <div className="card-text">{wrongAnswerSummary.whyRight}</div>
                 </div>
 
@@ -898,15 +944,6 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
                   <div className="card-title">ARE Topic</div>
                   <div className="card-text">{wrongAnswerSummary.topicGuess}</div>
                 </div>
-              </div>
-
-              <div className="card">
-                <div className="card-title">Key Points to Remember</div>
-                <ul className="key-points-list">
-                  {wrongAnswerSummary.keyPoints.map((point, index) => (
-                    <li key={index}>{point}</li>
-                  ))}
-                </ul>
               </div>
 
               <div className="card">
@@ -1031,9 +1068,29 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
 
                     {expandedCardId === card.id && (
                       <div style={{ marginTop: '14px', display: 'grid', gap: '12px' }}>
+                        <div className="card soft">
+                          <div className="card-title">Correct Answers</div>
+                          <div className="card-text">{card.summary.correctAnswer}</div>
+                        </div>
+
+                        <div className="card soft">
+                          <div className="card-title">Why These Are Right</div>
+                          <div className="card-text">{card.summary.whyRight}</div>
+                        </div>
+
+                        <div className="card soft">
+                          <div className="card-title">Trap Point</div>
+                          <div className="card-text">{card.summary.trapPoint}</div>
+                        </div>
+
+                        <div className="card soft">
+                          <div className="card-title">Memory Hook</div>
+                          <div className="card-text">{card.summary.memoryHook}</div>
+                        </div>
+
                         {card.parsedBlocks?.length > 0 && (
                           <div className="card soft">
-                            <div className="card-title">Parsed Blocks</div>
+                            <div className="card-title">Debug Parse Preview</div>
                             <div style={{ display: 'grid', gap: '10px', marginTop: '12px' }}>
                               {card.parsedBlocks.map((block, index) => (
                                 <div
@@ -1077,30 +1134,6 @@ Correct. By finishing materials in the factory, the contaminants in the air on t
                             </div>
                           </div>
                         )}
-
-                        <div className="card soft">
-                          <div className="card-title">Why It Is Right</div>
-                          <div className="card-text">{card.summary.whyRight}</div>
-                        </div>
-
-                        <div className="card soft">
-                          <div className="card-title">Trap Point</div>
-                          <div className="card-text">{card.summary.trapPoint}</div>
-                        </div>
-
-                        <div className="card soft">
-                          <div className="card-title">Memory Hook</div>
-                          <div className="card-text">{card.summary.memoryHook}</div>
-                        </div>
-
-                        <div className="card soft">
-                          <div className="card-title">Key Points</div>
-                          <ul className="key-points-list">
-                            {card.summary.keyPoints.map((point, index) => (
-                              <li key={index}>{point}</li>
-                            ))}
-                          </ul>
-                        </div>
 
                         <div className="card soft">
                           <div className="card-title">Raw OCR Text</div>
