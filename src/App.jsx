@@ -177,7 +177,9 @@ function summarizeWrongAnswer(text, division, room) {
     ) || '未明确识别，请手动补充正确答案。'
 
   const explanationLines = lines.filter((line) =>
-    /because|therefore|so|reason|explanation|因为|所以|因此|解析|原因/i.test(line)
+    /because|therefore|so|reason|explanation|because|解析|原因|因为|所以|因此/i.test(
+      line
+    )
   )
 
   const topicGuess = `${division} → ${room}`
@@ -189,7 +191,9 @@ function summarizeWrongAnswer(text, division, room) {
   ]
 
   if (/climate|solar|heat|passive|active|thermal|sun|wind/i.test(clean)) {
-    keyPoints.unshift('这题更像环境策略 / building systems 逻辑题，先抓性能目标，再看手段。')
+    keyPoints.unshift(
+      '这题更像环境策略 / building systems 逻辑题，先抓性能目标，再看手段。'
+    )
   }
 
   const memoryHook =
@@ -302,6 +306,13 @@ export default function App() {
   }
 
   function handleAnalyzeWrongAnswer() {
+    if (!wrongAnswerText.trim()) {
+      alert(
+        '请先把题目、答案和解析文字粘贴到右边文本框里。当前上传图片只支持预览，还没有自动提取文字。'
+      )
+      return
+    }
+
     const summary = summarizeWrongAnswer(
       wrongAnswerText,
       selectedDivision,
