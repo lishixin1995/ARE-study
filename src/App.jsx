@@ -1,1062 +1,265 @@
-import { useEffect, useMemo, useState } from "react";
-import Tesseract from "tesseract.js";
-import "./App.css";
+import React, { useState, useEffect, useMemo } from 'react';
 
-const DIVISIONS = ["PA", "PPD", "PDD", "PCM", "PJM", "CE"];
+// ==========================================
+// 🧠 核心解析引擎 (更强悍的容错和正则)
+// ==========================================
 
-const ROOMS_BY_DIVISION = {
-  PA: ["Site", "Zoning", "Code", "Programming"],
-  PPD: ["Site", "Climate", "Structure", "Systems"],
-  PDD: ["Envelope", "Detailing", "Materials", "Documentation"],
-  PCM: ["Practice", "Risk", "Contracts", "Finance"],
-  PJM: ["Team", "Schedule", "CA", "Delivery"],
-  CE: ["Site Visit", "Submittals", "RFI", "Punch List"]
+const splitLines = (text) => (text ? text.split('\n').filter(line => line.trim() !== '') : []);
+
+// 提取带有明确标签的内容 (如 Question:, Memory Hook:)
+const extractLabeledContent = (text, label) => {
+  // 容忍各种标点符号、空格和换行
+  const regex = new RegExp(`(?:${label})[\\s]*(?:[:：]|)[\\s]*([\\s\\S]*?)(?=(?:\\n(?:Question|Correct Answer|Summary|Trap Point|Memory Hook|Extraction)[\\s]*(?:[:：]|))|\\n(?:☑|✔|☐|❌|\\[x\\]|\\[ \\])?\\s*(?:Correct|Incorrect)\\b|$)`, 'i');
+  const match = (text || "").match(regex);
+  return match ? match[1].trim() : null;
 };
 
-const SAMPLE_BY_DIVISION = {
-  PA: `Site analysis should start with climate, zoning, topography, and access.
-Programming should connect client needs to spatial requirements.
-Early code review helps define occupancy, egress, and height/area limits.`,
+// 终极智能解析器
+const buildLiveAnalysis = (text) => {
+  if (!text.trim()) return null;
 
-  PPD: `Building system: active system relies on mechanical equipment and uses more energy.
-Passive system relies on sun, air, and wind flow.
-In cold climate, reduce heat loss and gain solar heat.
-In hot climate, control heat gain and optimize natural ventilation.
-Trombe wall helps stabilize temperature but takes more space.`,
+  const allLines = splitLines(text);
+  
+  // 1. 抓取题目 (如果没有 Question 标签，默认前两行没标签的话就是题目)
+  let question = extractLabeledContent(text, "Question|Q");
+  if (!question && allLines.length > 0) {
+    question = allLines.find(l => !/^(correct|incorrect|extraction|trap|memory|summary)/i.test(l)) || "No question detected.";
+  }
 
-  PDD: `Envelope detailing must control water, air, vapor, and thermal transfer.
-Material selection affects durability, constructability, and maintenance.
-Documentation should clearly coordinate assemblies, dimensions, and specifications.`,
+  // 2. 抓取答案标签
+  const answer = extractLabeledContent(text, "Correct Answer|Answer") || "Check options below";
 
-  PCM: `Practice management connects staffing, risk, finance, and firm operations.
-A sustainable office workflow depends on planning, communication, and resource control.`,
+  // 3. 智能抓取知识点 (寻找 Correct 开头或带标签的行)
+  let extraction = extractLabeledContent(text, "Extraction|Answer Extraction");
+  extraction = extraction ? splitLines(extraction) : [];
+  if (extraction.length === 0) {
+    // 匹配: "Correct.", "Correct:", "☑ Correct", 等
+    const correctRegex = /^(?:☑|✔|\[x\]|✓)?\s*Correct[\.\s:-]+/i;
+    extraction = allLines.filter(l => correctRegex.test(l.trim())).map(l => l.replace(correctRegex, '').trim());
+  }
 
-  PJM: `Project management coordinates scope, schedule, consultant communication, and delivery expectations.
-Construction administration requires tracking submittals, RFIs, and field conditions.`,
+  // 4. 智能抓取陷阱 (寻找 Incorrect 开头或带标签的行)
+  let trap = extractLabeledContent(text, "Trap Point|Trap");
+  trap = trap ? splitLines(trap) : [];
+  if (trap.length === 0) {
+    const incorrectRegex = /^(?:☐|❌|\[\s\]|✗)?\s*Incorrect[\.\s:-]+/i;
+    trap = allLines.filter(l => incorrectRegex.test(l.trim())).map(l => l.replace(incorrectRegex, '').trim());
+  }
 
-  CE: `Construction evaluation depends on site observation, documentation, and follow-up.
-Punch list review compares completed work against contract expectations.`
+  // 5. 抓取记忆钩子
+  const hook = extractLabeledContent(text, "Memory Hook|Hook") || "";
+
+  return { question, answer, extraction, trap, hook };
 };
 
-function splitSentences(text) {
-  return (text || "")
-    .replace(/\r/g, "")
-    .replace(/\n+/g, " ")
-    .split(/(?<=[.!?])\s+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function splitLines(text) {
-  return (text || "")
-    .replace(/\r/g, "")
-    .split("\n")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function capitalizeWords(text) {
-  return (text || "")
-    .split(" ")
-    .map((word) =>
-      word ? word.charAt(0).toUpperCase() + word.slice(1) : word
-    )
-    .join(" ");
-}
-
-function buildCaptureSummary(text) {
-  const sentences = splitSentences(text);
-  if (sentences.length >= 2) return `${sentences[0]} ${sentences[1]}`;
-  if (sentences.length === 1) return sentences[0];
-  return "No notes yet for this topic.";
-}
-
-function buildCaptureExtraction(text) {
-  const lines = splitLines(text);
-  if (lines.length >= 4) return lines.slice(0, 4);
-
-  const sentences = splitSentences(text);
-  if (sentences.length >= 4) return sentences.slice(0, 4);
-
-  if (lines.length > 0) return lines;
-  return ["Start typing or save notes in this topic to generate extraction."];
-}
-
-function buildCaptureBulletPoints(text) {
-  const lower = (text || "").toLowerCase();
-  const points = [];
-
-  if (lower.includes("active system")) {
-    points.push("Active systems usually depend on equipment and direct control.");
-  }
-
-  if (lower.includes("passive system")) {
-    points.push("Passive systems usually depend on climate, orientation, air, or sun.");
-  }
-
-  if (lower.includes("cold climate") || lower.includes("heat loss")) {
-    points.push("Cold-climate strategies often start with reducing heat loss.");
-  }
-
-  if (lower.includes("hot climate") || lower.includes("heat gain")) {
-    points.push("Hot-climate strategies often focus on controlling heat gain and ventilation.");
-  }
-
-  if (lower.includes("trombe wall")) {
-    points.push("Trombe wall is a passive thermal strategy and needs space.");
-  }
-
-  if (lower.includes("envelope")) {
-    points.push("Envelope design must coordinate water, air, vapor, and thermal control.");
-  }
-
-  if (lower.includes("documentation")) {
-    points.push("Documentation should coordinate dimensions, assemblies, and specifications clearly.");
-  }
-
-  if (points.length) return points;
-
-  const extraction = buildCaptureExtraction(text);
-  return extraction.slice(0, 3);
-}
-
-function buildCaptureLogicLinks(text) {
-  const lower = (text || "").toLowerCase();
-  const links = [];
-
-  if (
-    lower.includes("passive system") ||
-    lower.includes("sun") ||
-    lower.includes("air") ||
-    lower.includes("wind")
-  ) {
-    links.push("Passive System → depends on → Sun / Air / Wind");
-  }
-
-  if (lower.includes("active system") || lower.includes("mechanical equipment")) {
-    links.push("Active System → relies on → Mechanical Equipment");
-  }
-
-  if (lower.includes("cold climate") || lower.includes("heat loss")) {
-    links.push("Cold Climate → goal → Reduce Heat Loss");
-  }
-
-  if (lower.includes("hot climate") || lower.includes("heat gain")) {
-    links.push("Hot Climate → goal → Control Heat Gain");
-  }
-
-  if (lower.includes("cold climate") && lower.includes("hot climate")) {
-    links.push("Cold Climate ↔ contrasts with ↔ Hot Climate");
-  }
-
-  if (lower.includes("trombe wall")) {
-    links.push("Trombe Wall → example of → Passive Strategy");
-  }
-
-  if (lower.includes("envelope detailing")) {
-    links.push("Envelope Detailing → controls → Water / Air / Vapor / Thermal Transfer");
-  }
-
-  if (lower.includes("material selection")) {
-    links.push("Material Selection → affects → Durability / Constructability / Maintenance");
-  }
-
-  if (lower.includes("documentation")) {
-    links.push("Documentation → coordinates → Assemblies / Dimensions / Specifications");
-  }
-
-  if (!links.length) {
-    links.push("Start typing or save notes to generate logic links.");
-  }
-
-  return links;
-}
-
-function node(label, relation = null, children = []) {
-  return { label, relation, children };
-}
-
-function buildCaptureLogicForest(text) {
-  const lower = (text || "").toLowerCase();
-  const trees = [];
-
-  const systemsChildren = [];
-
-  if (lower.includes("active system") || lower.includes("mechanical equipment")) {
-    const activeChildren = [];
-
-    if (lower.includes("mechanical equipment")) {
-      activeChildren.push(node("Mechanical Equipment", "relies on"));
-    }
-
-    if (lower.includes("more energy") || lower.includes("energy")) {
-      activeChildren.push(node("Higher Energy Use", "effect"));
-    }
-
-    systemsChildren.push(node("Active System", "category", activeChildren));
-  }
-
-  if (
-    lower.includes("passive system") ||
-    lower.includes("sun") ||
-    lower.includes("air") ||
-    lower.includes("wind")
-  ) {
-    const passiveChildren = [];
-
-    if (lower.includes("sun")) passiveChildren.push(node("Sun", "depends on"));
-    if (lower.includes("air")) passiveChildren.push(node("Air", "depends on"));
-    if (lower.includes("wind")) passiveChildren.push(node("Wind", "depends on"));
-
-    systemsChildren.push(node("Passive System", "category", passiveChildren));
-  }
-
-  if (systemsChildren.length) {
-    trees.push(node("Building Systems", null, systemsChildren));
-  }
-
-  const climateChildren = [];
-
-  if (lower.includes("cold climate") || lower.includes("heat loss") || lower.includes("solar heat")) {
-    const coldChildren = [];
-    if (lower.includes("heat loss")) coldChildren.push(node("Reduce Heat Loss", "goal"));
-    if (lower.includes("solar heat")) coldChildren.push(node("Gain Solar Heat", "goal"));
-    climateChildren.push(node("Cold Climate", "category", coldChildren));
-  }
-
-  if (lower.includes("hot climate") || lower.includes("heat gain") || lower.includes("ventilation")) {
-    const hotChildren = [];
-    if (lower.includes("heat gain")) hotChildren.push(node("Control Heat Gain", "goal"));
-    if (lower.includes("ventilation")) hotChildren.push(node("Natural Ventilation", "strategy"));
-    climateChildren.push(node("Hot Climate", "category", hotChildren));
-  }
-
-  if (climateChildren.length) {
-    trees.push(node("Climate Strategy", null, climateChildren));
-  }
-
-  const exampleChildren = [];
-
-  if (lower.includes("trombe wall")) {
-    const trombeChildren = [];
-    if (lower.includes("stabilize temperature")) {
-      trombeChildren.push(node("Stabilize Temperature", "effect"));
-    }
-    if (lower.includes("more space") || lower.includes("takes more space")) {
-      trombeChildren.push(node("Takes More Space", "tradeoff"));
-    }
-    exampleChildren.push(node("Trombe Wall", "example", trombeChildren));
-  }
-
-  if (exampleChildren.length) {
-    trees.push(node("Examples / Tradeoffs", null, exampleChildren));
-  }
-
-  const envelopeChildren = [];
-
-  if (lower.includes("envelope detailing")) {
-    const detailChildren = [];
-    if (lower.includes("water")) detailChildren.push(node("Water", "controls"));
-    if (lower.includes("air")) detailChildren.push(node("Air", "controls"));
-    if (lower.includes("vapor")) detailChildren.push(node("Vapor", "controls"));
-    if (lower.includes("thermal transfer")) {
-      detailChildren.push(node("Thermal Transfer", "controls"));
-    }
-    envelopeChildren.push(node("Envelope Detailing", "category", detailChildren));
-  }
-
-  if (lower.includes("material selection")) {
-    const materialChildren = [];
-    if (lower.includes("durability")) materialChildren.push(node("Durability", "affects"));
-    if (lower.includes("constructability")) {
-      materialChildren.push(node("Constructability", "affects"));
-    }
-    if (lower.includes("maintenance")) materialChildren.push(node("Maintenance", "affects"));
-    envelopeChildren.push(node("Material Selection", "category", materialChildren));
-  }
-
-  if (lower.includes("documentation")) {
-    const documentationChildren = [];
-    if (lower.includes("assemblies")) documentationChildren.push(node("Assemblies", "coordinates"));
-    if (lower.includes("dimensions")) documentationChildren.push(node("Dimensions", "coordinates"));
-    if (lower.includes("specifications")) {
-      documentationChildren.push(node("Specifications", "coordinates"));
-    }
-    envelopeChildren.push(node("Documentation", "category", documentationChildren));
-  }
-
-  if (envelopeChildren.length) {
-    trees.push(node("Envelope / Documentation", null, envelopeChildren));
-  }
-
-  if (!trees.length) {
-    const fallbackLines = buildCaptureExtraction(text).slice(0, 3);
-    trees.push(
-      node(
-        "Key Concepts",
-        null,
-        fallbackLines.map((line) => node(line, "note"))
-      )
-    );
-  }
-
-  return trees;
-}
-
-// ------------------------------------------------------------------
-// 🌟 修复部分开始：全新的正则解析函数 🌟
-// ------------------------------------------------------------------
-
-function buildWrongQuestionQuestionText(text) {
-  // 匹配 "Question:" 或 "Q:" 后面的内容
-  const match = (text || "").match(/(?:Question|Q)[\s]*[:：]\s*([\s\S]*?)(?=(?:\n(?:Correct Answer|Summary|Trap Point|Memory Hook|Extraction)[\s]*[:：])|$)/i);
-  if (match && match[1].trim()) return match[1].trim();
-
-  // 如果没有标签，默认抓取前几行
-  const lines = splitLines(text).filter(line => !/^(correct answer|summary|trap point|memory hook|extraction|question)[\s]*[:\-：]/i.test(line));
-  if (!lines.length) return "No question text yet. (Tip: Type 'Question: ...')";
-  return lines.slice(0, 5).join(" ");
-}
-
-function buildWrongQuestionSummary(text) {
-  const sentences = splitSentences(text);
-  if (sentences.length >= 2) return `${sentences[0]} ${sentences[1]}`;
-  if (sentences.length === 1) return sentences[0];
-  return "No wrong-question content yet.";
-}
-
-function buildWrongQuestionCorrectAnswer(text) {
-  const match = (text || "").match(/(?:Correct Answer|Answer)[\s]*[:：]\s*(.+)/i);
-  if (match && match[1].trim()) return match[1].trim();
-  return "Not detected. (Tip: Type 'Correct Answer: ...')";
-}
-
-function buildWrongQuestionAnswerExtraction(text) {
-  const match = (text || "").match(/(?:Extraction|Answer Extraction)[\s]*[:：]\s*([\s\S]*?)(?=(?:\n(?:Question|Correct Answer|Summary|Trap Point|Memory Hook)[\s]*[:：])|$)/i);
-  if (match && match[1].trim()) return splitLines(match[1]);
-  return ["Not detected. (Tip: Type 'Extraction: ...')"];
-}
-
-function buildWrongQuestionTrapPoint(text) {
-  const match = (text || "").match(/Trap Point[\s]*[:：]\s*([\s\S]*?)(?=(?:\n(?:Question|Correct Answer|Summary|Memory Hook|Extraction)[\s]*[:：])|$)/i);
-  if (match && match[1].trim()) return splitLines(match[1]);
-  return ["Not detected. (Tip: Type 'Trap Point: ...')"];
-}
-
-function buildWrongQuestionMemoryHook(text) {
-  const match = (text || "").match(/Memory Hook[\s]*[:：]\s*(.+)/i);
-  if (match && match[1].trim()) return match[1].trim();
-  return "Not detected. (Tip: Type 'Memory Hook: ...')";
-}
-
-function buildWrongQuestionAnalysis(text) {
-  return {
-    questionText: buildWrongQuestionQuestionText(text),
-    summary: buildWrongQuestionSummary(text),
-    correctAnswer: buildWrongQuestionCorrectAnswer(text),
-    answerExtraction: buildWrongQuestionAnswerExtraction(text),
-    trapPoint: buildWrongQuestionTrapPoint(text),
-    memoryHook: buildWrongQuestionMemoryHook(text)
-  };
-}
-
-// ------------------------------------------------------------------
-// 🌟 修复部分结束 🌟
-// ------------------------------------------------------------------
-
-function readSavedNotesByTopic() {
-  try {
-    const raw = localStorage.getItem("savedNotesByTopic");
-    if (!raw) return {};
-    return JSON.parse(raw);
-  } catch {
-    return {};
-  }
-}
-
-function readWrongQuestionFlashcards() {
-  try {
-    const raw = localStorage.getItem("wrongQuestionFlashcards");
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
-
-function formatSavedAt(dateString) {
-  if (!dateString) return "";
-  const d = new Date(dateString);
-  if (Number.isNaN(d.getTime())) return dateString;
-  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${d.toLocaleTimeString()}`;
-}
-
-function LogicTreeNode({ tree, depth = 0 }) {
-  return (
-    <div className={`logic-tree-level depth-${depth}`}>
-      <div className="logic-tree-row">
-        {tree.relation ? (
-          <span className={`logic-relation-pill relation-${tree.relation.replace(/\s+/g, "-")}`}>
-            {capitalizeWords(tree.relation)}
-          </span>
-        ) : null}
-
-        <div className={`logic-node-card ${depth === 0 ? "root" : ""}`}>
-          {tree.label}
-        </div>
-      </div>
-
-      {tree.children?.length ? (
-        <div className="logic-children">
-          {tree.children.map((child, index) => (
-            <LogicTreeNode key={`${child.label}-${index}`} tree={child} depth={depth + 1} />
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
+// ==========================================
+// 🎨 主控面板组件
+// ==========================================
 
 export default function App() {
-  const [selectedDivision, setSelectedDivision] = useState("PPD");
-  const [selectedRoom, setSelectedRoom] = useState("Site");
+  const [inputText, setInputText] = useState("");
+  const [cards, setCards] = useState([]);
+  const [syncStatus, setSyncStatus] = useState("Connecting to Cloud ☁️...");
+  const [isSaving, setIsSaving] = useState(false);
 
-  const [captureDraft, setCaptureDraft] = useState("");
-  const [debouncedCaptureDraft, setDebouncedCaptureDraft] = useState("");
-  const [savedNotesByTopic, setSavedNotesByTopic] = useState(() => readSavedNotesByTopic());
-  const [captureStatus, setCaptureStatus] = useState("Ready.");
+  // 实时预览分析结果
+  const liveAnalysis = useMemo(() => buildLiveAnalysis(inputText), [inputText]);
 
-  const [wrongQuestionImageFile, setWrongQuestionImageFile] = useState(null);
-  const [wrongQuestionImagePreview, setWrongQuestionImagePreview] = useState("");
-  const [wrongQuestionOcrText, setWrongQuestionOcrText] = useState("");
-  const [wrongQuestionDraftText, setWrongQuestionDraftText] = useState("");
-  const [wrongQuestionStatus, setWrongQuestionStatus] = useState("Ready.");
-  const [isRunningOcr, setIsRunningOcr] = useState(false);
-  const [wrongQuestionFlashcards, setWrongQuestionFlashcards] = useState(() =>
-    readWrongQuestionFlashcards()
-  );
-  const [flashcardIndex, setFlashcardIndex] = useState(0);
-  const [expandedImage, setExpandedImage] = useState("");
-
-  const currentTopicKey = useMemo(() => {
-    return `${selectedDivision}::${selectedRoom}`;
-  }, [selectedDivision, selectedRoom]);
-
-  const rooms = ROOMS_BY_DIVISION[selectedDivision] || [];
-
-  const savedNotesForTopic = useMemo(() => {
-    return savedNotesByTopic[currentTopicKey] || [];
-  }, [savedNotesByTopic, currentTopicKey]);
-
+  // 初次加载数据
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setDebouncedCaptureDraft(captureDraft);
-    }, 1200);
+    const loadData = async () => {
+      try {
+        const res = await fetch('/api/sync');
+        if (res.ok) {
+          const data = await res.json();
+          const cloudCards = data.find(item => item.key === 'are_cards')?.value || [];
+          setCards(cloudCards);
+          setSyncStatus("Cloud Synced ✅");
+        } else {
+          throw new Error("API error");
+        }
+      } catch (e) {
+        const local = localStorage.getItem('are_cards');
+        if (local) setCards(JSON.parse(local));
+        setSyncStatus("Offline Mode ⚠️");
+      }
+    };
+    loadData();
+  }, []);
 
-    return () => clearTimeout(timer);
-  }, [captureDraft]);
-
-  useEffect(() => {
-    localStorage.setItem("savedNotesByTopic", JSON.stringify(savedNotesByTopic));
-  }, [savedNotesByTopic]);
-
-  useEffect(() => {
-    localStorage.setItem(
-      "wrongQuestionFlashcards",
-      JSON.stringify(wrongQuestionFlashcards)
-    );
-  }, [wrongQuestionFlashcards]);
-
-  useEffect(() => {
-    if (flashcardIndex > wrongQuestionFlashcards.length - 1) {
-      setFlashcardIndex(Math.max(0, wrongQuestionFlashcards.length - 1));
-    }
-  }, [wrongQuestionFlashcards, flashcardIndex]);
-
-  const savedTopicText = useMemo(() => {
-    return savedNotesForTopic.map((item) => item.text).join("\n\n");
-  }, [savedNotesForTopic]);
-
-  const effectiveCaptureText = useMemo(() => {
-    const saved = savedTopicText.trim();
-    const draft = debouncedCaptureDraft.trim();
-
-    if (saved && draft) return `${saved}\n\n${draft}`;
-    if (saved) return saved;
-    if (draft) return draft;
-    return "";
-  }, [savedTopicText, debouncedCaptureDraft]);
-
-  const captureSummary = useMemo(() => {
-    return buildCaptureSummary(effectiveCaptureText);
-  }, [effectiveCaptureText]);
-
-  const captureExtraction = useMemo(() => {
-    return buildCaptureExtraction(effectiveCaptureText);
-  }, [effectiveCaptureText]);
-
-  const captureBulletPoints = useMemo(() => {
-    return buildCaptureBulletPoints(effectiveCaptureText);
-  }, [effectiveCaptureText]);
-
-  const captureLogicLinks = useMemo(() => {
-    return buildCaptureLogicLinks(effectiveCaptureText);
-  }, [effectiveCaptureText]);
-
-  const captureLogicForest = useMemo(() => {
-    return buildCaptureLogicForest(effectiveCaptureText);
-  }, [effectiveCaptureText]);
-
-  const wrongQuestionAnalysis = useMemo(() => {
-    return buildWrongQuestionAnalysis(wrongQuestionDraftText);
-  }, [wrongQuestionDraftText]);
-
-  const currentFlashcard = wrongQuestionFlashcards[flashcardIndex] || null;
-
-  const handleSaveNote = () => {
-    const trimmed = captureDraft.trim();
-    if (!trimmed) {
-      setCaptureStatus("Capture editor is empty.");
-      return;
-    }
-
-    const newNote = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      text: trimmed,
+  // 保存动作
+  const handleSave = async () => {
+    if (!liveAnalysis) return;
+    setIsSaving(true);
+    
+    const newCard = { 
+      id: Date.now(), 
+      text: inputText, 
+      analysis: liveAnalysis,
       savedAt: new Date().toISOString()
     };
-
-    setSavedNotesByTopic((prev) => {
-      const current = prev[currentTopicKey] || [];
-      return {
-        ...prev,
-        [currentTopicKey]: [...current, newNote]
-      };
-    });
-
-    setCaptureDraft("");
-    setDebouncedCaptureDraft("");
-    setCaptureStatus(`Saved 1 note to ${currentTopicKey}.`);
-  };
-
-  const handleLoadSavedNotes = () => {
-    if (!savedNotesForTopic.length) {
-      setCaptureStatus(`No saved notes found for ${currentTopicKey}.`);
-      return;
-    }
-
-    setCaptureStatus(
-      `${currentTopicKey} already has ${savedNotesForTopic.length} saved notes. Current analysis is already using them.`
-    );
-  };
-
-  const handleLoadTopicSample = () => {
-    const sample = SAMPLE_BY_DIVISION[selectedDivision] || "";
-    setCaptureDraft(sample);
-    setCaptureStatus(`Loaded ${selectedDivision} sample. Analysis will update in about 1 second.`);
-  };
-
-  const handleClearEditor = () => {
-    setCaptureDraft("");
-    setDebouncedCaptureDraft("");
-    setCaptureStatus("Capture editor cleared.");
-  };
-
-  const handleWrongQuestionImageChange = (event) => {
-    const file = event.target.files?.[0] || null;
-
-    if (!file) {
-      setWrongQuestionImageFile(null);
-      setWrongQuestionImagePreview("");
-      setWrongQuestionStatus("No image selected.");
-      return;
-    }
-
-    setWrongQuestionImageFile(file);
-    setWrongQuestionStatus(`Selected image: ${file.name}`);
-
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setWrongQuestionImagePreview(
-        typeof reader.result === "string" ? reader.result : ""
-      );
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const handleRunOcr = async () => {
-    if (!wrongQuestionImageFile) {
-      setWrongQuestionStatus("Please select an image first.");
-      return;
-    }
+    const updatedCards = [newCard, ...cards];
+    
+    setCards(updatedCards);
+    localStorage.setItem('are_cards', JSON.stringify(updatedCards));
 
     try {
-      setIsRunningOcr(true);
-      setWrongQuestionStatus("Reading image text...");
-
-      const result = await Tesseract.recognize(wrongQuestionImageFile, "eng");
-      const extractedText = result?.data?.text?.trim() || "";
-
-      if (!extractedText) {
-        setWrongQuestionStatus("No text detected from this image.");
-        return;
-      }
-
-      setWrongQuestionOcrText(extractedText);
-      setWrongQuestionDraftText(extractedText);
-      setWrongQuestionStatus("OCR completed. Text has been added to Wrong Question Text.");
-    } catch (error) {
-      console.error(error);
-      setWrongQuestionStatus("OCR failed. Try another image.");
+      await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'are_cards', value: updatedCards })
+      });
+      setSyncStatus("Cloud Synced ✅");
+      setInputText(""); // 清空输入框
+    } catch (e) {
+      setSyncStatus("Saved Locally (Cloud Error) ⚠️");
     } finally {
-      setIsRunningOcr(false);
+      setIsSaving(false);
     }
   };
 
-  const handleSaveWrongQuestion = () => {
-    const trimmed = wrongQuestionDraftText.trim();
-
-    if (!trimmed) {
-      setWrongQuestionStatus("Wrong Question Text is empty.");
-      return;
+  const deleteCard = async (id) => {
+    if (!window.confirm("Delete this flashcard permanently?")) return;
+    const updated = cards.filter(c => c.id !== id);
+    setCards(updated);
+    localStorage.setItem('are_cards', JSON.stringify(updated));
+    try {
+      await fetch('/api/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key: 'are_cards', value: updated })
+      });
+    } catch(e) {
+      console.error("Delete sync failed");
     }
-
-    const newCard = {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      topicKey: currentTopicKey,
-      imagePreview: wrongQuestionImagePreview,
-      ocrText: wrongQuestionOcrText,
-      editedText: trimmed,
-      questionText: wrongQuestionAnalysis.questionText,
-      summary: wrongQuestionAnalysis.summary,
-      correctAnswer: wrongQuestionAnalysis.correctAnswer,
-      answerExtraction: wrongQuestionAnalysis.answerExtraction,
-      trapPoint: wrongQuestionAnalysis.trapPoint,
-      memoryHook: wrongQuestionAnalysis.memoryHook,
-      savedAt: new Date().toISOString()
-    };
-
-    setWrongQuestionFlashcards((prev) => [newCard, ...prev]);
-    setFlashcardIndex(0);
-    setWrongQuestionStatus("Wrong question saved as flashcard.");
-  };
-
-  const handleLoadSavedFlashcards = () => {
-    const loaded = readWrongQuestionFlashcards();
-    setWrongQuestionFlashcards(loaded);
-    setFlashcardIndex(0);
-    setWrongQuestionStatus(`Loaded ${loaded.length} saved flashcards.`);
-  };
-
-  const handleClearWrongQuestion = () => {
-    setWrongQuestionImageFile(null);
-    setWrongQuestionImagePreview("");
-    setWrongQuestionOcrText("");
-    setWrongQuestionDraftText("");
-    setWrongQuestionStatus("Wrong question workspace cleared.");
-  };
-
-  const handlePrevFlashcard = () => {
-    setFlashcardIndex((prev) => Math.max(0, prev - 1));
-  };
-
-  const handleNextFlashcard = () => {
-    setFlashcardIndex((prev) =>
-      Math.min(wrongQuestionFlashcards.length - 1, prev + 1)
-    );
-  };
-
-  // 🌟 新增的删除错题卡片功能 🌟
-  const handleDeleteFlashcard = (idToDelete) => {
-    const confirmDelete = window.confirm("Are you sure you want to delete this flashcard?");
-    if (!confirmDelete) return;
-
-    setWrongQuestionFlashcards((prev) => {
-      return prev.filter(card => card.id !== idToDelete);
-    });
-    
-    setFlashcardIndex((prev) => (prev > 0 ? prev - 1 : 0));
-    setWrongQuestionStatus("Flashcard successfully deleted.");
   };
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
-        <div className="brand-card">
-          <div className="brand-title">ARE Study Vault</div>
-          <div className="brand-subtitle">空间结构 + 自动分块</div>
-        </div>
-
-        <div className="sidebar-section">
-          <div className="sidebar-label">Memory Palace</div>
-          <div className="division-list">
-            {DIVISIONS.map((division) => (
-              <button
-                key={division}
-                className={`nav-pill ${selectedDivision === division ? "active" : ""}`}
-                onClick={() => {
-                  setSelectedDivision(division);
-                  setSelectedRoom(ROOMS_BY_DIVISION[division][0]);
-                }}
-              >
-                {division}
-              </button>
-            ))}
+    <div style={{ minHeight: '100vh', backgroundColor: '#f4f7f6', padding: '30px 20px', fontFamily: 'system-ui, -apple-system, sans-serif', color: '#1a1a1a' }}>
+      <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
+        
+        {/* 顶部导航 */}
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', paddingBottom: '15px', borderBottom: '2px solid #e2e8f0' }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: '28px', color: '#2d3748', letterSpacing: '-0.5px' }}>ARE Error Book</h1>
+            <p style={{ margin: '5px 0 0 0', color: '#718096', fontSize: '14px' }}>Smart OCR Parsing & Cloud Sync</p>
           </div>
-        </div>
-
-        <div className="sidebar-section">
-          <div className="sidebar-label">{selectedDivision} Rooms</div>
-          <div className="room-list">
-            {rooms.map((room) => (
-              <button
-                key={room}
-                className={`room-pill ${selectedRoom === room ? "active" : ""}`}
-                onClick={() => setSelectedRoom(room)}
-              >
-                {room}
-              </button>
-            ))}
+          <div style={{ padding: '8px 16px', borderRadius: '999px', backgroundColor: syncStatus.includes('✅') ? '#def7ec' : '#feebc8', color: syncStatus.includes('✅') ? '#03543f' : '#7b341e', fontSize: '14px', fontWeight: '600' }}>
+            {syncStatus}
           </div>
-        </div>
-      </aside>
+        </header>
 
-      <main className="main-workspace">
-        <section className="workspace-card capture-workspace">
-          <div className="workspace-header">
-            <h2>Capture Notes Workspace</h2>
-            <div className="workspace-meta">
-              <span>{selectedDivision}</span>
-              <span>{selectedRoom}</span>
-              <span>{currentTopicKey}</span>
-              <span>Saved Notes: {savedNotesForTopic.length}</span>
-            </div>
-          </div>
-
-          <div className="panel capture-editor-panel">
-            <div className="panel-title">Capture Editor</div>
+        {/* 核心工作区：双栏布局 */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px', marginBottom: '40px' }}>
+          
+          {/* 左栏：输入区 */}
+          <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '24px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)' }}>
+            <h2 style={{ marginTop: 0, fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              📝 Step 1: Input & OCR Text
+            </h2>
             <textarea
-              className="panel-textarea"
-              value={captureDraft}
-              onChange={(e) => setCaptureDraft(e.target.value)}
-              placeholder="这里记录视频笔记、手写整理后的文字、和我讨论后的重点。"
+              style={{ width: '100%', height: '350px', padding: '16px', borderRadius: '12px', border: '1px solid #cbd5e0', backgroundColor: '#f8fafc', fontSize: '14px', lineHeight: '1.6', resize: 'vertical', boxSizing: 'border-box', outline: 'none', transition: 'border 0.2s' }}
+              placeholder="Paste your OCR text here.&#10;&#10;Auto-detection works for lines starting with 'Correct' or 'Incorrect'.&#10;&#10;Or use tags like:&#10;Question: ...&#10;Trap Point: ..."
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              onFocus={(e) => e.target.style.borderColor = '#4299e1'}
+              onBlur={(e) => e.target.style.borderColor = '#cbd5e0'}
             />
+            <button 
+              onClick={handleSave}
+              disabled={!liveAnalysis || isSaving}
+              style={{ width: '100%', marginTop: '16px', padding: '14px', backgroundColor: (!liveAnalysis || isSaving) ? '#a0aec0' : '#2b6cb0', color: '#fff', border: 'none', borderRadius: '12px', fontSize: '16px', fontWeight: '600', cursor: (!liveAnalysis || isSaving) ? 'not-allowed' : 'pointer', transition: 'background 0.2s' }}
+            >
+              {isSaving ? "Saving to Cloud..." : "Save to Cloud Database 🚀"}
+            </button>
           </div>
 
-          <div className="panel capture-controls">
-            <div className="panel-title">Capture Controls</div>
-            <div className="button-row">
-              <button onClick={handleSaveNote}>Save Note</button>
-              <button onClick={handleLoadSavedNotes}>Load Saved Notes</button>
-              <button onClick={handleLoadTopicSample}>
-                Load {selectedDivision} Sample
-              </button>
-              <button onClick={handleClearEditor}>Clear Editor</button>
-            </div>
-            <div style={{ marginTop: 12 }}>{captureStatus}</div>
-          </div>
-
-          <div className="workspace-grid">
-            <div className="panel capture-analysis-panel">
-              <div className="panel-title">Capture Analysis</div>
-
-              <div className="subcard compact-subcard">
-                <div className="subcard-title">Summary</div>
-                <p>{captureSummary}</p>
-              </div>
-
-              <div className="subcard compact-subcard">
-                <div className="subcard-title">Extraction</div>
-                <ul>
-                  {captureExtraction.map((item, index) => (
-                    <li key={index}>{item}</li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="subcard compact-subcard">
-                <div className="subcard-title">Bullet Points</div>
-                <ul>
-                  {captureBulletPoints.map((item, index) => (
-                    <li key={index}>{item}</li>
-                  ))}
-                </ul>
-              </div>
-
-              <div className="subcard compact-subcard">
-                <div className="subcard-title">Logic Links</div>
-                <ul>
-                  {captureLogicLinks.map((item, index) => (
-                    <li key={index}>{item}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-
-            <div className="panel live-logic-graph-panel">
-              <div className="panel-title">Live Logic Image</div>
-
-              {captureLogicForest.length === 0 ? (
-                <div className="logic-graph-placeholder">
-                  Start typing or save notes in this topic to generate the logic graph.
-                </div>
-              ) : (
-                <div className="logic-forest">
-                  {captureLogicForest.map((tree, index) => (
-                    <div key={`${tree.label}-${index}`} className="logic-tree-card">
-                      <LogicTreeNode tree={tree} />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </section>
-
-        <section className="workspace-card wrong-question-workspace">
-          <div className="workspace-header">
-            <h2>Wrong Question Workspace</h2>
-            <div className="workspace-meta">
-              <span>{selectedDivision}</span>
-              <span>{selectedRoom}</span>
-              <span>{currentTopicKey}</span>
-              <span>Flashcards: {wrongQuestionFlashcards.length}</span>
-            </div>
-          </div>
-
-          <div className="workspace-grid">
-            <div className="panel wrong-question-input-panel">
-              <div className="panel-title">Wrong Question Input</div>
-
-              <div className="subcard compact-subcard">
-                <div className="subcard-title">Image Upload</div>
-                {wrongQuestionImagePreview ? (
-                  <img
-                    src={wrongQuestionImagePreview}
-                    alt="Wrong question preview"
-                    className="image-preview"
-                  />
-                ) : (
-                  <div className="image-placeholder">Image Preview</div>
-                )}
-
-                <div className="button-row wrongq-button-row" style={{ marginTop: 12 }}>
-                  <label className="nav-pill upload-nav-pill">
-                    Upload Image
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={handleWrongQuestionImageChange}
-                      hidden
-                    />
-                  </label>
-
-                  <button
-                    className="nav-pill nav-action-pill"
-                    onClick={handleRunOcr}
-                    disabled={isRunningOcr}
-                    type="button"
-                  >
-                    {isRunningOcr ? "Running OCR..." : "Run OCR"}
-                  </button>
-                </div>
-              </div>
-
-              <div className="subcard compact-subcard">
-                <div className="subcard-title">Wrong Question Text</div>
-                <textarea
-                  className="panel-textarea wrong-question-textarea"
-                  value={wrongQuestionDraftText}
-                  onChange={(e) => setWrongQuestionDraftText(e.target.value)}
-                  placeholder="你可以直接输入：&#10;Question: [题目内容]&#10;Correct Answer: [正确答案]&#10;Extraction: [知识点提取]&#10;Trap Point: [陷阱分析]&#10;Memory Hook: [记忆点]"
-                />
-              </div>
-            </div>
-
-            <div className="panel wrong-question-analysis-panel">
-              <div className="panel-title">Wrong Question Analysis</div>
-
-              <div className="analysis-mini-grid">
-                <div className="subcard compact-subcard">
-                  <div className="subcard-title">Summary</div>
-                  <p>{wrongQuestionAnalysis.summary}</p>
-                </div>
-
-                <div className="subcard compact-subcard">
-                  <div className="subcard-title">Correct Answer</div>
-                  {Array.isArray(wrongQuestionAnalysis.correctAnswer) ? (
-                    <p>{wrongQuestionAnalysis.correctAnswer.join(" / ")}</p>
-                  ) : (
-                    <p>{wrongQuestionAnalysis.correctAnswer}</p>
-                  )}
-                </div>
-
-                <div className="subcard compact-subcard analysis-span-2">
-                  <div className="subcard-title">Answer Extraction</div>
-                  <ul>
-                    {wrongQuestionAnalysis.answerExtraction.map((item, index) => (
-                      <li key={index}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="subcard compact-subcard">
-                  <div className="subcard-title">Trap Point</div>
-                  <ul>
-                    {wrongQuestionAnalysis.trapPoint.map((item, index) => (
-                      <li key={index}>{item}</li>
-                    ))}
-                  </ul>
-                </div>
-
-                <div className="subcard compact-subcard">
-                  <div className="subcard-title">Memory Hook</div>
-                  <p>{wrongQuestionAnalysis.memoryHook}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="panel wrong-question-controls">
-            <div className="panel-title">Wrong Question Controls</div>
-            <div className="button-row">
-              <button onClick={handleSaveWrongQuestion}>Save Wrong Question</button>
-              <button onClick={handleLoadSavedFlashcards}>Load Saved Flashcards</button>
-              <button onClick={handleClearWrongQuestion}>Clear Wrong Question</button>
-            </div>
-            <div style={{ marginTop: 12 }}>{wrongQuestionStatus}</div>
-          </div>
-
-          <div className="panel flashcard-panel">
-            <div className="panel-title">Wrong Question Flashcards</div>
-
-            {wrongQuestionFlashcards.length === 0 ? (
-              <div className="flashcard-placeholder">
-                No saved flashcards yet.
+          {/* 右栏：实时预览区 */}
+          <div style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '24px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)', border: '2px dashed #e2e8f0' }}>
+            <h2 style={{ marginTop: 0, fontSize: '18px', display: 'flex', alignItems: 'center', gap: '8px', color: '#4a5568' }}>
+              👁️ Step 2: Live Preview
+            </h2>
+            
+            {!liveAnalysis ? (
+              <div style={{ height: '350px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#a0aec0', fontStyle: 'italic' }}>
+                Waiting for input...
               </div>
             ) : (
-              <div className="flashcard-carousel">
-                <div className="flashcard-carousel-header">
-                  <button
-                    onClick={handlePrevFlashcard}
-                    disabled={flashcardIndex === 0}
-                  >
-                    ← Previous
-                  </button>
-
-                  <div className="flashcard-counter">
-                    {flashcardIndex + 1} / {wrongQuestionFlashcards.length}
-                  </div>
-
-                  <button
-                    onClick={handleNextFlashcard}
-                    disabled={flashcardIndex === wrongQuestionFlashcards.length - 1}
-                  >
-                    Next →
-                  </button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', maxHeight: '400px', paddingRight: '10px' }}>
+                <div style={{ padding: '16px', backgroundColor: '#f7fafc', borderRadius: '8px', borderLeft: '4px solid #4a5568' }}>
+                  <div style={{ fontSize: '12px', color: '#718096', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '4px' }}>Question</div>
+                  <div style={{ fontWeight: '500' }}>{liveAnalysis.question}</div>
                 </div>
 
-                {currentFlashcard ? (
-                  <div className="flashcard-slide">
-                    
-                    {/* 🌟 修改了这里的布局，加入了删除按钮 🌟 */}
-                    <div className="flashcard-slide-top">
-                      <div className="flashcard-meta">
-                        {currentFlashcard.topicKey} · {formatSavedAt(currentFlashcard.savedAt)}
-                      </div>
-
-                      <div style={{ display: 'flex', gap: '12px', alignItems: 'flex-start' }}>
-                        {currentFlashcard.imagePreview ? (
-                          <div className="flashcard-thumb-wrap">
-                            <img
-                              src={currentFlashcard.imagePreview}
-                              alt="Wrong question thumbnail"
-                              className="flashcard-thumb"
-                              onClick={() => setExpandedImage(currentFlashcard.imagePreview)}
-                            />
-                            <button
-                              className="tiny-link-btn"
-                              onClick={() => setExpandedImage(currentFlashcard.imagePreview)}
-                            >
-                              View Image
-                            </button>
-                          </div>
-                        ) : null}
-                        
-                        <button
-                          onClick={() => handleDeleteFlashcard(currentFlashcard.id)}
-                          style={{
-                            background: '#fff0f0',
-                            color: '#dc2626',
-                            border: '1px solid #fecaca',
-                            borderRadius: '8px',
-                            padding: '6px 12px',
-                            cursor: 'pointer',
-                            fontWeight: '600',
-                            fontSize: '13px'
-                          }}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="flashcard-question">
-                      <div className="subcard-title">Question</div>
-                      <p>{currentFlashcard.questionText}</p>
-                    </div>
-
-                    <div className="flashcard-detail-grid">
-                      <div className="subcard compact-subcard">
-                        <div className="subcard-title">Correct Answer</div>
-                        {Array.isArray(currentFlashcard.correctAnswer) ? (
-                          <p>{currentFlashcard.correctAnswer.join(" / ")}</p>
-                        ) : (
-                          <p>{currentFlashcard.correctAnswer}</p>
-                        )}
-                      </div>
-
-                      <div className="subcard compact-subcard">
-                        <div className="subcard-title">Memory Hook</div>
-                        <p>{currentFlashcard.memoryHook}</p>
-                      </div>
-
-                      <div className="subcard compact-subcard analysis-span-2">
-                        <div className="subcard-title">Answer Extraction</div>
-                        <ul>
-                          {currentFlashcard.answerExtraction.map((item, index) => (
-                            <li key={index}>{item}</li>
-                          ))}
-                        </ul>
-                      </div>
-
-                      <div className="subcard compact-subcard analysis-span-2">
-                        <div className="subcard-title">Trap Point</div>
-                        <ul>
-                          {currentFlashcard.trapPoint.map((item, index) => (
-                            <li key={index}>{item}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
+                {liveAnalysis.extraction.length > 0 && (
+                  <div style={{ padding: '16px', backgroundColor: '#f0fff4', borderRadius: '8px', borderLeft: '4px solid #48bb78' }}>
+                    <div style={{ fontSize: '12px', color: '#276749', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '8px' }}>Correct Logic (Knowledge)</div>
+                    <ul style={{ margin: 0, paddingLeft: '20px', color: '#22543d' }}>
+                      {liveAnalysis.extraction.map((item, i) => <li key={i} style={{ marginBottom: '4px' }}>{item}</li>)}
+                    </ul>
                   </div>
-                ) : null}
+                )}
+
+                {liveAnalysis.trap.length > 0 && (
+                  <div style={{ padding: '16px', backgroundColor: '#fff5f5', borderRadius: '8px', borderLeft: '4px solid #f56565' }}>
+                    <div style={{ fontSize: '12px', color: '#c53030', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '8px' }}>Incorrect Logic (Trap Points)</div>
+                    <ul style={{ margin: 0, paddingLeft: '20px', color: '#742a2a' }}>
+                      {liveAnalysis.trap.map((item, i) => <li key={i} style={{ marginBottom: '4px' }}>{item}</li>)}
+                    </ul>
+                  </div>
+                )}
+                
+                {liveAnalysis.hook && (
+                   <div style={{ padding: '16px', backgroundColor: '#fffff0', borderRadius: '8px', borderLeft: '4px solid #ecc94b' }}>
+                    <div style={{ fontSize: '12px', color: '#b7791f', fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '4px' }}>Memory Hook</div>
+                    <div style={{ color: '#744210' }}>{liveAnalysis.hook}</div>
+                  </div>
+                )}
               </div>
             )}
           </div>
-        </section>
-      </main>
-
-      {expandedImage ? (
-        <div className="image-modal-backdrop" onClick={() => setExpandedImage("")}>
-          <div className="image-modal-content" onClick={(e) => e.stopPropagation()}>
-            <button className="image-modal-close" onClick={() => setExpandedImage("")}>
-              ×
-            </button>
-            <img src={expandedImage} alt="Expanded wrong question" className="image-modal-img" />
-          </div>
         </div>
-      ) : null}
+
+        {/* 底部卡片画廊 */}
+        <h2 style={{ fontSize: '22px', color: '#2d3748', marginBottom: '20px', paddingBottom: '10px', borderBottom: '2px solid #e2e8f0' }}>📚 Saved Flashcards ({cards.length})</h2>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))', gap: '24px' }}>
+          {cards.map(card => (
+            <div key={card.id} style={{ backgroundColor: '#fff', borderRadius: '16px', padding: '24px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)', position: 'relative', display: 'flex', flexDirection: 'column', gap: '16px', borderTop: '6px solid #2b6cb0' }}>
+              <button 
+                onClick={() => deleteCard(card.id)} 
+                style={{ position: 'absolute', top: '16px', right: '16px', border: 'none', background: '#edf2f7', color: '#a0aec0', width: '28px', height: '28px', borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }}
+                onMouseEnter={(e) => { e.target.style.background = '#fed7d7'; e.target.style.color = '#e53e3e'; }}
+                onMouseLeave={(e) => { e.target.style.background = '#edf2f7'; e.target.style.color = '#a0aec0'; }}
+              >✕</button>
+              
+              <div style={{ paddingRight: '20px' }}>
+                <div style={{ fontSize: '11px', color: '#a0aec0', marginBottom: '6px' }}>{new Date(card.savedAt).toLocaleString()}</div>
+                <h4 style={{ margin: 0, color: '#2d3748', fontSize: '16px', lineHeight: '1.4' }}>{card.analysis.question}</h4>
+              </div>
+
+              {card.analysis.extraction.length > 0 && (
+                <div style={{ backgroundColor: '#f0fff4', padding: '12px', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '11px', color: '#38a169', fontWeight: '700', marginBottom: '4px' }}>CORRECT LOGIC</div>
+                  {card.analysis.extraction.map((item, i) => <div key={i} style={{ fontSize: '13px', color: '#22543d', marginBottom: '2px' }}>• {item}</div>)}
+                </div>
+              )}
+
+              {card.analysis.trap.length > 0 && (
+                <div style={{ backgroundColor: '#fff5f5', padding: '12px', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '11px', color: '#e53e3e', fontWeight: '700', marginBottom: '4px' }}>TRAP POINTS</div>
+                  {card.analysis.trap.map((item, i) => <div key={i} style={{ fontSize: '13px', color: '#742a2a', marginBottom: '2px' }}>• {item}</div>)}
+                </div>
+              )}
+            </div>
+          ))}
+          {cards.length === 0 && (
+            <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '40px', color: '#a0aec0', backgroundColor: '#fff', borderRadius: '16px', border: '2px dashed #e2e8f0' }}>
+              No flashcards saved yet. Start typing above to create your first one!
+            </div>
+          )}
+        </div>
+
+      </div>
     </div>
   );
 }
