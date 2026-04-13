@@ -450,19 +450,7 @@ export default function App() {
     setAiAnalysisResult(null);
   }, [wrongQuestionDraftText]);
 
-  const savedTopicText = useMemo(
-    () => savedNotesForTopic.map(item => item.text).join("\n\n").trim(),
-    [savedNotesForTopic]
-  );
-
-  const hasSavedNotesForTopic = savedNotesForTopic.length > 0;
-
-  const effectiveCaptureText = useMemo(() => {
-    const draft = captureDraft.trim();
-    if (draft) return draft;
-    if (hasSavedNotesForTopic) return savedTopicText;
-    return "";
-  }, [captureDraft, savedTopicText, hasSavedNotesForTopic]);
+  const effectiveCaptureText = useMemo(() => captureDraft.trim(), [captureDraft]);
 
   const isCaptureEmpty = !effectiveCaptureText.trim();
 
