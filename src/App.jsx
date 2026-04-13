@@ -455,36 +455,55 @@ export default function App() {
     [savedNotesForTopic]
   );
 
-  // 让 capture analysis 以 editor 当前内容为主；
-  // editor 为空时，再退回到当前 topic 已保存内容
+  const hasSavedNotesForTopic = savedNotesForTopic.length > 0;
+
   const effectiveCaptureText = useMemo(() => {
     const draft = captureDraft.trim();
-    return draft || savedTopicText || "";
-  }, [captureDraft, savedTopicText]);
+    if (draft) return draft;
+    if (hasSavedNotesForTopic) return savedTopicText;
+    return "";
+  }, [captureDraft, savedTopicText, hasSavedNotesForTopic]);
+
+  const isCaptureEmpty = !effectiveCaptureText.trim();
 
   const captureSummary = useMemo(
-    () => captureAiResult?.summary || buildCaptureSummary(effectiveCaptureText),
-    [effectiveCaptureText, captureAiResult]
+    () =>
+      isCaptureEmpty
+        ? "等待输入..."
+        : captureAiResult?.summary || buildCaptureSummary(effectiveCaptureText),
+    [effectiveCaptureText, captureAiResult, isCaptureEmpty]
   );
 
   const captureExtraction = useMemo(
-    () => captureAiResult?.extraction || buildCaptureExtraction(effectiveCaptureText),
-    [effectiveCaptureText, captureAiResult]
+    () =>
+      isCaptureEmpty
+        ? ["等待输入以提取核心知识点..."]
+        : captureAiResult?.extraction || buildCaptureExtraction(effectiveCaptureText),
+    [effectiveCaptureText, captureAiResult, isCaptureEmpty]
   );
 
   const captureBulletPoints = useMemo(
-    () => captureAiResult?.bulletPoints || buildCaptureBulletPoints(effectiveCaptureText),
-    [effectiveCaptureText, captureAiResult]
+    () =>
+      isCaptureEmpty
+        ? ["等待输入..."]
+        : captureAiResult?.bulletPoints || buildCaptureBulletPoints(effectiveCaptureText),
+    [effectiveCaptureText, captureAiResult, isCaptureEmpty]
   );
 
   const captureLogicLinks = useMemo(
-    () => captureAiResult?.logicLinks || buildCaptureLogicLinks(effectiveCaptureText),
-    [effectiveCaptureText, captureAiResult]
+    () =>
+      isCaptureEmpty
+        ? ["等待输入以生成逻辑链..."]
+        : captureAiResult?.logicLinks || buildCaptureLogicLinks(effectiveCaptureText),
+    [effectiveCaptureText, captureAiResult, isCaptureEmpty]
   );
 
   const captureLogicForest = useMemo(
-    () => captureAiResult?.logicForest || buildCaptureLogicForest(effectiveCaptureText),
-    [effectiveCaptureText, captureAiResult]
+    () =>
+      isCaptureEmpty
+        ? []
+        : captureAiResult?.logicForest || buildCaptureLogicForest(effectiveCaptureText),
+    [effectiveCaptureText, captureAiResult, isCaptureEmpty]
   );
 
   const wrongQuestionAnalysis = useMemo(
@@ -513,6 +532,7 @@ export default function App() {
   // =========================
   const handleAnalyzeCapture = () => {
     if (!effectiveCaptureText.trim()) {
+      setCaptureAiResult(null);
       setCaptureStatus("Please type notes first.");
       return;
     }
@@ -784,6 +804,12 @@ export default function App() {
     marginTop: "6px"
   };
 
+  const captureAnalysisScrollStyle = {
+    maxHeight: "600px",
+    overflowY: "auto",
+    paddingRight: "4px"
+  };
+
   const analysisMiniGridStyle = {
     display: "grid",
     gridTemplateColumns: "1fr 1fr",
@@ -957,43 +983,45 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="subcard">
-                <div className="subcard-title">Summary</div>
-                <div style={scrollableStyle}>{captureSummary}</div>
-              </div>
-
-              <div className="subcard">
-                <div className="subcard-title">Extraction</div>
-                <div style={scrollableStyle}>
-                  <ul>
-                    {captureExtraction.map((item, i) => (
-                      <li key={i} style={{ marginBottom: "6px" }}>
-                        {item}
-                      </li>
-                    ))}
-                  </ul>
+              <div style={captureAnalysisScrollStyle}>
+                <div className="subcard">
+                  <div className="subcard-title">Summary</div>
+                  <div style={scrollableStyle}>{captureSummary}</div>
                 </div>
-              </div>
 
-              <div className="subcard">
-                <div className="subcard-title">Bullet Points</div>
-                <div style={scrollableStyle}>
-                  <ul>
-                    {captureBulletPoints.map((item, i) => (
-                      <li key={i}>{item}</li>
-                    ))}
-                  </ul>
+                <div className="subcard">
+                  <div className="subcard-title">Extraction</div>
+                  <div style={scrollableStyle}>
+                    <ul>
+                      {captureExtraction.map((item, i) => (
+                        <li key={i} style={{ marginBottom: "6px" }}>
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
-              </div>
 
-              <div className="subcard">
-                <div className="subcard-title">Logic Links</div>
-                <div style={scrollableStyle}>
-                  <ul>
-                    {captureLogicLinks.map((item, i) => (
-                      <li key={i}>{item}</li>
-                    ))}
-                  </ul>
+                <div className="subcard">
+                  <div className="subcard-title">Bullet Points</div>
+                  <div style={scrollableStyle}>
+                    <ul>
+                      {captureBulletPoints.map((item, i) => (
+                        <li key={i}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="subcard">
+                  <div className="subcard-title">Logic Links</div>
+                  <div style={scrollableStyle}>
+                    <ul>
+                      {captureLogicLinks.map((item, i) => (
+                        <li key={i}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
               </div>
             </div>
