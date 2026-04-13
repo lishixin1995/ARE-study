@@ -8,9 +8,13 @@ export default async function handler(request, response) {
   try {
     if (!process.env.GEMINI_API_KEY) throw new Error("Vercel 未配置 GEMINI_API_KEY");
 
-    // 【终极必杀技】放弃玄学的 1.5-flash，直接使用永远不会 404 的经典 gemini-pro！
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    
+        // `gemini-pro` 已下线，改为当前可用的 1.5 系列模型，避免 404。
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash",
+      generationConfig: { responseMimeType: "application/json" }
+    });
 
     let prompt = "";
     if (type === 'capture') {
