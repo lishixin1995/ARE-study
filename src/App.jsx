@@ -35,32 +35,45 @@ function capitalizeWords(text) {
 
 function smartSplit(text) {
   if (!text) return [];
-  const formatted = text.replace(/(\d+\.)/g, "| $1");
+  const formatted = text
+    .replace(/\r/g, " ")
+    .replace(/\n+/g, " ")
+    .replace(/(\d+\.)/g, "| $1");
   return formatted
-    .split(/[。！？;；|]/)
+    .split(/[。！？;；|.!?]/)
     .map(s => s.trim())
     .filter(s => s.length > 3);
 }
 
+function stripFillerPrefix(text) {
+  return (text || "")
+    .replace(/^let'?s\s+look\s+at\s+/i, "")
+    .replace(/^in\s+summary[:,]?\s*/i, "")
+    .trim();
+}
+
+function sentenceScore(sentence) {
+  const lower = sentence.toLowerCase();
+  let score = 0;
+  if (/(is|are|means|refers to|defined as)/.test(lower)) score += 3;
+  if (/(ratio|far|setback|yard|lot|design|zoning)/.test(lower)) score += 3;
+  if (/(however|but|must|needs to|required|typically)/.test(lower)) score += 2;
+  if (sentence.length > 180) score -= 2;
+  if (/^let'?s\s+look\s+at/i.test(lower)) score -= 3;
+  return score;
+}
+
 function buildCaptureSummary(text) {
   if (!text) return "等待输入...";
-  const lower = text.toLowerCase();
-  const topics = [];
-  if (lower.includes("system") || lower.includes("active") || lower.includes("passive")) {
-    topics.push("Building Systems (Active/Passive)");
-  }
-  if (lower.includes("climate") || lower.includes("hot") || lower.includes("cold")) {
-    topics.push("Climate Strategies");
-  }
-  if (lower.includes("solar") || lower.includes("sun") || lower.includes("daylight")) {
-    topics.push("Solar & Daylighting");
-  }
+  const frags = smartSplit(text).map(stripFillerPrefix);
+  if (!frags.length) return "无法生成摘要";
+  
+  const topSentences = [...frags]
+    .sort((a, b) => sentenceScore(b) - sentenceScore(a))
+    .slice(0, 3);
 
-  if (topics.length > 0) {
-    return `📝 核心考点探讨：${topics.join(" / ")}。主要记录了不同系统与自然气候条件下的建筑应对策略及优缺点。`;
-  }
-  const frags = smartSplit(text);
-  return frags.length > 0 ? frags[0] : "无法生成摘要";
+  return topSentences.join(" ");
+
 }
 
 function buildCaptureExtraction(text) {
@@ -84,9 +97,9 @@ function buildCaptureExtraction(text) {
 function buildCaptureBulletPoints(text) {
   if (!text) return ["等待输入..."];
   const frags = smartSplit(text);
-  return frags
+  const cleaned = frags
     .map(f => {
-      let clean = f.replace(/^[1-9]\.\s*/, "");
+  let clean = stripFillerPrefix(f).replace(/^[1-9]\.\s*/, "");
       if (clean.includes(":") || clean.includes("：")) {
         const parts = clean.split(/[:：]/);
         return `${capitalizeWords(parts[0])}: ${parts[1]?.trim() || ""}`;
@@ -94,6 +107,9 @@ function buildCaptureBulletPoints(text) {
       return clean;
     })
     .filter(f => f.length > 5);
+ 
+  const unique = Array.from(new Set(cleaned));
+  return unique.slice(0, 8);
 }
 
 function buildCaptureLogicLinks(text) {
@@ -102,6 +118,31 @@ function buildCaptureLogicLinks(text) {
   const frags = smartSplit(text);
 
   frags.forEach(f => {
+        const clean = stripFillerPrefix(f);
+    const farMatch = clean.match(/far.*?(?:is|means|=)\s*(.*)/i);
+    if (farMatch) {
+      links.push(`[FAR] ➔ defines ➔ ${farMatch[1]}`);
+      return;
+    }
+
+    const wayMatch = clean.match(/to meet an? far of ([\d.]+).*?(build.*)/i);
+    if (wayMatch) {
+      links.push(`[FAR ${wayMatch[1]}] ➔ can be achieved by ➔ ${wayMatch[2]}`);
+      return;
+    }
+
+    const setbackMatch = clean.match(/setbacks?.*?(?:are|is)\s*(.*)/i);
+    if (setbackMatch) {
+      links.push(`[Setbacks] ➔ define ➔ ${setbackMatch[1]}`);
+      return;
+    }
+
+    const yardMatch = clean.match(/(front yard|side yards?|rear yard)/i);
+    if (yardMatch) {
+      links.push(`[Setback Types] ➔ include ➔ front / side / rear yard`);
+      return;
+    }
+
     if (f.includes(":") || f.includes("：")) {
       const pts = f.split(/[:：]/);
       links.push(`[${capitalizeWords(pts[0])}] ➔ ${pts[1]?.trim() || ""}`);
@@ -792,6 +833,12 @@ export default function App() {
     marginTop: "6px"
   };
 
+    const summaryScrollableStyle = {
+    ...scrollableStyle,
+    minHeight: "120px",
+    maxHeight: "140px"
+  };
+
   const captureAnalysisScrollStyle = {
     maxHeight: "600px",
     overflowY: "auto",
@@ -974,7 +1021,7 @@ export default function App() {
               <div style={captureAnalysisScrollStyle}>
                 <div className="subcard">
                   <div className="subcard-title">Summary</div>
-                  <div style={scrollableStyle}>{captureSummary}</div>
+                  <div style={summaryScrollableStyle}>{captureSummary}</div>
                 </div>
 
                 <div className="subcard">
