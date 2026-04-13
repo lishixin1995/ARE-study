@@ -23,7 +23,7 @@ const SAMPLE_BY_DIVISION = {
 };
 
 // ==========================================
-// 🧠 终极进化版：本地智能解析引擎 (Smart Local Parser)
+// 🧠 Capture Smart Parser
 // ==========================================
 function capitalizeWords(text) {
   return (text || "")
@@ -33,7 +33,6 @@ function capitalizeWords(text) {
     .join(" ");
 }
 
-// 智能切分段落
 function smartSplit(text) {
   if (!text) return [];
   const formatted = text.replace(/(\d+\.)/g, "| $1");
@@ -43,7 +42,6 @@ function smartSplit(text) {
     .filter(s => s.length > 3);
 }
 
-// 1. 智能摘要
 function buildCaptureSummary(text) {
   if (!text) return "等待输入...";
   const lower = text.toLowerCase();
@@ -65,7 +63,6 @@ function buildCaptureSummary(text) {
   return frags.length > 0 ? frags[0] : "无法生成摘要";
 }
 
-// 2. 智能提取
 function buildCaptureExtraction(text) {
   if (!text) return ["等待输入以提取核心知识点..."];
   const frags = smartSplit(text);
@@ -84,7 +81,6 @@ function buildCaptureExtraction(text) {
   return extractions;
 }
 
-// 3. 智能 Bullet Points
 function buildCaptureBulletPoints(text) {
   if (!text) return ["等待输入..."];
   const frags = smartSplit(text);
@@ -100,7 +96,6 @@ function buildCaptureBulletPoints(text) {
     .filter(f => f.length > 5);
 }
 
-// 4. 智能逻辑链
 function buildCaptureLogicLinks(text) {
   if (!text) return ["等待输入以生成逻辑链..."];
   const links = [];
@@ -126,10 +121,10 @@ function buildCaptureLogicLinks(text) {
     : ["💡 提示：在笔记中使用冒号 (:) 或破折号 (-) 即可自动生成完美逻辑链。"];
 }
 
-// 5. 智能 Logic Forest
 function node(label, relation = null, children = []) {
   return { label, relation, children };
 }
+
 function buildCaptureLogicForest(text) {
   if (!text) return [];
   const lower = text.toLowerCase();
@@ -204,7 +199,7 @@ function buildCaptureLogicForest(text) {
 }
 
 // ==========================================
-// ❌ Wrong Question 专用解析逻辑
+// ❌ Wrong Question Parser
 // ==========================================
 function splitLines(text) {
   return (text || "")
@@ -300,7 +295,6 @@ function buildWrongQuestionCorrectAnswer(text) {
 function buildWrongQuestionBulletPoints(text) {
   const correct = filterMetaPlaceholder(buildWrongQuestionAnswerExtraction(text));
   const trap = filterMetaPlaceholder(buildWrongQuestionTrapPoint(text));
-
   const bullets = [];
 
   correct.forEach(item => bullets.push(`Correct move: ${item}`));
@@ -378,6 +372,7 @@ function readSavedNotesByTopic() {
     return {};
   }
 }
+
 function readWrongQuestionFlashcards() {
   try {
     const raw = localStorage.getItem("wrongQuestionFlashcards");
@@ -386,6 +381,7 @@ function readWrongQuestionFlashcards() {
     return [];
   }
 }
+
 function formatSavedAt(dateString) {
   if (!dateString) return "";
   const d = new Date(dateString);
@@ -395,14 +391,13 @@ function formatSavedAt(dateString) {
 }
 
 // ==========================================
-// 🎯 主组件入口
+// 🎯 Main App
 // ==========================================
 export default function App() {
   const [selectedDivision, setSelectedDivision] = useState("PPD");
   const [selectedRoom, setSelectedRoom] = useState("Site");
 
   const [captureDraft, setCaptureDraft] = useState("");
-  const [debouncedCaptureDraft, setDebouncedCaptureDraft] = useState("");
   const [savedNotesByTopic, setSavedNotesByTopic] = useState(() => readSavedNotesByTopic());
   const [captureStatus, setCaptureStatus] = useState("Ready.");
   const [captureAiResult, setCaptureAiResult] = useState(null);
@@ -425,24 +420,13 @@ export default function App() {
     () => `${selectedDivision}::${selectedRoom}`,
     [selectedDivision, selectedRoom]
   );
+
   const rooms = ROOMS_BY_DIVISION[selectedDivision] || [];
+
   const savedNotesForTopic = useMemo(
     () => savedNotesByTopic[currentTopicKey] || [],
     [savedNotesByTopic, currentTopicKey]
   );
-
-  useEffect(() => {
-    const timer = setTimeout(() => setDebouncedCaptureDraft(captureDraft), 800);
-    return () => clearTimeout(timer);
-  }, [captureDraft]);
-
-  useEffect(() => {
-    setCaptureAiResult(null);
-  }, [debouncedCaptureDraft]);
-
-  useEffect(() => {
-    setAiAnalysisResult(null);
-  }, [wrongQuestionDraftText]);
 
   useEffect(() => {
     localStorage.setItem("savedNotesByTopic", JSON.stringify(savedNotesByTopic));
@@ -458,34 +442,46 @@ export default function App() {
     }
   }, [wrongQuestionFlashcards, flashcardIndex]);
 
+  useEffect(() => {
+    setCaptureAiResult(null);
+  }, [captureDraft, savedNotesByTopic, currentTopicKey]);
+
+  useEffect(() => {
+    setAiAnalysisResult(null);
+  }, [wrongQuestionDraftText]);
+
   const savedTopicText = useMemo(
     () => savedNotesForTopic.map(item => item.text).join("\n\n").trim(),
     [savedNotesForTopic]
   );
 
+  // 让 capture analysis 以 editor 当前内容为主；
+  // editor 为空时，再退回到当前 topic 已保存内容
   const effectiveCaptureText = useMemo(() => {
-    const draft = debouncedCaptureDraft.trim();
-    return savedTopicText && draft
-      ? `${savedTopicText}\n\n${draft}`
-      : savedTopicText || draft || "";
-  }, [savedTopicText, debouncedCaptureDraft]);
+    const draft = captureDraft.trim();
+    return draft || savedTopicText || "";
+  }, [captureDraft, savedTopicText]);
 
   const captureSummary = useMemo(
     () => captureAiResult?.summary || buildCaptureSummary(effectiveCaptureText),
     [effectiveCaptureText, captureAiResult]
   );
+
   const captureExtraction = useMemo(
     () => captureAiResult?.extraction || buildCaptureExtraction(effectiveCaptureText),
     [effectiveCaptureText, captureAiResult]
   );
+
   const captureBulletPoints = useMemo(
     () => captureAiResult?.bulletPoints || buildCaptureBulletPoints(effectiveCaptureText),
     [effectiveCaptureText, captureAiResult]
   );
+
   const captureLogicLinks = useMemo(
     () => captureAiResult?.logicLinks || buildCaptureLogicLinks(effectiveCaptureText),
     [effectiveCaptureText, captureAiResult]
   );
+
   const captureLogicForest = useMemo(
     () => captureAiResult?.logicForest || buildCaptureLogicForest(effectiveCaptureText),
     [effectiveCaptureText, captureAiResult]
@@ -512,19 +508,46 @@ export default function App() {
 
   const currentFlashcard = wrongQuestionFlashcards[flashcardIndex] || null;
 
-  // --- Capture Action Handlers ---
+  // =========================
+  // Capture handlers
+  // =========================
+  const handleAnalyzeCapture = () => {
+    if (!effectiveCaptureText.trim()) {
+      setCaptureStatus("Please type notes first.");
+      return;
+    }
+    setCaptureAiResult(null);
+    setCaptureStatus("Analysis refreshed.");
+  };
+
+  const handleCaptureTextareaKeyDown = e => {
+    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+      setTimeout(() => {
+        handleAnalyzeCapture();
+      }, 0);
+    }
+  };
+
   const handleSaveNote = () => {
     if (!captureDraft.trim()) {
       setCaptureStatus("Editor is empty.");
       return;
     }
-    const newNote = { id: Date.now(), text: captureDraft.trim(), savedAt: new Date().toISOString() };
+
+    const newNote = {
+      id: Date.now(),
+      text: captureDraft.trim(),
+      savedAt: new Date().toISOString()
+    };
+
     setSavedNotesByTopic(prev => ({
       ...prev,
       [currentTopicKey]: [...(prev[currentTopicKey] || []), newNote]
     }));
+
     setCaptureDraft("");
-    setCaptureStatus("Saved locally.");
+    setCaptureAiResult(null);
+    setCaptureStatus("Saved locally and analysis refreshed.");
   };
 
   const handleLoadSavedNotes = () => {
@@ -532,20 +555,45 @@ export default function App() {
       setCaptureStatus(`No notes found for ${currentTopicKey}.`);
       return;
     }
+
+    const mergedText = savedNotesForTopic.map(item => item.text).join("\n\n");
+    setCaptureDraft(mergedText);
+    setCaptureAiResult(null);
     setCaptureStatus(`${currentTopicKey} loaded ${savedNotesForTopic.length} notes.`);
   };
 
   const handleLoadTopicSample = () => {
     setCaptureDraft(SAMPLE_BY_DIVISION[selectedDivision] || "");
+    setCaptureAiResult(null);
     setCaptureStatus(`Loaded ${selectedDivision} sample.`);
   };
 
   const handleClearEditor = () => {
     setCaptureDraft("");
+    setCaptureAiResult(null);
     setCaptureStatus("Editor cleared.");
   };
 
-  // --- Wrong Question OCR Helpers ---
+  // =========================
+  // Wrong question handlers
+  // =========================
+  const handleAnalyzeWrongQuestion = () => {
+    if (!wrongQuestionDraftText.trim()) {
+      setWrongQuestionStatus("Please provide text first.");
+      return;
+    }
+    setAiAnalysisResult(null);
+    setWrongQuestionStatus("Analysis refreshed.");
+  };
+
+  const handleWrongQuestionTextareaKeyDown = e => {
+    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+      setTimeout(() => {
+        handleAnalyzeWrongQuestion();
+      }, 0);
+    }
+  };
+
   const runOcrFromFile = async file => {
     if (!file) return;
 
@@ -563,7 +611,8 @@ export default function App() {
       const detectedText = result.data.text.trim();
       setWrongQuestionOcrText(detectedText);
       setWrongQuestionDraftText(detectedText);
-      setWrongQuestionStatus("OCR completed.");
+      setAiAnalysisResult(null);
+      setWrongQuestionStatus("OCR completed and analysis refreshed.");
     } catch (e) {
       setWrongQuestionStatus("OCR failed.");
     } finally {
@@ -571,7 +620,6 @@ export default function App() {
     }
   };
 
-  // --- Wrong Question Action Handlers ---
   const handleWrongQuestionImageChange = async event => {
     const file = event.target.files?.[0] || null;
     if (!file) {
@@ -640,6 +688,7 @@ export default function App() {
     setWrongQuestionImagePreview("");
     setWrongQuestionOcrText("");
     setWrongQuestionDraftText("");
+    setAiAnalysisResult(null);
     setWrongQuestionStatus("Cleared.");
   };
 
@@ -658,21 +707,27 @@ export default function App() {
     setWrongQuestionStatus("Deleted.");
   };
 
-  // --- AI Handlers ---
+  // =========================
+  // AI handlers
+  // =========================
   const handleCaptureRunAI = async () => {
     if (!effectiveCaptureText.trim()) {
       setCaptureStatus("Please type notes first.");
       return;
     }
+
     setIsCaptureAnalyzing(true);
     setCaptureStatus("AI thinking...");
+
     try {
       const res = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: effectiveCaptureText, type: "capture" })
       });
+
       const data = await res.json();
+
       if (data.analysis) {
         setCaptureAiResult(data.analysis);
         setCaptureStatus("AI Analysis Complete!");
@@ -682,6 +737,7 @@ export default function App() {
     } catch (e) {
       setCaptureStatus("AI Error: Network/Timeout. Please check Vercel API Key.");
     }
+
     setIsCaptureAnalyzing(false);
   };
 
@@ -690,15 +746,19 @@ export default function App() {
       setWrongQuestionStatus("Please provide text first.");
       return;
     }
+
     setIsAnalyzing(true);
     setWrongQuestionStatus("AI analyzing...");
+
     try {
       const res = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: wrongQuestionDraftText, type: "wrong_question" })
       });
+
       const data = await res.json();
+
       if (data.analysis) {
         setAiAnalysisResult(data.analysis);
         setWrongQuestionStatus("AI Analysis Complete!");
@@ -708,6 +768,7 @@ export default function App() {
     } catch (e) {
       setWrongQuestionStatus("AI Error: Network/Timeout. Please check Vercel API Key.");
     }
+
     setIsAnalyzing(false);
   };
 
@@ -829,7 +890,7 @@ export default function App() {
       </aside>
 
       <main className="main-workspace">
-        {/* ================= Capture 区 ================= */}
+        {/* ================= Capture Workspace ================= */}
         <section className="workspace-card capture-workspace">
           <div className="workspace-header">
             <h2>Capture Notes Workspace</h2>
@@ -846,8 +907,12 @@ export default function App() {
               className="panel-textarea"
               value={captureDraft}
               onChange={e => setCaptureDraft(e.target.value)}
+              onKeyDown={handleCaptureTextareaKeyDown}
               placeholder="粘贴长笔记，本地智脑会自动生成结构化解析..."
             />
+            <div className="button-row" style={{ marginTop: "12px" }}>
+              <button onClick={handleAnalyzeCapture}>Analyze</button>
+            </div>
           </div>
 
           <div className="panel capture-controls">
@@ -973,7 +1038,7 @@ export default function App() {
           </div>
         </section>
 
-        {/* ================= 错题 区 ================= */}
+        {/* ================= Wrong Question Workspace ================= */}
         <section className="workspace-card wrong-question-workspace">
           <div className="workspace-header">
             <h2>Wrong Question Workspace</h2>
@@ -1029,9 +1094,13 @@ export default function App() {
                   className="panel-textarea wrong-question-textarea"
                   value={wrongQuestionDraftText}
                   onChange={e => setWrongQuestionDraftText(e.target.value)}
+                  onKeyDown={handleWrongQuestionTextareaKeyDown}
                   placeholder="粘贴错题..."
                   style={{ minHeight: "200px" }}
                 />
+                <div className="button-row" style={{ marginTop: "12px" }}>
+                  <button onClick={handleAnalyzeWrongQuestion}>Analyze</button>
+                </div>
               </div>
             </div>
 
@@ -1131,7 +1200,6 @@ export default function App() {
             <div style={{ color: "#10b981", marginTop: "10px" }}>{wrongQuestionStatus}</div>
           </div>
 
-          {/* ================= Flashcards 轮播区 ================= */}
           <div className="panel flashcard-panel">
             <div className="panel-title">Wrong Question Flashcards</div>
 
@@ -1183,7 +1251,8 @@ export default function App() {
                     <div
                       style={{
                         ...flashcardSlideBodyStyle,
-                        gridTemplateColumns: window.innerWidth <= 1100 ? "1fr" : "360px 1fr"
+                        gridTemplateColumns:
+                          typeof window !== "undefined" && window.innerWidth <= 1100 ? "1fr" : "360px 1fr"
                       }}
                     >
                       <div style={flashcardColStyle}>
