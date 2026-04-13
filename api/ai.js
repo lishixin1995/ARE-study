@@ -11,12 +11,13 @@ export default async function handler(request, response) {
   }
 
   try {
+    // 1. 检查有没有拿到钥匙
+    if (!process.env.GEMINI_API_KEY) {
+      throw new Error("Vercel 后台没找到 GEMINI_API_KEY，请检查环境变量是否填写正确！");
+    }
+
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    // 强制 AI 输出标准 JSON 格式，绝不废话！
-    const model = genAI.getGenerativeModel({ 
-      model: "gemini-1.5-flash",
-      generationConfig: { responseMimeType: "application/json" }
-    });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     let prompt = "";
 
@@ -24,22 +25,20 @@ export default async function handler(request, response) {
       prompt = `
       You are an expert Architecture Registration Examination (ARE) tutor.
       Analyze the user's notes and output ONLY a valid JSON object.
-      IMPORTANT: Respond in the EXACT SAME LANGUAGE as the user's notes (e.g., if the user writes in Chinese, your analysis MUST be in Chinese).
-      Do not summarize too briefly. Extract the core architectural logic, trade-offs, and rules of thumb.
+      IMPORTANT: Respond in the EXACT SAME LANGUAGE as the user's notes.
       
       Required JSON Format:
       {
-        "summary": "1-3 sentence detailed summary of the core concept and trade-offs.",
-        "extraction": ["Detailed fact 1", "Detailed fact 2", "Detailed fact 3", "Detailed fact 4"],
-        "bulletPoints": ["Key action or rule 1", "Key action or rule 2", "Key action or rule 3"],
+        "summary": "1-3 sentence detailed summary.",
+        "extraction": ["Detailed fact 1", "Detailed fact 2", "Detailed fact 3"],
+        "bulletPoints": ["Key rule 1", "Key rule 2"],
         "logicLinks": ["Condition A -> Strategy B", "Problem X -> Solution Y"],
         "logicForest": [
           {
-            "label": "Main Category (e.g., Daylighting)",
+            "label": "Main Category",
             "relation": "category",
             "children": [
-              { "label": "Sub Concept 1", "relation": "strategy" },
-              { "label": "Sub Concept 2", "relation": "trade-off" }
+              { "label": "Sub Concept 1", "relation": "strategy" }
             ]
           }
         ] 
@@ -71,13 +70,24 @@ export default async function handler(request, response) {
     }
 
     const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
-    const analysis = JSON.parse(responseText);
+    let responseText = result.response.text();
+    
+    // 2. 暴力清理 AI 可能带的 Markdown 废话
+    responseText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
+    
+    // 3. 尝试解析 JSON
+    let analysis;
+    try {
+      analysis = JSON.parse(responseText);
+    } catch (parseError) {
+      throw new Error("AI 返回格式错误无法解析: " + responseText.substring(0, 40) + "...");
+    }
 
     return response.status(200).json({ analysis });
 
   } catch (error) {
     console.error("AI Error:", error);
-    return response.status(500).json({ error: 'Failed to connect to AI or parse JSON' });
+    // 4. 把【真正的报错信息】发送回前端网页！
+    return response.status(500).json({ error: error.message || 'Unknown AI Error' });
   }
 }
