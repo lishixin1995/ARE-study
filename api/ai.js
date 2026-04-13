@@ -8,9 +8,9 @@ export default async function handler(request, response) {
   try {
     if (!process.env.GEMINI_API_KEY) throw new Error("Vercel 未配置 GEMINI_API_KEY");
 
-    // 【修复】去掉了报错的 -latest 后缀，使用最稳定的基础模型！
+    // 【致命修复】使用最兼容的 gemini-pro，完美适配你的 0.7.0 依赖包！
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
     let prompt = "";
     if (type === 'capture') {
