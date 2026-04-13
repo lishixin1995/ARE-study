@@ -19,6 +19,10 @@ export default async function handler(request, response) {
     let prompt = "";
     if (type === 'capture') {
       prompt = `You are an expert Architecture Registration Examination (ARE) tutor. Analyze notes and output ONLY JSON. Respond in the SAME LANGUAGE as the user.
+      Remove filler/intro phrases and keep only high-value ideas (definitions, constraints, comparisons, cause-effect).
+      summary must be 2-4 concise sentences.
+      bulletPoints must be 4-8 clean points with no duplicated fragments.
+      logicLinks must be explicit links like "[A] ➔ relation ➔ [B]".
       Format: {"summary":"...","extraction":["..."],"bulletPoints":["..."],"logicLinks":["..."],"logicForest":[{"label":"...","relation":"...","children":[]}]}`;
     } else if (type === 'wrong_question') {
       prompt = `You are an expert Architecture Registration Examination (ARE) tutor. Analyze OCR text and output ONLY JSON. Respond in the SAME LANGUAGE.
