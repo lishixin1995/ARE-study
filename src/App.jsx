@@ -13,26 +13,6 @@ const ROOMS_BY_DIVISION = {
   CE: ["Site Visit", "Submittals", "RFI", "Punch List"]
 };
 
-const SAMPLE_BY_DIVISION = {
-  PA: `Site analysis should start with climate, zoning, topography, and access.
-Programming should connect client needs to spatial requirements.
-Early code review helps define occupancy, egress, and height/area limits.`,
-  PPD: `Building system: active system relies on mechanical equipment and uses more energy.
-Passive system relies on sun, air, and wind flow.
-In cold climate, reduce heat loss and gain solar heat.
-In hot climate, control heat gain and optimize natural ventilation.
-Trombe wall helps stabilize temperature but takes more space.`,
-  PDD: `Envelope detailing must control water, air, vapor, and thermal transfer.
-Material selection affects durability, constructability, and maintenance.
-Documentation should clearly coordinate assemblies, dimensions, and specifications.`,
-  PCM: `Practice management connects staffing, risk, finance, and firm operations.
-A sustainable office workflow depends on planning, communication, and resource control.`,
-  PJM: `Project management coordinates scope, schedule, consultant communication, and delivery expectations.
-Construction administration requires tracking submittals, RFIs, and field conditions.`,
-  CE: `Construction evaluation depends on site observation, documentation, and follow-up.
-Punch list review compares completed work against contract expectations.`
-};
-
 // ==========================================
 // ⚙️ 强大的本地解析器 (Local Parser - 免费且瞬间完成)
 // ==========================================
@@ -68,7 +48,6 @@ function buildCaptureExtraction(text) {
 
 function buildCaptureBulletPoints(text) {
   if (!text) return ["Waiting for input..."];
-  // 本地简单提取带有重点符号的行，或者切分短句
   const bulletLines = splitLines(text).filter(l => l.trim().startsWith('-') || l.trim().startsWith('•') || l.trim().startsWith('*') || l.match(/^\d+\./));
   if (bulletLines.length > 0) return bulletLines.map(l => l.replace(/^[-•*]\s*/, '').replace(/^\d+\.\s*/, ''));
   return buildCaptureExtraction(text).slice(0, 3);
@@ -82,7 +61,7 @@ function buildCaptureLogicLinks(text) {
 }
 
 function buildCaptureLogicForest(text) {
-  return []; // 本地算力很难画出漂亮的思维导图，留空引导使用 AI
+  return []; 
 }
 
 // 错题区本地逻辑
@@ -126,11 +105,8 @@ function buildWrongQuestionAnswerExtraction(text) {
   const lines = splitLines(text);
   const correctLines = lines.filter(l => /^(?:☑|✔|\[x\]|✓)?\s*Correct[\.\s:-]+/i.test(l.trim()));
   if (correctLines.length > 0) return correctLines.map(l => l.replace(/^(?:☑|✔|\[x\]|✓)?\s*Correct[\.\s:-]+/i, '').trim());
-  
-  // 兜底：抓取没写 Correct 但像解析的句子
   const otherLines = lines.filter(l => !l.toLowerCase().includes("incorrect") && l.length > 30);
   if (otherLines.length > 0) return otherLines.slice(0, 3);
-  
   return ["Not detected by Local Parser. Click 'Ask AI'."];
 }
 
@@ -208,7 +184,6 @@ export default function App() {
 
   useEffect(() => { const timer = setTimeout(() => { setDebouncedCaptureDraft(captureDraft); }, 1200); return () => clearTimeout(timer); }, [captureDraft]);
   
-  // 核心：当用户编辑文字时，清空 AI 结果，无缝切回本地解析
   useEffect(() => { setCaptureAiResult(null); }, [debouncedCaptureDraft]);
   useEffect(() => { setAiAnalysisResult(null); }, [wrongQuestionDraftText]);
 
@@ -223,7 +198,6 @@ export default function App() {
     if (saved) return saved; if (draft) return draft; return "";
   }, [savedTopicText, debouncedCaptureDraft]);
 
-  // 双擎切换逻辑：如果有 AI 结果就用 AI，否则用 Local
   const captureSummary = useMemo(() => captureAiResult?.summary || buildCaptureSummary(effectiveCaptureText), [effectiveCaptureText, captureAiResult]);
   const captureExtraction = useMemo(() => captureAiResult?.extraction || buildCaptureExtraction(effectiveCaptureText), [effectiveCaptureText, captureAiResult]);
   const captureBulletPoints = useMemo(() => captureAiResult?.bulletPoints || buildCaptureBulletPoints(effectiveCaptureText), [effectiveCaptureText, captureAiResult]);
@@ -248,11 +222,6 @@ export default function App() {
   const handleLoadSavedNotes = () => {
     if (!savedNotesForTopic.length) { setCaptureStatus(`No saved notes found for ${currentTopicKey}.`); return; }
     setCaptureStatus(`${currentTopicKey} already has ${savedNotesForTopic.length} saved notes.`);
-  };
-
-  const handleLoadTopicSample = () => {
-    const sample = SAMPLE_BY_DIVISION[selectedDivision] || ""; setCaptureDraft(sample);
-    setCaptureStatus(`Loaded ${selectedDivision} sample.`);
   };
 
   const handleClearEditor = () => { setCaptureDraft(""); setDebouncedCaptureDraft(""); setCaptureStatus("Capture editor cleared."); };
@@ -320,7 +289,7 @@ export default function App() {
       const data = await res.json();
       if (data.analysis) { setCaptureAiResult(data.analysis); setCaptureStatus("AI Analysis Complete! 🌟"); } 
       else { setCaptureStatus("AI Error: " + (data.error || "Unknown")); }
-    } catch (e) { setCaptureStatus("AI Backend Error. Falling back to Local Parser."); }
+    } catch (e) { setCaptureStatus("AI Backend Error. Check your internet or API key."); }
     setIsCaptureAnalyzing(false);
   };
 
@@ -332,11 +301,23 @@ export default function App() {
       const data = await res.json();
       if (data.analysis) { setAiAnalysisResult(data.analysis); setWrongQuestionStatus("AI Analysis Complete! 🌟"); } 
       else { setWrongQuestionStatus("AI Error: " + (data.error || "Unknown")); }
-    } catch (e) { setWrongQuestionStatus("AI Backend Error. Falling back to Local Parser."); }
+    } catch (e) { setWrongQuestionStatus("AI Backend Error. Check your internet or API key."); }
     setIsAnalyzing(false);
   };
 
-  const scrollableStyle = { maxHeight: '200px', overflowY: 'auto', paddingRight: '5px' };
+  // 【终极防切割滚动条样式】强制带背景框、内边距、自动换行和滚动条
+  const scrollableStyle = { 
+    maxHeight: '220px', 
+    overflowY: 'auto', 
+    overflowX: 'hidden',
+    padding: '12px', 
+    backgroundColor: '#f8fafc', 
+    borderRadius: '8px', 
+    border: '1px solid #e2e8f0',
+    whiteSpace: 'pre-wrap', 
+    wordBreak: 'break-word',
+    marginTop: '8px'
+  };
 
   return (
     <div className="app-shell">
@@ -373,30 +354,37 @@ export default function App() {
           </div>
           <div className="panel capture-editor-panel">
             <div className="panel-title">Capture Editor</div>
-            <textarea className="panel-textarea" value={captureDraft} onChange={(e) => setCaptureDraft(e.target.value)} placeholder="粘贴长笔记到这里，本地引擎会自动解析。需要深度分析时再点击 Ask AI！" />
+            <textarea className="panel-textarea" value={captureDraft} onChange={(e) => setCaptureDraft(e.target.value)} placeholder="粘贴长笔记到这里，本地引擎会自动解析。需要深度分析时点击专属 AI 按钮！" />
           </div>
           <div className="panel capture-controls">
-            <div className="panel-title">Capture Controls</div>
             <div className="button-row">
               <button onClick={handleSaveNote}>Save Note</button>
-              <button onClick={handleCaptureRunAI} disabled={isCaptureAnalyzing} style={{ backgroundColor: '#3b82f6', color: '#fff', borderColor: '#2563eb', fontWeight: 'bold' }}>
-                {isCaptureAnalyzing ? "AI 正在飞速思考中..." : "✨ Ask AI to Analyze"}
-              </button>
+              {/* ✨ AI 按钮已经从这里搬走了，挪到了 Analysis 面板的标题上！ */}
               <button onClick={handleLoadSavedNotes}>Load Saved Notes</button>
               <button onClick={handleClearEditor}>Clear Editor</button>
             </div>
-            <div style={{ marginTop: 12, color: isCaptureAnalyzing ? '#3b82f6' : '#10b981', fontWeight: 600 }}>{captureStatus}</div>
+            <div style={{ marginTop: 12, color: '#10b981', fontWeight: 600 }}>{captureStatus}</div>
           </div>
 
           <div className="workspace-grid">
             <div className="panel capture-analysis-panel">
-              {/* 动态显示当前处于什么解析模式 */}
-              <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                Capture Analysis
-                <span style={{ fontSize: '12px', padding: '2px 8px', borderRadius: '12px', backgroundColor: captureAiResult ? '#dbeafe' : '#f1f5f9', color: captureAiResult ? '#1e40af' : '#64748b' }}>
-                  {captureAiResult ? "✨ AI Analysis Active" : "⚙️ Local Parse Active"}
-                </span>
+              {/* ✨ 专属 AI 按钮区域 */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '2px solid #e2e8f0', paddingBottom: '10px' }}>
+                <h3 style={{ margin: 0, color: '#1e293b' }}>
+                  Capture Analysis 
+                  <span style={{ fontSize: '12px', marginLeft: '10px', padding: '4px 8px', borderRadius: '12px', backgroundColor: captureAiResult ? '#dbeafe' : '#f1f5f9', color: captureAiResult ? '#1e40af' : '#64748b' }}>
+                    {captureAiResult ? "✨ AI Active" : "⚙️ Local Active"}
+                  </span>
+                </h3>
+                <button 
+                  onClick={handleCaptureRunAI} 
+                  disabled={isCaptureAnalyzing} 
+                  style={{ backgroundColor: '#2563eb', color: '#fff', padding: '8px 16px', borderRadius: '8px', border: 'none', fontWeight: 'bold', cursor: 'pointer', boxShadow: '0 2px 4px rgba(37,99,235,0.2)' }}
+                >
+                  {isCaptureAnalyzing ? "⏳ AI Thinking..." : "✨ Ask AI to Analyze"}
+                </button>
               </div>
+
               <div className="subcard compact-subcard">
                 <div className="subcard-title">Summary</div>
                 <div style={scrollableStyle}><p>{captureSummary}</p></div>
@@ -416,15 +404,10 @@ export default function App() {
             </div>
 
             <div className="panel live-logic-graph-panel">
-              <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                Live Logic Image
-                <span style={{ fontSize: '12px', padding: '2px 8px', borderRadius: '12px', backgroundColor: captureAiResult ? '#dbeafe' : '#f1f5f9', color: captureAiResult ? '#1e40af' : '#64748b' }}>
-                  {captureAiResult ? "✨ AI Analysis Active" : "⚙️ Local Parse Active"}
-                </span>
-              </div>
-              <div style={{ maxHeight: '600px', overflowY: 'auto', paddingRight: '5px' }}>
+              <div className="panel-title">Live Logic Image</div>
+              <div style={{ maxHeight: '600px', overflowY: 'auto', paddingRight: '5px', backgroundColor: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: '8px', padding: '10px' }}>
                 {captureLogicForest.length === 0 ? (
-                  <div className="logic-graph-placeholder">思维导图需要强大的逻辑推理，请点击 Ask AI 按钮生成。</div>
+                  <div className="logic-graph-placeholder" style={{ color: '#64748b' }}>思维导图需要强大的逻辑推理，请点击右上角的 Ask AI 按钮生成。</div>
                 ) : (
                   <div className="logic-forest">{captureLogicForest.map((tree, index) => <div key={`${tree.label}-${index}`} className="logic-tree-card"><LogicTreeNode tree={tree} /></div>)}</div>
                 )}
@@ -454,17 +437,28 @@ export default function App() {
               </div>
               <div className="subcard compact-subcard">
                 <div className="subcard-title">Wrong Question Text</div>
-                <textarea className="panel-textarea wrong-question-textarea" value={wrongQuestionDraftText} onChange={(e) => setWrongQuestionDraftText(e.target.value)} placeholder="粘贴错题文字，本地引擎会自动提取 Correct 句子。" />
+                <textarea className="panel-textarea wrong-question-textarea" value={wrongQuestionDraftText} onChange={(e) => setWrongQuestionDraftText(e.target.value)} placeholder="粘贴错题文字，然后点击右侧的 ✨ Ask AI to Analyze" />
               </div>
             </div>
 
             <div className="panel wrong-question-analysis-panel">
-              <div className="panel-title" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                Wrong Question Analysis
-                <span style={{ fontSize: '12px', padding: '2px 8px', borderRadius: '12px', backgroundColor: aiAnalysisResult ? '#dbeafe' : '#f1f5f9', color: aiAnalysisResult ? '#1e40af' : '#64748b' }}>
-                  {aiAnalysisResult ? "✨ AI Analysis Active" : "⚙️ Local Parse Active"}
-                </span>
+              {/* ✨ 专属 AI 按钮区域 */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '2px solid #e2e8f0', paddingBottom: '10px' }}>
+                <h3 style={{ margin: 0, color: '#1e293b' }}>
+                  Wrong Question Analysis
+                  <span style={{ fontSize: '12px', marginLeft: '10px', padding: '4px 8px', borderRadius: '12px', backgroundColor: aiAnalysisResult ? '#dbeafe' : '#f1f5f9', color: aiAnalysisResult ? '#1e40af' : '#64748b' }}>
+                    {aiAnalysisResult ? "✨ AI Active" : "⚙️ Local Active"}
+                  </span>
+                </h3>
+                <button 
+                  onClick={handleWrongQuestionRunAI} 
+                  disabled={isAnalyzing} 
+                  style={{ backgroundColor: '#2563eb', color: '#fff', padding: '8px 16px', borderRadius: '8px', border: 'none', fontWeight: 'bold', cursor: 'pointer', boxShadow: '0 2px 4px rgba(37,99,235,0.2)' }}
+                >
+                  {isAnalyzing ? "⏳ AI Analyzing..." : "✨ Ask AI to Analyze"}
+                </button>
               </div>
+
               <div className="analysis-mini-grid">
                 <div className="subcard compact-subcard"><div className="subcard-title">Summary</div><div style={scrollableStyle}><p>{wrongQuestionAnalysis.summary}</p></div></div>
                 <div className="subcard compact-subcard"><div className="subcard-title">Correct Answer</div><div style={scrollableStyle}>{Array.isArray(wrongQuestionAnalysis.correctAnswer) ? <p>{wrongQuestionAnalysis.correctAnswer.join(" / ")}</p> : <p>{wrongQuestionAnalysis.correctAnswer}</p>}</div></div>
@@ -476,14 +470,13 @@ export default function App() {
           </div>
 
           <div className="panel wrong-question-controls">
-            <div className="panel-title">Wrong Question Controls</div>
             <div className="button-row">
               <button onClick={handleSaveWrongQuestion}>Save Wrong Question</button>
-              <button onClick={handleWrongQuestionRunAI} disabled={isAnalyzing} style={{ backgroundColor: '#3b82f6', color: '#fff', borderColor: '#2563eb', fontWeight: 'bold' }}>{isAnalyzing ? "AI 正在分析错题..." : "✨ Ask AI to Analyze"}</button>
+              {/* ✨ AI 按钮搬走了！ */}
               <button onClick={handleLoadSavedFlashcards}>Load Saved Flashcards</button>
               <button onClick={handleClearWrongQuestion}>Clear Wrong Question</button>
             </div>
-            <div style={{ marginTop: 12, color: isAnalyzing ? '#3b82f6' : '#10b981', fontWeight: 600 }}>{wrongQuestionStatus}</div>
+            <div style={{ marginTop: 12, color: '#10b981', fontWeight: 600 }}>{wrongQuestionStatus}</div>
           </div>
 
           <div className="panel flashcard-panel">
