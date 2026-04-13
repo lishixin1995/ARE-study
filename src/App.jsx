@@ -67,31 +67,17 @@ function buildCaptureSummary(text) {
   if (!text) return "等待输入...";
   const frags = smartSplit(text).map(stripFillerPrefix);
   if (!frags.length) return "无法生成摘要";
-  
-  const topSentences = [...frags]
-    .sort((a, b) => sentenceScore(b) - sentenceScore(a))
-    .slice(0, 3);
+  const ranked = [...frags].sort((a, b) => sentenceScore(b) - sentenceScore(a));
+  const definitions = ranked.filter(s => /(is|are|means|defined as|refers to)/i.test(s));
+  const constraints = ranked.filter(s => /(must|needs to|required|typically|however|but)/i.test(s));
+  const examples = ranked.filter(s => /(for example|could|combination|include|such as)/i.test(s));
 
-  return topSentences.join(" ");
-
-}
-
-function buildCaptureExtraction(text) {
-  if (!text) return ["等待输入以提取核心知识点..."];
-  const frags = smartSplit(text);
-  const extractions = [];
-
-  frags.forEach(f => {
-    if (f.includes(":") || f.includes("：")) {
-      const parts = f.split(/[:：]/);
-      extractions.push(`🎯 关键定义 [${capitalizeWords(parts[0])}]：${parts[1]?.trim() || ""}`);
-    } else if (f.includes("- ") || f.includes("– ")) {
-      extractions.push(`📌 策略关联：${f}`);
-    } else if (f.length > 15) {
-      extractions.push(`🔸 ${f}`);
-    }
+  const selected = [];
+  [definitions[0], constraints[0], examples[0], ranked[0]].forEach(item => {
+    if (item && !selected.includes(item)) selected.push(item);
   });
-  return extractions;
+
+  return selected.slice(0, 3).join(" ");
 }
 
 function buildCaptureBulletPoints(text) {
@@ -118,7 +104,7 @@ function buildCaptureLogicLinks(text) {
   const frags = smartSplit(text);
 
   frags.forEach(f => {
-        const clean = stripFillerPrefix(f);
+    const clean = stripFillerPrefix(f);
     const farMatch = clean.match(/far.*?(?:is|means|=)\s*(.*)/i);
     if (farMatch) {
       links.push(`[FAR] ➔ defines ➔ ${farMatch[1]}`);
@@ -143,9 +129,27 @@ function buildCaptureLogicLinks(text) {
       return;
     }
 
-    if (f.includes(":") || f.includes("：")) {
-      const pts = f.split(/[:：]/);
-      links.push(`[${capitalizeWords(pts[0])}] ➔ ${pts[1]?.trim() || ""}`);
+   const definitionMatch = clean.match(/^(.*?)\s+(is|are|means|refers to|defined as)\s+(.*)$/i);
+    if (definitionMatch) {
+      links.push(`[${capitalizeWords(definitionMatch[1])}] ➔ defines ➔ ${definitionMatch[3]}`);
+      return;
+    }
+
+    const causeEffectMatch = clean.match(/^(.*?)\s+(affects|influences|controls|limits|requires|determines)\s+(.*)$/i);
+    if (causeEffectMatch) {
+      links.push(`[${capitalizeWords(causeEffectMatch[1])}] ➔ ${causeEffectMatch[2].toLowerCase()} ➔ ${causeEffectMatch[3]}`);
+      return;
+    }
+
+    const includeMatch = clean.match(/^(.*?)\s+(include|includes|consists of)\s+(.*)$/i);
+    if (includeMatch) {
+      links.push(`[${capitalizeWords(includeMatch[1])}] ➔ includes ➔ ${includeMatch[3]}`);
+      return;
+    }
+
+    if (clean.includes(":") || clean.includes("：")) {
+      const pts = clean.split(/[:：]/);
+      links.push(`[${capitalizeWords(pts[0])}] ➔ explains ➔ ${pts[1]?.trim() || ""}`);
     } else if (f.includes(" - ") || f.includes(" – ")) {
       const pts = f.split(/\s*[-–]\s*/);
       links.push(`[${capitalizeWords(pts[0])}] ➔ ${pts[1]?.trim() || ""}`);
@@ -168,75 +172,38 @@ function node(label, relation = null, children = []) {
 
 function buildCaptureLogicForest(text) {
   if (!text) return [];
-  const lower = text.toLowerCase();
-  const trees = [];
+  const links = buildCaptureLogicLinks(text).filter(item => item.includes("➔"));
+  if (!links.length) return [];
 
-  const systemsChildren = [];
-  if (lower.includes("active system") || lower.includes("mechanical")) {
-    systemsChildren.push(
-      node("Active System", "typically for", [
-        node("Mechanical Equipment", "relies on"),
-        node("Large Building", "used for"),
-        node("Heavy Energy Use", "effect")
-      ])
-    );
-  }
-  if (lower.includes("passive system") || lower.includes("air") || lower.includes("sun")) {
-    systemsChildren.push(
-      node("Passive System", "features", [
-        node("Air / Sun / Windflow", "depends on"),
-        node("Less Control", "trade-off"),
-        node("Better Sustainable", "advantage")
-      ])
-    );
-  }
-  if (systemsChildren.length) trees.push(node("Building Systems", null, systemsChildren));
+  const adjacency = new Map();
+  const inbound = new Map();
 
-  const climateChildren = [];
-  if (lower.includes("cold climate") || lower.includes("heat loss")) {
-    climateChildren.push(
-      node("Cold Climate", "strategy", [
-        node("Minimize Heat Loss", "goal"),
-        node("Block Cold Wind", "action"),
-        node("Gain Solar Heat", "action")
-      ])
-    );
-  }
-  if (lower.includes("hot climate") || lower.includes("heat gain")) {
-    climateChildren.push(
-      node("Hot Climate", "strategy", [
-        node("Control Heat Gain", "goal"),
-        node("Provide Shading", "action"),
-        node("Natural Ventilation", "optimize")
-      ])
-    );
-  }
-  if (climateChildren.length) trees.push(node("Climate Strategies", null, climateChildren));
+  links.forEach(link => {
+    const parts = link.split("➔").map(part => part.trim());
+    if (parts.length !== 3) return;
 
-  const componentsChildren = [];
-  if (lower.includes("trombe wall")) {
-    componentsChildren.push(
-      node("Trombe Wall", "component", [
-        node("Stable Temperature", "provides"),
-        node("Lot of Space", "needs")
-      ])
-    );
-  }
-  if (lower.includes("flat collector")) {
-    componentsChildren.push(node("Flat Collector", "component", [node("Collect Sunlight", "function")]));
-  }
-  if (lower.includes("rock bed")) {
-    componentsChildren.push(
-      node("Fan Forced Rock Bed", "component", [node("Greatest Temp Control", "advantage")])
-    );
-  }
-  if (componentsChildren.length) trees.push(node("Specific Components", null, componentsChildren));
+    const from = parts[0].replace(/^\[|\]$/g, "");
+    const relation = parts[1];
+    const to = parts[2].replace(/^\[|\]$/g, "");
 
-  if (!trees.length) {
-    const frags = smartSplit(text).slice(0, 4);
-    trees.push(node("Key Concepts", null, frags.map(s => node(s.substring(0, 30) + "...", "note"))));
-  }
-  return trees;
+    if (!adjacency.has(from)) adjacency.set(from, []);
+    adjacency.get(from).push({ relation, to });
+    inbound.set(to, (inbound.get(to) || 0) + 1);
+    if (!inbound.has(from)) inbound.set(from, inbound.get(from) || 0);
+  });
+
+  const roots = [...adjacency.keys()].filter(key => (inbound.get(key) || 0) === 0);
+  const buildTree = (current, depth = 0, visited = new Set()) => {
+    if (depth > 3 || visited.has(current)) return node(current);
+    const nextVisited = new Set(visited);
+    nextVisited.add(current);
+    const children = (adjacency.get(current) || []).map(edge =>
+      node(edge.to, edge.relation, buildTree(edge.to, depth + 1, nextVisited).children)
+    );
+     return node(current, null, children);
+  };
+  
+  return (roots.length ? roots : [...adjacency.keys()].slice(0, 1)).map(root => buildTree(root));
 }
 
 // ==========================================
@@ -500,14 +467,6 @@ export default function App() {
       isCaptureEmpty
         ? "等待输入..."
         : captureAiResult?.summary || buildCaptureSummary(effectiveCaptureText),
-    [effectiveCaptureText, captureAiResult, isCaptureEmpty]
-  );
-
-  const captureExtraction = useMemo(
-    () =>
-      isCaptureEmpty
-        ? ["等待输入以提取核心知识点..."]
-        : captureAiResult?.extraction || buildCaptureExtraction(effectiveCaptureText),
     [effectiveCaptureText, captureAiResult, isCaptureEmpty]
   );
 
@@ -833,10 +792,11 @@ export default function App() {
     marginTop: "6px"
   };
 
-    const summaryScrollableStyle = {
+  const summaryScrollableStyle = {
     ...scrollableStyle,
     minHeight: "120px",
-    maxHeight: "140px"
+    maxHeight: "140px",
+    overflowY: "scroll"
   };
 
   const captureAnalysisScrollStyle = {
@@ -1021,31 +981,7 @@ export default function App() {
               <div style={captureAnalysisScrollStyle}>
                 <div className="subcard">
                   <div className="subcard-title">Summary</div>
-                  <div style={summaryScrollableStyle}>{captureSummary}</div>
-                </div>
-
-                <div className="subcard">
-                  <div className="subcard-title">Extraction</div>
-                  <div style={scrollableStyle}>
-                    <ul>
-                      {captureExtraction.map((item, i) => (
-                        <li key={i} style={{ marginBottom: "6px" }}>
-                          {item}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
-
-                <div className="subcard">
-                  <div className="subcard-title">Bullet Points</div>
-                  <div style={scrollableStyle}>
-                    <ul>
-                      {captureBulletPoints.map((item, i) => (
-                        <li key={i}>{item}</li>
-                      ))}
-                    </ul>
-                  </div>
+                  <div style={summaryScrollableStyle} className="summary-scroll">{captureSummary}</div>
                 </div>
 
                 <div className="subcard">
