@@ -11,13 +11,13 @@ export default async function handler(request, response) {
   }
 
   try {
-    // 1. 检查有没有拿到钥匙
     if (!process.env.GEMINI_API_KEY) {
-      throw new Error("Vercel 后台没找到 GEMINI_API_KEY，请检查环境变量是否填写正确！");
+      throw new Error("Vercel 没有找到 GEMINI_API_KEY，请检查环境变量设置！");
     }
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // 【关键修复】换成了 latest 后缀，解决 404 Not Found 问题！
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
     let prompt = "";
 
@@ -72,22 +72,20 @@ export default async function handler(request, response) {
     const result = await model.generateContent(prompt);
     let responseText = result.response.text();
     
-    // 2. 暴力清理 AI 可能带的 Markdown 废话
+    // 暴力清理，确保 JSON 解析百分百成功
     responseText = responseText.replace(/```json/gi, '').replace(/```/g, '').trim();
     
-    // 3. 尝试解析 JSON
     let analysis;
     try {
       analysis = JSON.parse(responseText);
     } catch (parseError) {
-      throw new Error("AI 返回格式错误无法解析: " + responseText.substring(0, 40) + "...");
+      throw new Error("AI 返回了无法解析的格式: " + responseText.substring(0, 50));
     }
 
     return response.status(200).json({ analysis });
 
   } catch (error) {
     console.error("AI Error:", error);
-    // 4. 把【真正的报错信息】发送回前端网页！
     return response.status(500).json({ error: error.message || 'Unknown AI Error' });
   }
 }
