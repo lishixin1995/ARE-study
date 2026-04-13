@@ -12,43 +12,57 @@ export default async function handler(request, response) {
 
   try {
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // 强制 AI 输出标准 JSON 格式，绝不废话！
+    const model = genAI.getGenerativeModel({ 
+      model: "gemini-1.5-flash",
+      generationConfig: { responseMimeType: "application/json" }
+    });
 
     let prompt = "";
 
     if (type === 'capture') {
       prompt = `
       You are an expert Architecture Registration Examination (ARE) tutor.
-      Analyze the following student notes and output ONLY a valid JSON object containing your analysis. 
-      Do not use markdown formatting like \`\`\`json. Just output the raw JSON.
+      Analyze the user's notes and output ONLY a valid JSON object.
+      IMPORTANT: Respond in the EXACT SAME LANGUAGE as the user's notes (e.g., if the user writes in Chinese, your analysis MUST be in Chinese).
+      Do not summarize too briefly. Extract the core architectural logic, trade-offs, and rules of thumb.
       
       Required JSON Format:
       {
-        "summary": "1-2 sentence summary of the core concept.",
-        "extraction": ["key fact 1", "key fact 2", "key fact 3"],
-        "bulletPoints": ["important bullet 1", "important bullet 2"],
-        "logicLinks": ["Concept A -> leads to -> Concept B"],
-        "logicForest": [] 
+        "summary": "1-3 sentence detailed summary of the core concept and trade-offs.",
+        "extraction": ["Detailed fact 1", "Detailed fact 2", "Detailed fact 3", "Detailed fact 4"],
+        "bulletPoints": ["Key action or rule 1", "Key action or rule 2", "Key action or rule 3"],
+        "logicLinks": ["Condition A -> Strategy B", "Problem X -> Solution Y"],
+        "logicForest": [
+          {
+            "label": "Main Category (e.g., Daylighting)",
+            "relation": "category",
+            "children": [
+              { "label": "Sub Concept 1", "relation": "strategy" },
+              { "label": "Sub Concept 2", "relation": "trade-off" }
+            ]
+          }
+        ] 
       }
 
-      Notes to analyze:
+      User Notes to analyze:
       ${text}
       `;
     } 
     else if (type === 'wrong_question') {
       prompt = `
       You are an expert Architecture Registration Examination (ARE) tutor.
-      Analyze the following OCR text from a wrong question and output ONLY a valid JSON object.
-      Do not use markdown formatting like \`\`\`json. Just output the raw JSON.
-
+      Analyze the OCR text from a wrong question and output ONLY a valid JSON object.
+      IMPORTANT: Respond in the EXACT SAME LANGUAGE as the user's notes.
+      
       Required JSON Format:
       {
-        "questionText": "Extract the pure question text here.",
-        "summary": "1 sentence summarizing what concept this question tests.",
+        "questionText": "Extract the pure question text.",
+        "summary": "1 sentence summarizing what concept this tests.",
         "correctAnswer": "Extract the correct answer option.",
         "answerExtraction": ["Why is it correct? Reason 1", "Reason 2"],
         "trapPoint": ["Why are other options wrong? Trap 1", "Trap 2"],
-        "memoryHook": "A short, catchy mnemonic or rule of thumb to remember this."
+        "memoryHook": "A catchy mnemonic or rule of thumb."
       }
 
       Text to analyze:
@@ -57,15 +71,13 @@ export default async function handler(request, response) {
     }
 
     const result = await model.generateContent(prompt);
-    let responseText = result.response.text();
-    
-    responseText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+    const responseText = result.response.text();
     const analysis = JSON.parse(responseText);
 
     return response.status(200).json({ analysis });
 
   } catch (error) {
     console.error("AI Error:", error);
-    return response.status(500).json({ error: 'Failed to connect to AI' });
+    return response.status(500).json({ error: 'Failed to connect to AI or parse JSON' });
   }
 }
