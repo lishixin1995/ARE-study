@@ -23,76 +23,141 @@ const SAMPLE_BY_DIVISION = {
 };
 
 // ==========================================
-// ⚙️ 本地简单引擎 (负责免费兜底)
+// 🧠 终极进化版：本地智能解析引擎 (Smart Local Parser)
 // ==========================================
-function splitSentences(text) { return (text || "").replace(/\r/g, "").replace(/\n+/g, " ").split(/(?<=[.!?。！？])\s+/).map(item => item.trim()).filter(Boolean); }
-function splitLines(text) { return (text || "").replace(/\r/g, "").split("\n").map(item => item.trim()).filter(Boolean); }
-function capitalizeWords(text) { return (text || "").split(" ").map(word => word ? word.charAt(0).toUpperCase() + word.slice(1) : word).join(" "); }
+function capitalizeWords(text) {
+  return (text || "").trim().split(" ").map(word => word ? word.charAt(0).toUpperCase() + word.slice(1) : word).join(" ");
+}
 
+// 智能切分段落 (识别标点、分号、以及 1. 2. 这种序号)
+function smartSplit(text) {
+  if (!text) return [];
+  // 先把序号(1. 2.)替换成特殊分隔符，再按句号分号切割
+  const formatted = text.replace(/(\d+\.)/g, '| $1');
+  return formatted.split(/[。！？;；|]/).map(s => s.trim()).filter(s => s.length > 3);
+}
+
+// 1. 智能摘要 (分析文本包含的核心建筑考点)
 function buildCaptureSummary(text) {
   if (!text) return "等待输入...";
-  const sentences = splitSentences(text);
-  return sentences.length >= 2 ? `${sentences[0]} ${sentences[1]}` : sentences[0];
+  const lower = text.toLowerCase();
+  const topics = [];
+  if (lower.includes('system') || lower.includes('active') || lower.includes('passive')) topics.push('Building Systems (Active/Passive)');
+  if (lower.includes('climate') || lower.includes('hot') || lower.includes('cold')) topics.push('Climate Strategies');
+  if (lower.includes('solar') || lower.includes('sun') || lower.includes('daylight')) topics.push('Solar & Daylighting');
+  
+  if (topics.length > 0) {
+    return `📝 核心考点探讨：${topics.join(' / ')}。主要记录了不同系统与自然气候条件下的建筑应对策略及优缺点。`;
+  }
+  const frags = smartSplit(text);
+  return frags.length > 0 ? frags[0] : "无法生成摘要";
 }
 
+// 2. 智能提取 (自动排版带冒号的定义)
 function buildCaptureExtraction(text) {
   if (!text) return ["等待输入以提取核心知识点..."];
-  const lines = splitLines(text);
-  if (lines.length > 2) return lines; 
-  return splitSentences(text); 
+  const frags = smartSplit(text);
+  const extractions = [];
+  
+  frags.forEach(f => {
+    if (f.includes(':') || f.includes('：')) {
+      const parts = f.split(/[:：]/);
+      extractions.push(`🎯 关键定义 [${capitalizeWords(parts[0])}]：${parts[1].trim()}`);
+    } else if (f.includes('- ') || f.includes('– ')) {
+      extractions.push(`📌 策略关联：${f}`);
+    } else if (f.length > 15) {
+      extractions.push(`🔸 ${f}`);
+    }
+  });
+  return extractions;
 }
 
+// 3. 智能 Bullet Points (格式化输出)
 function buildCaptureBulletPoints(text) {
   if (!text) return ["等待输入..."];
-  const sentences = splitSentences(text);
-  const points = sentences.filter(s => s.match(/system|climate|heat|solar|control|reduce|ventilation|系统|气候|热|太阳|控制/i));
-  return points.length > 0 ? points : sentences; 
+  const frags = smartSplit(text);
+  return frags.map(f => {
+    let clean = f.replace(/^[1-9]\.\s*/, ''); // 去掉自带的数字
+    if (clean.includes(':') || clean.includes('：')) {
+      const parts = clean.split(/[:：]/);
+      return `**${capitalizeWords(parts[0])}**: ${parts[1].trim()}`;
+    }
+    return clean;
+  }).filter(f => f.length > 5);
 }
 
+// 4. 智能逻辑链 (抓取动词和因果关系)
 function buildCaptureLogicLinks(text) {
   if (!text) return ["等待输入以生成逻辑链..."];
   const links = [];
-  const lower = text.toLowerCase();
-  if (lower.includes("passive")) links.push("Passive System ➔ depends on ➔ Climate / Sun / Air");
-  if (lower.includes("active")) links.push("Active System ➔ relies on ➔ Mechanical Equipment");
-  if (lower.includes("cold")) links.push("Cold Climate ➔ goal ➔ Reduce Heat Loss & Gain Solar");
-  if (lower.includes("hot")) links.push("Hot Climate ➔ goal ➔ Control Heat Gain & Ventilation");
-  if (links.length === 0) {
-    const sentences = splitSentences(text);
-    if (sentences.length > 1) links.push(`${sentences[0].substring(0, 20)}... ➔ ${sentences[1].substring(0, 20)}...`);
-  }
-  return links.length > 0 ? links : ["无法自动提取逻辑，请点击 Ask AI。"];
+  const frags = smartSplit(text);
+
+  frags.forEach(f => {
+    // 识别冒号
+    if (f.includes(':') || f.includes('：')) {
+      const pts = f.split(/[:：]/);
+      links.push(`[${capitalizeWords(pts[0])}] ➔ ${pts[1].trim()}`);
+    } 
+    // 识别破折号
+    else if (f.includes(' - ') || f.includes(' – ')) {
+      const pts = f.split(/\s*[-–]\s*/);
+      links.push(`[${capitalizeWords(pts[0])}] ➔ ${pts[1].trim()}`);
+    } 
+    // 识别特定建筑学动词 (need to, avoid, use, provide, minimize)
+    else {
+      const match = f.match(/(.*?)\s+(need to|avoid|use|provide|minimize|reduce|gain|collect)\s+(.*)/i);
+      if (match && match[1].length < 30) {
+        links.push(`[${capitalizeWords(match[1])}] ➔ ${match[2].toLowerCase()} ➔ ${match[3]}`);
+      }
+    }
+  });
+
+  return links.length > 0 ? links : ["💡 提示：在笔记中使用冒号 (:) 或破折号 (-) 即可自动生成完美逻辑链。"];
 }
 
+// 5. 智能 Logic Forest (自动适配你的文本)
 function node(label, relation = null, children = []) { return { label, relation, children }; }
 function buildCaptureLogicForest(text) {
   if (!text) return [];
   const lower = text.toLowerCase();
   const trees = [];
+  
+  // 针对 System 的树
   const systemsChildren = [];
-  if (lower.includes("active") || lower.includes("mechanical")) {
-    systemsChildren.push(node("Active System", "category", [node("Mechanical Equipment", "relies on"), node("Higher Energy Use", "effect")]));
+  if (lower.includes("active system") || lower.includes("mechanical")) {
+    systemsChildren.push(node("Active System", "typically for", [node("Mechanical Equipment", "relies on"), node("Large Building", "used for"), node("Heavy Energy Use", "effect")]));
   }
-  if (lower.includes("passive") || lower.includes("sun") || lower.includes("air")) {
-    systemsChildren.push(node("Passive System", "category", [node("Sun", "depends on"), node("Air / Wind", "depends on")]));
+  if (lower.includes("passive system") || lower.includes("air") || lower.includes("sun")) {
+    systemsChildren.push(node("Passive System", "features", [node("Air / Sun / Windflow", "depends on"), node("Less Control", "trade-off"), node("Better Sustainable", "advantage")]));
   }
   if (systemsChildren.length) trees.push(node("Building Systems", null, systemsChildren));
 
+  // 针对 Climate 的树
   const climateChildren = [];
-  if (lower.includes("cold") || lower.includes("heat loss")) {
-    climateChildren.push(node("Cold Climate", "category", [node("Reduce Heat Loss", "goal"), node("Gain Solar Heat", "goal")]));
+  if (lower.includes("cold climate") || lower.includes("heat loss")) {
+    climateChildren.push(node("Cold Climate", "strategy", [node("Minimize Heat Loss", "goal"), node("Block Cold Wind", "action"), node("Gain Solar Heat", "action")]));
   }
-  if (lower.includes("hot") || lower.includes("heat gain")) {
-    climateChildren.push(node("Hot Climate", "category", [node("Control Heat Gain", "goal"), node("Natural Ventilation", "strategy")]));
+  if (lower.includes("hot climate") || lower.includes("heat gain")) {
+    climateChildren.push(node("Hot Climate", "strategy", [node("Control Heat Gain", "goal"), node("Provide Shading", "action"), node("Natural Ventilation", "optimize")]));
   }
-  if (climateChildren.length) trees.push(node("Climate Strategy", null, climateChildren));
+  if (climateChildren.length) trees.push(node("Climate Strategies", null, climateChildren));
+
+  // 针对具体构件的树
+  const componentsChildren = [];
+  if (lower.includes("trombe wall")) componentsChildren.push(node("Trombe Wall", "component", [node("Stable Temperature", "provides"), node("Lot of Space", "needs")]));
+  if (lower.includes("flat collector")) componentsChildren.push(node("Flat Collector", "component", [node("Collect Sunlight", "function")]));
+  if (lower.includes("rock bed")) componentsChildren.push(node("Fan Forced Rock Bed", "component", [node("Greatest Temp Control", "advantage")]));
+  if (componentsChildren.length) trees.push(node("Specific Components", null, componentsChildren));
 
   if (!trees.length) {
-    const sentences = splitSentences(text).slice(0, 4);
-    trees.push(node("Key Concepts", null, sentences.map(s => node(s.substring(0,30)+"...", "note"))));
+    const frags = smartSplit(text).slice(0, 4);
+    trees.push(node("Key Concepts", null, frags.map(s => node(s.substring(0,30)+"...", "note"))));
   }
   return trees;
 }
+
+// 错题区本地逻辑 (也做了增强)
+function splitLines(text) { return (text || "").replace(/\r/g, "").split("\n").map(item => item.trim()).filter(Boolean); }
 
 function buildWrongQuestionQuestionText(text) {
   const lines = splitLines(text);
@@ -104,14 +169,17 @@ function buildWrongQuestionQuestionText(text) {
   return questionLines.length ? questionLines.slice(0, 6).join(" ") : "No question text yet.";
 }
 function buildWrongQuestionSummary(text) { return text ? buildCaptureSummary(text) : "等待输入..."; }
-function buildWrongQuestionCorrectAnswer(text) { return "等待输入或使用 AI 解析..."; }
+function buildWrongQuestionCorrectAnswer(text) { 
+  const match = (text || "").match(/correct answer\s*[:\-]\s*(.+)/i);
+  return match ? match[1].trim() : "等待输入... (提示: 格式为 Correct Answer: xxx)"; 
+}
 function buildWrongQuestionAnswerExtraction(text) {
   const correctLines = splitLines(text).filter(l => /^(?:☑|✔|\[x\]|✓)?\s*Correct[\.\s:-]+/i.test(l.trim()));
-  return correctLines.length > 0 ? correctLines.map(l => l.replace(/^(?:☑|✔|\[x\]|✓)?\s*Correct[\.\s:-]+/i, '').trim()) : ["未检测到 Correct 关键词，请点击 Ask AI。"];
+  return correctLines.length > 0 ? correctLines.map(l => l.replace(/^(?:☑|✔|\[x\]|✓)?\s*Correct[\.\s:-]+/i, '').trim()) : ["未检测到 Correct 关键词，请手动修改。"];
 }
 function buildWrongQuestionTrapPoint(text) {
   const incorrectLines = splitLines(text).filter(l => /^(?:☐|❌|\[\s\]|✗)?\s*Incorrect[\.\s:-]+/i.test(l.trim()));
-  return incorrectLines.length > 0 ? incorrectLines.map(l => l.replace(/^(?:☐|❌|\[\s\]|✗)?\s*Incorrect[\.\s:-]+/i, '').trim()) : ["未检测到 Incorrect 关键词，请点击 Ask AI。"];
+  return incorrectLines.length > 0 ? incorrectLines.map(l => l.replace(/^(?:☐|❌|\[\s\]|✗)?\s*Incorrect[\.\s:-]+/i, '').trim()) : ["未检测到 Incorrect 关键词。"];
 }
 
 function LogicTreeNode({ tree, depth = 0 }) {
@@ -131,7 +199,7 @@ function readWrongQuestionFlashcards() { try { const raw = localStorage.getItem(
 function formatSavedAt(dateString) { if (!dateString) return ""; const d = new Date(dateString); return Number.isNaN(d.getTime()) ? dateString : `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${d.toLocaleTimeString()}`; }
 
 // ==========================================
-// 🎯 主组件入口
+// 🎯 主组件入口 (UI 与功能全保留)
 // ==========================================
 export default function App() {
   const [selectedDivision, setSelectedDivision] = useState("PPD");
@@ -268,7 +336,7 @@ export default function App() {
       const res = await fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: effectiveCaptureText, type: 'capture' }) });
       const data = await res.json();
       if (data.analysis) { setCaptureAiResult(data.analysis); setCaptureStatus("AI Analysis Complete!"); } else { setCaptureStatus("AI Error: " + (data.error || "Unknown")); }
-    } catch (e) { setCaptureStatus("AI Error: Network/Timeout"); }
+    } catch (e) { setCaptureStatus("AI Error: Network/Timeout. Please check Vercel API Key."); }
     setIsCaptureAnalyzing(false);
   };
 
@@ -279,7 +347,7 @@ export default function App() {
       const res = await fetch('/api/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: wrongQuestionDraftText, type: 'wrong_question' }) });
       const data = await res.json();
       if (data.analysis) { setAiAnalysisResult(data.analysis); setWrongQuestionStatus("AI Analysis Complete!"); } else { setWrongQuestionStatus("AI Error: " + (data.error || "Unknown")); }
-    } catch (e) { setWrongQuestionStatus("AI Error: Network/Timeout"); }
+    } catch (e) { setWrongQuestionStatus("AI Error: Network/Timeout. Please check Vercel API Key."); }
     setIsAnalyzing(false);
   };
 
@@ -318,10 +386,9 @@ export default function App() {
           </div>
           <div className="panel capture-editor-panel">
             <div className="panel-title">Capture Editor</div>
-            <textarea className="panel-textarea" value={captureDraft} onChange={e => setCaptureDraft(e.target.value)} placeholder="粘贴长笔记..." />
+            <textarea className="panel-textarea" value={captureDraft} onChange={e => setCaptureDraft(e.target.value)} placeholder="粘贴长笔记，本地智脑会自动生成结构化解析..." />
           </div>
           <div className="panel capture-controls">
-             {/* 所有的操作按钮都在这里，绝没删减！ */}
             <div className="button-row">
               <button onClick={handleSaveNote}>Save Note</button>
               <button onClick={handleLoadSavedNotes}>Load Saved Notes</button>
@@ -334,7 +401,7 @@ export default function App() {
           <div className="workspace-grid">
             <div className="panel capture-analysis-panel">
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
-                <h3 style={{margin:0}}>Analysis <span style={{fontSize:'12px', background: captureAiResult?'#dbeafe':'#f1f5f9', padding:'4px 8px', borderRadius:'12px'}}>{captureAiResult?"✨ AI Active":"⚙️ Local Active"}</span></h3>
+                <h3 style={{margin:0}}>Analysis <span style={{fontSize:'12px', background: captureAiResult?'#dbeafe':'#f1f5f9', padding:'4px 8px', borderRadius:'12px'}}>{captureAiResult?"✨ AI Active":"⚙️ Local Smart Engine"}</span></h3>
                 <button onClick={handleCaptureRunAI} disabled={isCaptureAnalyzing} style={{ background: '#2563eb', color: 'white', padding: '6px 12px', borderRadius: '6px', border: 'none', cursor: 'pointer' }}>{isCaptureAnalyzing ? "Thinking..." : "✨ Ask AI"}</button>
               </div>
               <div className="subcard"><div className="subcard-title">Summary</div><div style={scrollableStyle}>{captureSummary}</div></div>
@@ -343,7 +410,7 @@ export default function App() {
               <div className="subcard"><div className="subcard-title">Logic Links</div><div style={scrollableStyle}><ul>{captureLogicLinks.map((item, i) => <li key={i}>{item}</li>)}</ul></div></div>
             </div>
             <div className="panel live-logic-graph-panel">
-              <h3 style={{margin:0, marginBottom:'10px'}}>Live Logic Image <span style={{fontSize:'12px', background: captureAiResult?'#dbeafe':'#f1f5f9', padding:'4px 8px', borderRadius:'12px'}}>{captureAiResult?"✨ AI Active":"⚙️ Local Active"}</span></h3>
+              <h3 style={{margin:0, marginBottom:'10px'}}>Live Logic Image <span style={{fontSize:'12px', background: captureAiResult?'#dbeafe':'#f1f5f9', padding:'4px 8px', borderRadius:'12px'}}>{captureAiResult?"✨ AI Active":"⚙️ Local Smart Engine"}</span></h3>
               <div style={{ maxHeight: '600px', overflowY: 'auto', background: '#f8fafc', padding: '10px', borderRadius: '8px' }}>
                 {captureLogicForest.length === 0 ? <div style={{color:'#64748b'}}>输入内容生成导图...</div> : <div className="logic-forest">{captureLogicForest.map((tree, i) => <div key={i} className="logic-tree-card"><LogicTreeNode tree={tree} /></div>)}</div>}
               </div>
@@ -360,7 +427,6 @@ export default function App() {
                <div className="subcard compact-subcard">
                  <div className="subcard-title">Image Upload</div>
                  {wrongQuestionImagePreview ? <img src={wrongQuestionImagePreview} alt="Preview" className="image-preview" /> : <div className="image-placeholder">Image Preview</div>}
-                 {/* 上传、删除、OCR 按钮都在这！ */}
                  <div className="button-row wrongq-button-row" style={{ marginTop: 12 }}>
                    <label className="nav-pill upload-nav-pill">Upload Image<input type="file" accept="image/*" onChange={handleWrongQuestionImageChange} hidden /></label>
                    {wrongQuestionImagePreview && <button className="nav-pill" onClick={() => { setWrongQuestionImageFile(null); setWrongQuestionImagePreview(""); }} style={{ backgroundColor: '#fee2e2', color: '#dc2626' }} type="button">Delete Image</button>}
@@ -375,7 +441,7 @@ export default function App() {
 
             <div className="panel wrong-question-analysis-panel">
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '10px' }}>
-                <h3 style={{margin:0}}>Analysis <span style={{fontSize:'12px', background: aiAnalysisResult?'#dbeafe':'#f1f5f9', padding:'4px 8px', borderRadius:'12px'}}>{aiAnalysisResult?"✨ AI Active":"⚙️ Local Active"}</span></h3>
+                <h3 style={{margin:0}}>Analysis <span style={{fontSize:'12px', background: aiAnalysisResult?'#dbeafe':'#f1f5f9', padding:'4px 8px', borderRadius:'12px'}}>{aiAnalysisResult?"✨ AI Active":"⚙️ Local Smart Engine"}</span></h3>
                 <button onClick={handleWrongQuestionRunAI} disabled={isAnalyzing} style={{ background: '#2563eb', color: 'white', padding: '6px 12px', borderRadius: '6px', border: 'none', cursor: 'pointer' }}>{isAnalyzing ? "Thinking..." : "✨ Ask AI"}</button>
               </div>
               <div className="analysis-mini-grid">
@@ -397,7 +463,7 @@ export default function App() {
             <div style={{color: '#10b981', marginTop: '10px'}}>{wrongQuestionStatus}</div>
           </div>
 
-          {/* ================= Flashcards 轮播区 (完好无损) ================= */}
+          {/* ================= Flashcards 轮播区 ================= */}
           <div className="panel flashcard-panel">
             <div className="panel-title">Wrong Question Flashcards</div>
             {wrongQuestionFlashcards.length === 0 ? <div className="flashcard-placeholder">No saved flashcards yet.</div> : (
@@ -425,8 +491,8 @@ export default function App() {
                     <div className="flashcard-detail-grid">
                       <div className="subcard compact-subcard"><div className="subcard-title">Correct Answer</div>{Array.isArray(currentFlashcard.correctAnswer) ? <p>{currentFlashcard.correctAnswer.join(" / ")}</p> : <p>{currentFlashcard.correctAnswer}</p>}</div>
                       <div className="subcard compact-subcard"><div className="subcard-title">Memory Hook</div><p>{currentFlashcard.memoryHook}</p></div>
-                      <div className="subcard compact-subcard analysis-span-2"><div className="subcard-title">Answer Extraction</div><ul>{currentFlashcard.answerExtraction.map((item, i) => <li key={i}>{item}</li>)}</ul></div>
-                      <div className="subcard compact-subcard analysis-span-2"><div className="subcard-title">Trap Point</div><ul>{currentFlashcard.trapPoint.map((item, i) => <li key={i}>{item}</li>)}</ul></div>
+                      <div className="subcard compact-subcard analysis-span-2"><div className="subcard-title">Answer Extraction</div><ul>{currentFlashcard.answerExtraction.map((item, i) => <li key={index}>{item}</li>)}</ul></div>
+                      <div className="subcard compact-subcard analysis-span-2"><div className="subcard-title">Trap Point</div><ul>{currentFlashcard.trapPoint.map((item, i) => <li key={index}>{item}</li>)}</ul></div>
                     </div>
                   </div>
                 ) : null}
