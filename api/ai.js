@@ -8,16 +8,16 @@ export default async function handler(request, response) {
   try {
     if (!process.env.GEMINI_API_KEY) throw new Error("Vercel 未配置 GEMINI_API_KEY");
 
-    // 【致命修复】使用最兼容的 gemini-pro，完美适配你的 0.7.0 依赖包！
+    // 既然包更新了，我们就可以用最强大、最快、处理长文本最好的 1.5-flash！
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     let prompt = "";
     if (type === 'capture') {
-      prompt = `You are an ARE tutor. Analyze notes and output ONLY JSON. Respond in the SAME LANGUAGE as the user.
+      prompt = `You are an expert Architecture Registration Examination (ARE) tutor. Analyze notes and output ONLY JSON. Respond in the SAME LANGUAGE as the user.
       Format: {"summary":"...","extraction":["..."],"bulletPoints":["..."],"logicLinks":["..."],"logicForest":[{"label":"...","relation":"...","children":[]}]}`;
     } else if (type === 'wrong_question') {
-      prompt = `You are an ARE tutor. Analyze OCR text and output ONLY JSON. Respond in the SAME LANGUAGE.
+      prompt = `You are an expert Architecture Registration Examination (ARE) tutor. Analyze OCR text and output ONLY JSON. Respond in the SAME LANGUAGE.
       Format: {"questionText":"...","summary":"...","correctAnswer":"...","answerExtraction":["..."],"trapPoint":["..."],"memoryHook":"..."}`;
     }
 
