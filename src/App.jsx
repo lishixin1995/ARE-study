@@ -657,7 +657,7 @@ export default function App() {
   const [captureAnalysisCleared, setCaptureAnalysisCleared] = useState(true);
   const [isCaptureAnalyzing, setIsCaptureAnalyzing] = useState(false);
 
-  const [savedCaptureNotes, setSavedCaptureNotes] = useState(() => readSavedCaptureNotes());
+  const [savedCaptureNotes, setSavedCaptureNotes] = useState([]);
   const [isSavedNotesModalOpen, setIsSavedNotesModalOpen] = useState(false);
 
   const [wrongQuestionImageFile, setWrongQuestionImageFile] = useState(null);
@@ -667,7 +667,7 @@ export default function App() {
   const [wrongQuestionStatus, setWrongQuestionStatus] = useState("Ready.");
   const [isRunningOcr, setIsRunningOcr] = useState(false);
 
-  const [wrongQuestionFlashcards, setWrongQuestionFlashcards] = useState(() => readWrongQuestionFlashcards());
+  const [wrongQuestionFlashcards, setWrongQuestionFlashcards] = useState([]);
   const [flashcardIndex, setFlashcardIndex] = useState(0);
   const [expandedImage, setExpandedImage] = useState("");
   const [aiAnalysisResult, setAiAnalysisResult] = useState(null);
