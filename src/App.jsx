@@ -692,13 +692,6 @@ export default function App() {
     localStorage.setItem("roomTreeByDivision", JSON.stringify(roomTree));
   }, [roomTree]);
 
-  useEffect(() => {
-    localStorage.setItem("savedCaptureNotes", JSON.stringify(savedCaptureNotes));
-  }, [savedCaptureNotes]);
-
-  useEffect(() => {
-    localStorage.setItem("wrongQuestionFlashcards", JSON.stringify(wrongQuestionFlashcards));
-  }, [wrongQuestionFlashcards]);
 
   useEffect(() => {
     if (!divisionRooms.length) {
@@ -728,7 +721,78 @@ export default function App() {
     }
   }, [wrongQuestionFlashcards, flashcardIndex]);
 
+  useEffect(() => {
+  fetchSavedNotesFromCloud(selectedDivision, selectedRoomId, selectedSubroomId || "");
+}, [selectedDivision, selectedRoomId, selectedSubroomId]);
+
   const currentFlashcard = wrongQuestionFlashcards[flashcardIndex] || null;
+
+  async function fetchSavedNotesFromCloud(division, roomId, subroomId = "") {
+  if (!division || !roomId) {
+    setSavedCaptureNotes([]);
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams({
+      division,
+      roomId,
+      subroomId: subroomId || ""
+    });
+
+    const response = await fetch(`/api/notes?${params.toString()}`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error(data.error || "Failed to load notes.");
+      setSavedCaptureNotes([]);
+      return;
+    }
+
+    setSavedCaptureNotes(Array.isArray(data.notes) ? data.notes : []);
+  } catch (error) {
+    console.error(error);
+    setSavedCaptureNotes([]);
+  }
+}
+
+async function fetchWrongQuestionFlashcardsFromCloud() {
+  try {
+    const response = await fetch("/api/wrong-questions");
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error(data.error || "Failed to load flashcards.");
+      return;
+    }
+
+    setWrongQuestionFlashcards(Array.isArray(data.flashcards) ? data.flashcards : []);
+    setFlashcardIndex(0);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function deleteWrongQuestionFlashcardFromCloud(id) {
+  try {
+    const response = await fetch(`/api/wrong-questions?id=${encodeURIComponent(id)}`, {
+      method: "DELETE"
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      window.alert(data.error || "Failed to delete flashcard.");
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error(error);
+    window.alert("Failed to delete flashcard.");
+    return false;
+  }
+}
 
   const filteredSavedNotes = useMemo(() => {
     return [...savedCaptureNotes]
@@ -1055,21 +1119,55 @@ export default function App() {
     setWrongQuestionStatus("Flashcard saved.");
   }
 
-  function handleLoadSavedFlashcards() {
-    const loaded = readWrongQuestionFlashcards();
-    setWrongQuestionFlashcards(loaded);
-    setFlashcardIndex(0);
-    setWrongQuestionStatus(`Loaded ${loaded.length} flashcards.`);
+async function handleLoadSavedFlashcards() {
+  await fetchWrongQuestionFlashcardsFromCloud();
+  setWrongQuestionStatus("Loaded saved flashcards from cloud.");
+}
+  
+async function handleSaveWrongQuestion() {
+  if (!wrongQuestionDraftText.trim()) {
+    setWrongQuestionStatus("Text is empty.");
+    return;
   }
 
-  function handleClearWrongQuestion() {
-    setWrongQuestionImageFile(null);
-    setWrongQuestionImagePreview("");
-    setWrongQuestionOcrText("");
-    setWrongQuestionDraftText("");
-    setAiAnalysisResult(null);
-    setWrongQuestionStatus("Cleared.");
+  const newCard = {
+    id: createId("flashcard"),
+    topicPath: currentPathLabel,
+    imagePreview: wrongQuestionImagePreview,
+    ocrText: wrongQuestionOcrText,
+    editedText: wrongQuestionDraftText.trim(),
+    questionText: wrongQuestionAnalysis.questionText,
+    summary: wrongQuestionAnalysis.summary,
+    correctAnswer: wrongQuestionAnalysis.correctAnswer,
+    answerExtraction: wrongQuestionAnalysis.answerExtraction,
+    bulletPoints: wrongQuestionAnalysis.bulletPoints,
+    trapPoint: wrongQuestionAnalysis.trapPoint,
+    memoryHook: wrongQuestionAnalysis.memoryHook,
+    savedAt: new Date().toISOString()
+  };
+
+  try {
+    const response = await fetch("/api/wrong-questions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(newCard)
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      setWrongQuestionStatus(`Save failed: ${data.error || "Unknown error"}`);
+      return;
+    }
+
+    setWrongQuestionFlashcards(prev => [data.flashcard, ...prev]);
+    setFlashcardIndex(0);
+    setWrongQuestionStatus("Flashcard saved to cloud.");
+  } catch (error) {
+    console.error(error);
+    setWrongQuestionStatus("Save failed: network error.");
   }
+}
 
   async function handleWrongQuestionRunAI() {
     if (!wrongQuestionDraftText.trim()) {
@@ -1329,14 +1427,20 @@ export default function App() {
 
                   {wrongQuestionImagePreview ? (
                     <button
-                      className="danger-lite-btn"
-                      onClick={() => {
-                        setWrongQuestionImageFile(null);
-                        setWrongQuestionImagePreview("");
-                      }}
-                    >
-                      Delete Image
-                    </button>
+<button
+  className="danger-lite-btn"
+  onClick={async () => {
+    if (!window.confirm("Delete this flashcard?")) return;
+
+    const ok = await deleteWrongQuestionFlashcardFromCloud(currentFlashcard.id);
+    if (!ok) return;
+
+    setWrongQuestionFlashcards(prev => prev.filter(card => card.id !== currentFlashcard.id));
+    setFlashcardIndex(prev => (prev > 0 ? prev - 1 : 0));
+  }}
+>
+  Delete
+</button>
                   ) : null}
 
                   <button className="nav-action-pill" onClick={handleRunOcr} disabled={isRunningOcr}>
