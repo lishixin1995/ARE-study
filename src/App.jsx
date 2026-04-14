@@ -1092,6 +1092,15 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     await runOcrFromFile(wrongQuestionImageFile);
   }
 
+  function handleClearWrongQuestion() {
+  setWrongQuestionImageFile(null);
+  setWrongQuestionImagePreview("");
+  setWrongQuestionOcrText("");
+  setWrongQuestionDraftText("");
+  setAiAnalysisResult(null);
+  setWrongQuestionStatus("Cleared.");
+}
+  
   function handleSaveWrongQuestion() {
     if (!wrongQuestionDraftText.trim()) {
       setWrongQuestionStatus("Text is empty.");
