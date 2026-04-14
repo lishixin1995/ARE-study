@@ -40,49 +40,43 @@ const EMPTY_CAPTURE_ANALYSIS = {
   logicForest: []
 };
 
-const ACTION_RE =
-  /(relies on|rely on|uses|use|requires|require|needs|need|controls|control|reduces|reduce|minimizes|minimize|maximizes|maximize|optimizes|optimize|gains|gain|provides|provide|improves|improve|stabilizes|stabilize|limits|limit|affects|affect|influences|influence|includes|include|consists of|is|are|means|refers to|defined as|helps|help|takes|take|depends on|depend on|connects|connect|coordinates|coordinate|compares|compare)/i;
+const PREDICATE_RE =
+  /(relies on|uses|use|needs|need|requires|require|controls|control|reduces|reduce|minimizes|minimize|maximizes|maximize|optimizes|optimize|gains|gain|provides|provide|improves|improve|stabilizes|stabilize|limits|limit|affects|affect|influences|influence|includes|include|consists of|can be|is|are|means|refers to|defined as|helps|help|takes|take)/i;
 
 const LEADING_VERB_RE =
-  /^(relies on|rely on|uses|use|requires|require|needs|need|controls|control|reduces|reduce|minimizes|minimize|maximizes|maximize|optimizes|optimize|gains|gain|provides|provide|improves|improve|stabilizes|stabilize|limits|limit|affects|affect|influences|influence|includes|include|consists of|helps|help|takes|take|depends on|depend on|connects|connect|coordinates|coordinate|compares|compare|avoid|avoids|block|blocks|collect|collects|get|gets|store|stores)/i;
+  /^(relies on|uses|use|needs|need|requires|require|controls|control|reduces|reduce|minimizes|minimize|maximizes|maximize|optimizes|optimize|gains|gain|provides|provide|improves|improve|stabilizes|stabilize|limits|limit|affects|affect|influences|influence|includes|include|consists of|helps|help|takes|take|avoid|avoids|block|blocks|collect|collects|get|gets|minimize|maximize|optimize|gain|reduce|provide|store|stores)/i;
 
 function normalizeWhitespace(text = "") {
-  return String(text).replace(/\s+/g, " ").trim();
+  return text.replace(/\s+/g, " ").trim();
 }
 
-function stripBulletPrefix(text = "") {
-  return String(text).replace(/^\s*(?:[-*•▪▫◦●○►▸▹]+|\d+[.)])\s+/, "").trim();
+function stripBulletPrefix(line = "") {
+  return line.replace(/^\s*(?:[-*•▪▫◦●○►▸▹]+|\d+[.)])\s+/, "").trim();
 }
 
-function cleanLine(text = "") {
-  return normalizeWhitespace(stripBulletPrefix(text).replace(/[\t]+/g, " "));
+function cleanLine(line = "") {
+  return normalizeWhitespace(stripBulletPrefix(line).replace(/[\t]+/g, " "));
 }
 
 function sentenceCase(text = "") {
-  const clean = normalizeWhitespace(text)
-    .replace(/^[\[\]()]+|[\[\]()]+$/g, "")
-    .replace(/[.;]+$/g, "")
-    .trim();
-
-  if (!clean) return "";
-  return clean.charAt(0).toUpperCase() + clean.slice(1);
+  const trimmed = normalizeWhitespace(text);
+  if (!trimmed) return "";
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
 }
 
 function titleCaseLabel(text = "") {
-  const clean = normalizeWhitespace(text)
-    .replace(/^[\[\]()]+|[\[\]()]+$/g, "")
+  const trimmed = normalizeWhitespace(text)
+    .replace(/^\[|\]$/g, "")
     .replace(/[.:;,!?]+$/g, "")
     .trim();
 
-  if (!clean) return "";
+  if (!trimmed) return "";
 
-  return clean
+  return trimmed
     .split(/\s+/)
     .map(word => {
       if (/^[A-Z0-9-]{2,}$/.test(word)) return word;
-      if (["of", "and", "or", "to", "in", "on", "for", "by", "vs"].includes(word.toLowerCase())) {
-        return word.toLowerCase();
-      }
+      if (word.length <= 2 && word === word.toLowerCase()) return word;
       return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
     })
     .join(" ");
@@ -91,98 +85,71 @@ function titleCaseLabel(text = "") {
 function relationLabel(raw = "") {
   const value = normalizeWhitespace(raw).toLowerCase();
 
+  if (["is", "are", "means", "refers to", "defined as"].includes(value)) return "is";
   if (["use", "uses"].includes(value)) return "uses";
-  if (["require", "requires", "need", "needs", "depends on", "depend on"].includes(value)) {
-    return value.includes("depend") ? "depends on" : "requires";
-  }
+  if (["need", "needs", "require", "requires"].includes(value)) return "requires";
   if (["control", "controls"].includes(value)) return "controls";
-  if (["reduce", "reduces", "minimize", "minimizes"].includes(value)) return "reduces";
-  if (["maximize", "maximizes"].includes(value)) return "maximizes";
+  if (["reduce", "reduces"].includes(value)) return "reduces";
   if (["optimize", "optimizes"].includes(value)) return "optimizes";
   if (["gain", "gains"].includes(value)) return "gains";
-  if (["provide", "provides"].includes(value)) return "provides";
-  if (["improve", "improves"].includes(value)) return "improves";
-  if (["stabilize", "stabilizes"].includes(value)) return "stabilizes";
-  if (["limit", "limits"].includes(value)) return "limits";
-  if (["affect", "affects"].includes(value)) return "affects";
-  if (["influence", "influences"].includes(value)) return "influences";
-  if (["include", "includes", "consists of"].includes(value)) return "includes";
-  if (["connect", "connects"].includes(value)) return "connects";
-  if (["coordinate", "coordinates"].includes(value)) return "coordinates";
-  if (["compare", "compares"].includes(value)) return "compares";
-  if (["is", "are", "means", "refers to", "defined as"].includes(value)) return "is";
   if (["help", "helps"].includes(value)) return "benefit";
   if (["take", "takes"].includes(value)) return "tradeoff";
-  if (["rely on", "relies on"].includes(value)) return "relies on";
+  if (["include", "includes", "consists of"].includes(value)) return "includes";
   return value;
 }
 
-function relationToPhrase(relation = "") {
-  const value = normalizeWhitespace(relation).toLowerCase();
-  if (value === "benefit") return "helps";
-  if (value === "tradeoff") return "has a tradeoff of";
-  if (value === "has type") return "includes";
-  if (value === "strategy") return "focuses on";
-  return value;
+function inferGroupRelation(group = "", subject = "") {
+  const groupLower = group.toLowerCase();
+  const subjectLower = subject.toLowerCase();
+
+  if (!groupLower || !subjectLower || groupLower === subjectLower) return null;
+  if (groupLower.includes("system") && subjectLower.includes("system")) return "has type";
+  if (groupLower.includes("climate") && subjectLower.includes("climate")) return "includes";
+  if (groupLower.includes("strategy") || groupLower.includes("response")) return "includes";
+  return "includes";
 }
 
-function shouldLinkGroupToSubject(group = "", subject = "") {
-  const g = group.toLowerCase();
-  const s = subject.toLowerCase();
-  if (!g || !s || g === s) return null;
-  if (g.includes("system") && s.includes("system")) return "has type";
-  if (g.includes("response") && s.includes("climate")) return "includes";
-  if (g.includes("strategy") || g.includes("protection") || g.includes("mass")) return "includes";
-  return null;
+function createUnit(subject, relation, object, priority = 1) {
+  const cleanSubject = titleCaseLabel(subject);
+  const cleanRelation = normalizeWhitespace(relation);
+  const cleanObject = sentenceCase(object)
+    .replace(/^\[|\]$/g, "")
+    .replace(/[.;]+$/g, "")
+    .trim();
+
+  if (!cleanSubject || !cleanRelation || !cleanObject) return null;
+
+  return {
+    subject: cleanSubject,
+    relation: cleanRelation,
+    object: cleanObject,
+    priority
+  };
 }
 
 function pushUnit(units, subject, relation, object, priority = 1) {
-  const cleanSubject = titleCaseLabel(subject);
-  const cleanRelation = normalizeWhitespace(relation);
-  const cleanObject = sentenceCase(object);
+  const unit = createUnit(subject, relation, object, priority);
+  if (!unit) return;
 
-  if (!cleanSubject || !cleanRelation || !cleanObject) return;
-
-  const key = `${cleanSubject}|||${cleanRelation.toLowerCase()}|||${cleanObject.toLowerCase()}`;
-  if (units.some(item => `${item.subject}|||${item.relation.toLowerCase()}|||${item.object.toLowerCase()}` === key)) {
-    return;
+  const key = `${unit.subject}|||${unit.relation.toLowerCase()}|||${unit.object.toLowerCase()}`;
+  if (!units.some(item => `${item.subject}|||${item.relation.toLowerCase()}|||${item.object.toLowerCase()}` === key)) {
+    units.push(unit);
   }
-
-  units.push({ subject: cleanSubject, relation: cleanRelation, object: cleanObject, priority });
-}
-
-function textToSemanticLines(text = "") {
-  const rawLines = String(text)
-    .replace(/\r/g, "")
-    .split("\n")
-    .map(cleanLine)
-    .filter(Boolean);
-
-  if (rawLines.length > 1) return rawLines;
-
-  return String(text)
-    .replace(/\r/g, "")
-    .replace(/([.!?。！？;；])\s+/g, "$1\n")
-    .split("\n")
-    .map(cleanLine)
-    .filter(Boolean);
 }
 
 function extractSubject(text = "") {
-  const match = normalizeWhitespace(text).match(new RegExp(`^(.*?)\\s+${ACTION_RE.source}`, "i"));
+  const match = normalizeWhitespace(text).match(new RegExp(`^(.*?)\\s+${PREDICATE_RE.source}`, "i"));
   return match ? titleCaseLabel(match[1]) : "";
 }
 
-function splitCompoundClauses(text = "") {
-  const clean = normalizeWhitespace(text);
+function splitCompoundClause(clause = "") {
+  const clean = normalizeWhitespace(clause.replace(/[。！？]/g, ".").replace(/[;；]+/g, "."));
   if (!clean) return [];
 
-  const withSplitMarkers = clean.replace(
-    /\s+(?:and|but)\s+(?=(?:relies?\s+on|uses?|requires?|needs?|controls?|reduces?|minimizes?|maximizes?|optimizes?|gains?|provides?|improves?|stabilizes?|limits?|affects?|influences?|includes?|consists\s+of|helps?|takes?|depends?\s+on|connects?|coordinates?|compares?)\b)/gi,
-    " | "
-  );
+  const splitter = clean
+    .replace(/\s+(?:and|but)\s+(?=(uses?|needs?|requires?|controls?|reduces?|minimizes?|maximizes?|optimizes?|gains?|provides?|improves?|stabilizes?|limits?|affects?|influences?|includes?|consists of|helps?|takes?)\b)/gi, " | ");
 
-  const parts = withSplitMarkers
+  const parts = splitter
     .split("|")
     .map(item => item.trim())
     .filter(Boolean);
@@ -198,320 +165,413 @@ function splitCompoundClauses(text = "") {
   });
 }
 
-function parseActionLine(line, context, units) {
-  const clean = normalizeWhitespace(line).replace(/[.;]+$/g, "");
+function looksLikeStandaloneHeader(line = "") {
+  const clean = cleanLine(line).replace(/[:：]$/, "");
+  if (!clean) return false;
+  if (/[.!?。！？]$/.test(clean)) return false;
+  return clean.split(/\s+/).length <= 6;
+}
+
+function shortHeadColon(line = "") {
+  const match = cleanLine(line).match(/^([^:：]{1,48})[:：]\s*(.+)$/);
+  if (!match) return null;
+
+  const head = titleCaseLabel(match[1]);
+  const rest = normalizeWhitespace(match[2]);
+  if (!head || !rest) return null;
+  if (head.split(/\s+/).length > 6) return null;
+
+  return { head, rest };
+}
+
+function textToSemanticLines(text = "") {
+  const byLine = text
+    .replace(/\r/g, "")
+    .split("\n")
+    .map(cleanLine)
+    .filter(Boolean);
+
+  if (byLine.length > 1) return byLine;
+
+  return text
+    .replace(/\r/g, "")
+    .replace(/([.!?。！？;；])\s+/g, "$1\n")
+    .split("\n")
+    .map(cleanLine)
+    .filter(Boolean);
+}
+
+function parseClause(clause, context, units) {
+  const clean = normalizeWhitespace(clause).replace(/[.;]+$/g, "");
   if (!clean) return;
 
-  const group = context.group || "";
-  const headerSubject = context.headerSubject || "";
+  const group = context?.group || "";
+  const headerSubject = context?.headerSubject || "";
 
-  const climateMatch = clean.match(/^in\s+([^,]+?)\s*,?\s*(.+)$/i);
-  if (climateMatch) {
-    const climate = titleCaseLabel(climateMatch[1]);
-    const tail = normalizeWhitespace(climateMatch[2]);
-    pushUnit(units, "Climate Response", "includes", climate, 3);
-
-    splitCompoundClauses(tail).forEach(part => {
-      const normalized = LEADING_VERB_RE.test(part) ? `${climate} ${part}` : part;
-      parseActionLine(normalized, { group: "Climate Response", headerSubject: climate }, units);
-    });
-    return;
+  if (/^in\s+/i.test(clean)) {
+    const climateMatch = clean.match(/^in\s+([^,]+?)\s*,?\s*(.+)$/i);
+    if (climateMatch) {
+      const climate = titleCaseLabel(climateMatch[1]);
+      const strategy = sentenceCase(climateMatch[2]);
+      pushUnit(units, "Climate Response", "includes", climate, 3);
+      pushUnit(units, climate, "strategy", strategy, 3);
+      return;
+    }
   }
 
   const helpMatch = clean.match(/^(.*?)\s+helps\s+(.+?)(?:\s+but\s+(.+))?$/i);
   if (helpMatch) {
     const subject = titleCaseLabel(helpMatch[1]);
-    const link = shouldLinkGroupToSubject(group, subject);
-    if (link) pushUnit(units, group, link, subject, 2);
-    pushUnit(units, subject, "benefit", helpMatch[2], 3);
-    if (helpMatch[3]) pushUnit(units, subject, "tradeoff", helpMatch[3], 3);
+    const benefit = sentenceCase(helpMatch[2]);
+    const tradeoff = sentenceCase(helpMatch[3] || "");
+    const parentRelation = inferGroupRelation(group, subject);
+
+    if (parentRelation) pushUnit(units, group, parentRelation, subject, 2);
+    pushUnit(units, subject, "benefit", benefit, 3);
+    if (tradeoff) pushUnit(units, subject, "tradeoff", tradeoff, 3);
     return;
   }
 
   const mainMatch = clean.match(
-    /^(.*?)\s+(relies on|rely on|uses|use|requires|require|needs|need|controls|control|reduces|reduce|minimizes|minimize|maximizes|maximize|optimizes|optimize|gains|gain|provides|provide|improves|improve|stabilizes|stabilize|limits|limit|affects|affect|influences|influence|includes|include|consists of|is|are|means|refers to|defined as|takes|take|depends on|depend on|connects|connect|coordinates|coordinate|compares|compare)\s+(.+)$/i
+    /^(.*?)\s+(relies on|uses|use|needs|need|requires|require|controls|control|reduces|reduce|minimizes|minimize|maximizes|maximize|optimizes|optimize|gains|gain|provides|provide|improves|improve|stabilizes|stabilize|limits|limit|affects|affect|influences|influence|includes|include|consists of|can be|is|are|means|refers to|defined as|takes|take)\s+(.+)$/i
   );
 
   if (mainMatch) {
     const subject = titleCaseLabel(mainMatch[1]);
     const relation = relationLabel(mainMatch[2]);
-    const object = mainMatch[3];
-    const link = shouldLinkGroupToSubject(group, subject);
-    if (link) pushUnit(units, group, link, subject, 2);
+    const object = sentenceCase(mainMatch[3]);
+    const parentRelation = inferGroupRelation(group, subject);
+
+    if (parentRelation) pushUnit(units, group, parentRelation, subject, 2);
     pushUnit(units, subject, relation, object, 3);
     return;
   }
 
   if (headerSubject && LEADING_VERB_RE.test(clean)) {
-    parseActionLine(`${headerSubject} ${clean}`, { group, headerSubject }, units);
+    parseClause(`${headerSubject} ${clean}`, { group, headerSubject }, units);
     return;
   }
 
-  if (headerSubject && !ACTION_RE.test(clean) && clean.split(/\s+/).length <= 8) {
-    const link = shouldLinkGroupToSubject(group, clean);
-    if (link) pushUnit(units, group, link, clean, 1);
-    context.headerSubject = titleCaseLabel(clean);
-    return;
-  }
-
-  if (group && !ACTION_RE.test(clean) && clean.split(/\s+/).length <= 8) {
-    pushUnit(units, group, "includes", clean, 1);
+  if (headerSubject && !PREDICATE_RE.test(clean) && clean.split(/\s+/).length <= 10) {
+    const parentRelation = inferGroupRelation(group, headerSubject);
+    if (group && headerSubject !== group && parentRelation) {
+      pushUnit(units, group, parentRelation, headerSubject, 2);
+    }
+    pushUnit(units, headerSubject, "is", clean, 2);
   }
 }
 
-function parseCaptureUnits(text = "") {
+function extractCaptureUnits(text = "") {
   const lines = textToSemanticLines(text);
   const units = [];
-  const context = { group: "", headerSubject: "" };
+  let currentHeader = "";
 
   lines.forEach(line => {
-    const clean = cleanLine(line);
-    if (!clean) return;
+    const colon = shortHeadColon(line);
 
-    const colonMatch = clean.match(/^([^:：]{1,56})[:：]\s*(.+)$/);
-    if (colonMatch && colonMatch[1].trim().split(/\s+/).length <= 6) {
-      context.group = titleCaseLabel(colonMatch[1]);
-      context.headerSubject = titleCaseLabel(colonMatch[1]);
+    if (colon) {
+      currentHeader = colon.head;
+      if (LEADING_VERB_RE.test(colon.rest)) {
+        splitCompoundClause(`${colon.head} ${colon.rest}`).forEach(part => {
+          parseClause(part, { group: colon.head, headerSubject: colon.head }, units);
+        });
+        return;
+      }
 
-      splitCompoundClauses(colonMatch[2]).forEach(part => {
-        parseActionLine(part, context, units);
+      splitCompoundClause(colon.rest).forEach(part => {
+        parseClause(part, { group: colon.head, headerSubject: colon.head }, units);
       });
       return;
     }
 
-    const possibleHeader = clean.replace(/[:：]$/, "");
-    if (!/[.!?。！？]$/.test(clean) && possibleHeader.split(/\s+/).length <= 5 && !ACTION_RE.test(clean)) {
-      context.headerSubject = titleCaseLabel(possibleHeader);
-      if (/system|strategy|response|protection|mass|collector|wall|climate/i.test(possibleHeader)) {
-        context.group = titleCaseLabel(possibleHeader);
-      }
+    if (looksLikeStandaloneHeader(line)) {
+      currentHeader = titleCaseLabel(line.replace(/[:：]$/, ""));
       return;
     }
 
-    splitCompoundClauses(clean).forEach(part => {
-      parseActionLine(part, context, units);
+    splitCompoundClause(line).forEach(part => {
+      parseClause(part, { group: currentHeader, headerSubject: currentHeader }, units);
     });
   });
 
-  return units.sort((a, b) => b.priority - a.priority || a.subject.localeCompare(b.subject));
+  return units;
 }
 
-function buildLogicLinksFromUnits(units = []) {
-  return units.map(item => `[${item.subject}] ➔ ${item.relation} ➔ [${item.object}]`);
-}
+function groupCaptureUnits(units = []) {
+  const groups = {};
 
-function buildLogicForestFromUnits(units = []) {
-  if (!units.length) return [];
+  units.forEach((unit, index) => {
+    if (!groups[unit.subject]) {
+      groups[unit.subject] = { items: [], firstIndex: index, score: 0 };
+    }
 
-  const subjects = new Set(units.map(item => item.subject));
-  const adjacency = new Map();
-  const inbound = new Map();
-
-  units.forEach(item => {
-    if (!adjacency.has(item.subject)) adjacency.set(item.subject, []);
-    adjacency.get(item.subject).push({ relation: item.relation, label: item.object });
-    inbound.set(item.object, (inbound.get(item.object) || 0) + 1);
-    if (!inbound.has(item.subject)) inbound.set(item.subject, inbound.get(item.subject) || 0);
+    groups[unit.subject].items.push(unit);
+    groups[unit.subject].score += unit.priority || 1;
   });
 
-  const sortedRoots = [...adjacency.keys()]
-    .filter(key => (inbound.get(key) || 0) === 0)
+  return groups;
+}
+
+function joinObjects(items = []) {
+  const clean = Array.from(
+    new Set(
+      items
+        .map(item => sentenceCase(item))
+        .filter(Boolean)
+    )
+  );
+
+  if (!clean.length) return "";
+  if (clean.length === 1) return clean[0];
+  if (clean.length === 2) return `${clean[0]} and ${clean[1]}`;
+  return `${clean.slice(0, -1).join(", ")}, and ${clean[clean.length - 1]}`;
+}
+
+function subjectSentence(subject, items = []) {
+  const byRelation = items.reduce((acc, item) => {
+    const key = item.relation.toLowerCase();
+    acc[key] = acc[key] || [];
+    acc[key].push(item.object);
+    return acc;
+  }, {});
+
+  const parts = [];
+
+  if (byRelation["is"]) parts.push(`is ${joinObjects(byRelation["is"])}`);
+  if (byRelation["relies on"]) parts.push(`relies on ${joinObjects(byRelation["relies on"])}`);
+  if (byRelation["uses"]) parts.push(`uses ${joinObjects(byRelation["uses"])}`);
+  if (byRelation["requires"]) parts.push(`requires ${joinObjects(byRelation["requires"])}`);
+  if (byRelation["controls"]) parts.push(`controls ${joinObjects(byRelation["controls"])}`);
+  if (byRelation["reduces"]) parts.push(`reduces ${joinObjects(byRelation["reduces"])}`);
+  if (byRelation["optimizes"]) parts.push(`optimizes ${joinObjects(byRelation["optimizes"])}`);
+  if (byRelation["gains"]) parts.push(`gains ${joinObjects(byRelation["gains"])}`);
+  if (byRelation["provides"]) parts.push(`provides ${joinObjects(byRelation["provides"])}`);
+  if (byRelation["benefit"]) parts.push(`helps ${joinObjects(byRelation["benefit"])}`);
+  if (byRelation["tradeoff"]) parts.push(`but ${joinObjects(byRelation["tradeoff"])}`);
+  if (byRelation["strategy"]) parts.push(`focuses on ${joinObjects(byRelation["strategy"])}`);
+  if (byRelation["includes"]) parts.push(`includes ${joinObjects(byRelation["includes"])}`);
+  if (byRelation["has type"]) parts.push(`includes ${joinObjects(byRelation["has type"])}`);
+
+  if (!parts.length) return "";
+
+  const sentence = `${subject} ${parts.join(" and ")}`
+    .replace(/\s+and\s+but\s+/g, " but ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1) + ".";
+}
+
+function buildCaptureSummaryLocal(text = "") {
+  const units = extractCaptureUnits(text);
+  if (!units.length) return "";
+
+  const groups = groupCaptureUnits(units);
+  const sentences = [];
+  const usedSubjects = new Set();
+
+  const active = groups["Active System"]?.items || [];
+  const passive = groups["Passive System"]?.items || [];
+  if (active.length || passive.length) {
+    const activePart = active.length ? subjectSentence("Active systems", active) : "";
+    const passivePart = passive.length ? subjectSentence("Passive systems", passive) : "";
+
+    if (activePart && passivePart) {
+      const left = activePart.replace(/\.$/, "");
+      const right = passivePart.charAt(0).toLowerCase() + passivePart.slice(1).replace(/\.$/, "");
+      sentences.push(`Building systems can be active or passive: ${left.slice(0, 1).toLowerCase() + left.slice(1)}, while ${right}.`);
+    } else {
+      if (activePart) sentences.push(activePart);
+      if (passivePart) sentences.push(passivePart);
+    }
+
+    usedSubjects.add("Active System");
+    usedSubjects.add("Passive System");
+  }
+
+  const cold = groups["Cold Climate"]?.items || [];
+  const hot = groups["Hot Climate"]?.items || [];
+  if (cold.length || hot.length) {
+    const coldStrategy = cold.find(item => item.relation.toLowerCase() === "strategy")?.object || "";
+    const hotStrategy = hot.find(item => item.relation.toLowerCase() === "strategy")?.object || "";
+
+    if (coldStrategy || hotStrategy) {
+      const parts = [];
+      if (coldStrategy) parts.push(`in cold climates the goal is to ${coldStrategy.charAt(0).toLowerCase() + coldStrategy.slice(1)}`);
+      if (hotStrategy) parts.push(`in hot climates the goal is to ${hotStrategy.charAt(0).toLowerCase() + hotStrategy.slice(1)}`);
+      sentences.push(`Climate response changes by context: ${parts.join(", while ")}.`);
+    }
+
+    usedSubjects.add("Cold Climate");
+    usedSubjects.add("Hot Climate");
+    usedSubjects.add("Climate Response");
+  }
+
+  if (groups["Trombe Wall"]?.items?.length) {
+    sentences.push(subjectSentence("A Trombe wall", groups["Trombe Wall"].items));
+    usedSubjects.add("Trombe Wall");
+  }
+
+  const fallbackSubjects = Object.entries(groups)
+    .filter(([subject]) => !usedSubjects.has(subject))
     .sort((a, b) => {
-      const aWeight = (adjacency.get(a) || []).length;
-      const bWeight = (adjacency.get(b) || []).length;
-      return bWeight - aWeight || a.localeCompare(b);
-    });
+      if (b[1].score !== a[1].score) return b[1].score - a[1].score;
+      return a[1].firstIndex - b[1].firstIndex;
+    })
+    .slice(0, Math.max(0, 4 - sentences.length));
 
-  const roots = sortedRoots.length ? sortedRoots : [...adjacency.keys()].slice(0, 3);
-
-  function buildNode(label, relation = null, seen = new Set()) {
-    const key = `${relation || "root"}::${label}`;
-    if (seen.has(key)) return { label, relation, children: [] };
-
-    const nextSeen = new Set(seen);
-    nextSeen.add(key);
-
-    const children = subjects.has(label)
-      ? (adjacency.get(label) || []).map(edge => buildNode(edge.label, edge.relation, nextSeen))
-      : [];
-
-    return { label, relation, children };
-  }
-
-  return roots.map(root => buildNode(root, null));
-}
-
-function groupUnitsBySubject(units = []) {
-  const map = new Map();
-  units.forEach(unit => {
-    if (!map.has(unit.subject)) map.set(unit.subject, []);
-    map.get(unit.subject).push(unit);
-  });
-  return map;
-}
-
-function formatSubjectBullet(subject, items) {
-  if (!items?.length) return "";
-
-  const includes = items.filter(item => ["includes", "has type"].includes(item.relation));
-  const details = items.filter(item => !["includes", "has type"].includes(item.relation));
-
-  if (includes.length >= 2 && !details.length) {
-    const list = includes.map(item => item.object).join(" and ");
-    return `${subject} includes ${list}.`;
-  }
-
-  if (!details.length && includes.length === 1) {
-    return `${subject} includes ${includes[0].object}.`;
-  }
-
-  if (!details.length) return "";
-
-  const segments = details.slice(0, 3).map(item => {
-    const phrase = relationToPhrase(item.relation);
-    return `${phrase} ${item.object}`;
+  fallbackSubjects.forEach(([subject, group]) => {
+    const line = subjectSentence(subject, group.items);
+    if (line) sentences.push(line);
   });
 
-  return `${subject} ${segments.join("; ")}.`;
+  return sentences.slice(0, 4).join(" ").trim();
 }
 
-function buildCaptureBulletPoints(units = []) {
+function buildCaptureBulletPointsLocal(text = "") {
+  const units = extractCaptureUnits(text);
   if (!units.length) return [];
 
-  const bySubject = groupUnitsBySubject(units);
-  const orderedSubjects = [...bySubject.keys()].sort((a, b) => {
-    const aItems = bySubject.get(a) || [];
-    const bItems = bySubject.get(b) || [];
-    const aScore = aItems.reduce((sum, item) => sum + item.priority, 0);
-    const bScore = bItems.reduce((sum, item) => sum + item.priority, 0);
-    return bScore - aScore || a.localeCompare(b);
-  });
-
+  const groups = groupCaptureUnits(units);
   const bullets = [];
+  const used = new Set();
 
-  orderedSubjects.forEach(subject => {
-    const bullet = formatSubjectBullet(subject, bySubject.get(subject));
-    if (bullet && !bullets.includes(bullet)) bullets.push(bullet);
-  });
+  const pushBullet = value => {
+    const clean = value.replace(/\.$/, "").trim();
+    if (clean && !bullets.includes(clean)) bullets.push(clean);
+  };
+
+  if (groups["Active System"]?.items?.length) {
+    pushBullet(subjectSentence("Active system", groups["Active System"].items));
+    used.add("Active System");
+  }
+
+  if (groups["Passive System"]?.items?.length) {
+    pushBullet(subjectSentence("Passive system", groups["Passive System"].items));
+    used.add("Passive System");
+  }
+
+  if (groups["Cold Climate"]?.items?.length) {
+    pushBullet(subjectSentence("Cold climate", groups["Cold Climate"].items));
+    used.add("Cold Climate");
+  }
+
+  if (groups["Hot Climate"]?.items?.length) {
+    pushBullet(subjectSentence("Hot climate", groups["Hot Climate"].items));
+    used.add("Hot Climate");
+  }
+
+  if (groups["Trombe Wall"]?.items?.length) {
+    pushBullet(subjectSentence("Trombe wall", groups["Trombe Wall"].items));
+    used.add("Trombe Wall");
+  }
+
+  Object.entries(groups)
+    .filter(([subject, group]) => {
+      if (used.has(subject)) return false;
+      const relations = group.items.map(item => item.relation.toLowerCase());
+      const onlyStructural = relations.every(rel => rel === "includes" || rel === "has type");
+      return !onlyStructural;
+    })
+    .sort((a, b) => {
+      if (b[1].score !== a[1].score) return b[1].score - a[1].score;
+      return a[1].firstIndex - b[1].firstIndex;
+    })
+    .forEach(([subject, group]) => {
+      pushBullet(subjectSentence(subject, group.items));
+    });
 
   return bullets.slice(0, 8);
 }
 
-function buildComparisonSentence(units) {
-  const bySubject = groupUnitsBySubject(units);
-  const active = bySubject.get("Active System") || [];
-  const passive = bySubject.get("Passive System") || [];
-
-  if (!active.length || !passive.length) return "";
-
-  const activeMain = active.find(item => item.relation === "relies on") || active[0];
-  const passiveMain = passive.find(item => item.relation === "relies on") || passive[0];
-  const activeExtra = active.find(item => item.relation === "uses" || item.relation === "requires");
-
-  let sentence = `The notes compare active and passive systems: active systems ${relationToPhrase(activeMain.relation)} ${activeMain.object}, while passive systems ${relationToPhrase(passiveMain.relation)} ${passiveMain.object}`;
-  if (activeExtra) sentence += ` and ${relationToPhrase(activeExtra.relation)} ${activeExtra.object}`;
-  return `${sentence}.`;
+function buildCaptureLogicLinksLocal(text = "") {
+  const units = extractCaptureUnits(text);
+  return units.map(unit => `[${unit.subject}] ➔ ${unit.relation} ➔ [${unit.object}]`);
 }
 
-function buildClimateSentence(units) {
-  const bySubject = groupUnitsBySubject(units);
-  const cold = bySubject.get("Cold Climate") || [];
-  const hot = bySubject.get("Hot Climate") || [];
-  if (!cold.length && !hot.length) return "";
+function buildCaptureLogicForestFromLinks(links = []) {
+  const adjacency = new Map();
+  const inbound = new Map();
+  const nodes = new Set();
 
-  const coldText = cold.length
-    ? `cold climates ${cold.map(item => `${relationToPhrase(item.relation)} ${item.object}`).slice(0, 2).join(" and ")}`
-    : "";
-  const hotText = hot.length
-    ? `hot climates ${hot.map(item => `${relationToPhrase(item.relation)} ${item.object}`).slice(0, 2).join(" and ")}`
-    : "";
+  links.forEach(link => {
+    const parts = link.split("➔").map(item => item.trim());
+    if (parts.length !== 3) return;
 
-  if (coldText && hotText) return `Climate response changes by condition: ${coldText}, while ${hotText}.`;
-  return `Climate response changes by condition: ${coldText || hotText}.`;
-}
+    const from = parts[0].replace(/^\[|\]$/g, "");
+    const relation = parts[1];
+    const to = parts[2].replace(/^\[|\]$/g, "");
 
-function buildTradeoffSentence(units) {
-  const bySubject = groupUnitsBySubject(units);
+    if (!from || !relation || !to) return;
 
-  for (const [subject, items] of bySubject.entries()) {
-    const benefit = items.find(item => item.relation === "benefit");
-    const tradeoff = items.find(item => item.relation === "tradeoff");
-    if (benefit && tradeoff) {
-      return `${subject} helps ${benefit.object}, but its tradeoff is ${tradeoff.object}.`;
-    }
-  }
+    nodes.add(from);
+    nodes.add(to);
+    if (!adjacency.has(from)) adjacency.set(from, []);
+    adjacency.get(from).push({ relation, to });
+    inbound.set(to, (inbound.get(to) || 0) + 1);
+    if (!inbound.has(from)) inbound.set(from, inbound.get(from) || 0);
+  });
 
-  return "";
-}
+  const roots = Array.from(nodes)
+    .filter(node => (inbound.get(node) || 0) === 0)
+    .sort((a, b) => a.localeCompare(b));
 
-function buildGenericSummary(bullets = []) {
-  if (!bullets.length) return "";
-  return bullets
-    .slice(0, 3)
-    .map(item => item.replace(/\s+/g, " ").trim())
-    .join(" ");
-}
+  const buildNode = (label, path = new Set()) => {
+    if (path.has(label)) return { label, relation: null, children: [] };
 
-function buildCaptureSummary(units = []) {
-  if (!units.length) return "";
-
-  const sentences = [];
-  const comparison = buildComparisonSentence(units);
-  const climate = buildClimateSentence(units);
-  const tradeoff = buildTradeoffSentence(units);
-  const bullets = buildCaptureBulletPoints(units);
-
-  if (comparison) sentences.push(comparison);
-  if (climate) sentences.push(climate);
-  if (tradeoff) sentences.push(tradeoff);
-
-  if (!sentences.length) {
-    const generic = buildGenericSummary(bullets);
-    if (generic) sentences.push(generic);
-  } else if (sentences.length < 3) {
-    bullets.forEach(item => {
-      if (sentences.length >= 3) return;
-      if (!sentences.some(sentence => sentence.includes(item.slice(0, 18)))) {
-        sentences.push(item);
-      }
+    const nextPath = new Set(path);
+    nextPath.add(label);
+    const children = (adjacency.get(label) || []).map(edge => {
+      const childTree = buildNode(edge.to, nextPath);
+      return {
+        label: childTree.label,
+        relation: edge.relation,
+        children: childTree.children
+      };
     });
-  }
 
-  return sentences.slice(0, 4).join(" ");
+    return { label, relation: null, children };
+  };
+
+  return (roots.length ? roots : Array.from(nodes).slice(0, 1)).map(root => buildNode(root));
 }
 
 function buildCaptureAnalysisLocal(text = "") {
   if (!normalizeWhitespace(text)) return EMPTY_CAPTURE_ANALYSIS;
 
-  const units = parseCaptureUnits(text);
-  if (!units.length) return EMPTY_CAPTURE_ANALYSIS;
+  const summary = buildCaptureSummaryLocal(text);
+  const bulletPoints = buildCaptureBulletPointsLocal(text);
+  const logicLinks = buildCaptureLogicLinksLocal(text);
+  const logicForest = buildCaptureLogicForestFromLinks(logicLinks);
 
   return {
-    summary: buildCaptureSummary(units),
-    bulletPoints: buildCaptureBulletPoints(units),
-    logicLinks: buildLogicLinksFromUnits(units),
-    logicForest: buildLogicForestFromUnits(units)
+    summary,
+    bulletPoints,
+    logicLinks,
+    logicForest
   };
 }
 
-function splitLines(text = "") {
-  return String(text)
+function splitLines(text) {
+  return (text || "")
     .replace(/\r/g, "")
     .split("\n")
-    .map(item => normalizeWhitespace(item))
+    .map(item => item.trim())
     .filter(Boolean);
 }
 
-function normalizeWrongQuestionLines(text = "") {
-  return splitLines(text).map(line => line.replace(/\s+/g, " ").trim());
+function normalizeWrongQuestionLines(text) {
+  return splitLines(text)
+    .map(line => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
 }
 
-function filterPlaceholder(items = [], prefix = "未检测到") {
-  return items.filter(item => item && !item.startsWith(prefix));
+function filterMetaPlaceholder(items, prefix = "未检测到") {
+  return (items || []).filter(item => item && !item.startsWith(prefix));
 }
 
-function inferWrongQuestionTopic(text = "") {
-  const lower = text.toLowerCase();
+function inferWrongQuestionTopic(text) {
+  const lower = (text || "").toLowerCase();
 
   if (/sustain|recycled|low-voc|prefab|smart technology|energy|daylight|solar/.test(lower)) {
     return "Sustainability Strategy";
@@ -532,13 +592,13 @@ function inferWrongQuestionTopic(text = "") {
   return "Core Concept";
 }
 
-function buildWrongQuestionQuestionText(text = "") {
+function buildWrongQuestionQuestionText(text) {
   const lines = normalizeWrongQuestionLines(text);
   const questionLines = [];
 
   for (const line of lines) {
     if (
-      /^(?:☑|✔|☐|❌|\[x\]|\[\s\]|✓|✗)?\s*(?:Correct|Incorrect)[.\s:-]+/i.test(line) ||
+      /^(?:☑|✔|☐|❌|\[x\]|\[\s\]|✓|✗)?\s*(?:Correct|Incorrect)[\.\s:-]+/i.test(line) ||
       /^correct answer\s*[:\-]/i.test(line)
     ) {
       break;
@@ -551,37 +611,37 @@ function buildWrongQuestionQuestionText(text = "") {
   return questionLines.length ? questionLines.join(" ") : "No question text yet.";
 }
 
-function buildWrongQuestionAnswerExtraction(text = "") {
-  const lines = normalizeWrongQuestionLines(text).filter(line =>
-    /^(?:☑|✔|\[x\]|✓)?\s*Correct[.\s:-]+/i.test(line)
+function buildWrongQuestionAnswerExtraction(text) {
+  const correctLines = normalizeWrongQuestionLines(text).filter(line =>
+    /^(?:☑|✔|\[x\]|✓)?\s*Correct[\.\s:-]+/i.test(line)
   );
 
-  return lines.length
-    ? lines.map(line => line.replace(/^(?:☑|✔|\[x\]|✓)?\s*Correct[.\s:-]+/i, "").trim())
+  return correctLines.length
+    ? correctLines.map(line => line.replace(/^(?:☑|✔|\[x\]|✓)?\s*Correct[\.\s:-]+/i, "").trim())
     : ["未检测到 Correct 关键词，请手动修改。"];
 }
 
-function buildWrongQuestionTrapPoint(text = "") {
-  const lines = normalizeWrongQuestionLines(text).filter(line =>
-    /^(?:☐|❌|\[\s\]|✗)?\s*Incorrect[.\s:-]+/i.test(line)
+function buildWrongQuestionTrapPoint(text) {
+  const incorrectLines = normalizeWrongQuestionLines(text).filter(line =>
+    /^(?:☐|❌|\[\s\]|✗)?\s*Incorrect[\.\s:-]+/i.test(line)
   );
 
-  return lines.length
-    ? lines.map(line => line.replace(/^(?:☐|❌|\[\s\]|✗)?\s*Incorrect[.\s:-]+/i, "").trim())
+  return incorrectLines.length
+    ? incorrectLines.map(line => line.replace(/^(?:☐|❌|\[\s\]|✗)?\s*Incorrect[\.\s:-]+/i, "").trim())
     : ["未检测到 Incorrect 关键词。"];
 }
 
-function buildWrongQuestionCorrectAnswer(text = "") {
-  const explicit = text.match(/correct answer\s*[:\-]\s*(.+)/i);
-  if (explicit) return explicit[1].trim();
+function buildWrongQuestionCorrectAnswer(text) {
+  const explicitMatch = (text || "").match(/correct answer\s*[:\-]\s*(.+)/i);
+  if (explicitMatch) return explicitMatch[1].trim();
 
-  const correct = filterPlaceholder(buildWrongQuestionAnswerExtraction(text));
+  const correct = filterMetaPlaceholder(buildWrongQuestionAnswerExtraction(text));
   return correct.length ? correct : "等待输入...";
 }
 
-function buildWrongQuestionBulletPoints(text = "") {
-  const correct = filterPlaceholder(buildWrongQuestionAnswerExtraction(text));
-  const trap = filterPlaceholder(buildWrongQuestionTrapPoint(text));
+function buildWrongQuestionBulletPoints(text) {
+  const correct = filterMetaPlaceholder(buildWrongQuestionAnswerExtraction(text));
+  const trap = filterMetaPlaceholder(buildWrongQuestionTrapPoint(text));
   const bullets = [];
 
   correct.forEach(item => bullets.push(`Correct move: ${item}`));
@@ -590,34 +650,36 @@ function buildWrongQuestionBulletPoints(text = "") {
   return bullets.length ? bullets : ["等待输入..."];
 }
 
-function buildWrongQuestionMemoryHook(text = "") {
-  const lower = text.toLowerCase();
+function buildWrongQuestionMemoryHook(text) {
+  const lower = (text || "").toLowerCase();
 
   if (/sustain|recycled|low-voc|prefab|smart technology/.test(lower)) {
-    return "先抓题目真正目标，再选最直接支持目标的策略。";
-  }
-  if (/egress|exit|occupancy|fire|code/.test(lower)) {
-    return "先判断题目触发了哪条 code 条件，再选答案。";
-  }
-  if (/structure|load|beam|column|foundation/.test(lower)) {
-    return "先看受力逻辑，再看构件选择。";
+    return "先抓题目真正的目标，再选最直接支持目标的策略；不是所有看起来环保的选项都一定对。";
   }
 
-  return "先抓题目核心目标，再选直接对应目标的答案。";
+  if (/egress|exit|occupancy|fire|code/.test(lower)) {
+    return "先判断题目问的是哪条 code 条件，再排除那些看似合理但不满足触发条件的选项。";
+  }
+
+  if (/structure|load|beam|column|foundation/.test(lower)) {
+    return "先看受力逻辑，再看构件选择；不要只凭表面经验选答案。";
+  }
+
+  return "先抓题目问的核心目标，再选直接对应目标的答案。";
 }
 
-function buildWrongQuestionSummary(text = "") {
-  if (!normalizeWhitespace(text)) return "等待输入...";
+function buildWrongQuestionSummary(text) {
+  if (!text) return "等待输入...";
 
   const topic = inferWrongQuestionTopic(text);
   const question = buildWrongQuestionQuestionText(text);
-  const correct = filterPlaceholder(buildWrongQuestionAnswerExtraction(text));
-  const trap = filterPlaceholder(buildWrongQuestionTrapPoint(text));
+  const correct = filterMetaPlaceholder(buildWrongQuestionAnswerExtraction(text));
+  const trap = filterMetaPlaceholder(buildWrongQuestionTrapPoint(text));
 
-  if (correct.length) {
+  if (correct.length > 0) {
     const correctPreview = correct.slice(0, 2).join("；");
     const trapPreview = trap.length ? ` 容易误选的是：${trap[0]}` : "";
-    return `这道错题主要考 ${topic}。核心不是选“看起来也不错”的选项，而是判断什么最直接满足题目目标。正确抓手是：${correctPreview}。${trapPreview}`;
+    return `这道错题主要考 ${topic}。核心不是看到“好像也不错”的选项就选，而是判断哪些策略最直接满足题目目标。正确抓手是：${correctPreview}。${trapPreview}`;
   }
 
   if (question !== "No question text yet.") {
@@ -671,7 +733,7 @@ function formatSavedAt(dateString) {
     : `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${d.toLocaleTimeString()}`;
 }
 
-function CapturePanelSection({ title, empty = false, children }) {
+function CapturePanelSection({ title, children, empty = false }) {
   return (
     <div className="subcard">
       <div className="subcard-title">{title}</div>
@@ -703,7 +765,11 @@ export default function App() {
   const [aiAnalysisResult, setAiAnalysisResult] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  const currentTopicKey = useMemo(() => `${selectedDivision}::${selectedRoom}`, [selectedDivision, selectedRoom]);
+  const currentTopicKey = useMemo(
+    () => `${selectedDivision}::${selectedRoom}`,
+    [selectedDivision, selectedRoom]
+  );
+
   const rooms = ROOMS_BY_DIVISION[selectedDivision] || [];
 
   const savedNotesForTopic = useMemo(
@@ -736,7 +802,10 @@ export default function App() {
   const effectiveCaptureText = useMemo(() => normalizeWhitespace(captureDraft), [captureDraft]);
   const isCaptureEmpty = !effectiveCaptureText;
 
-  const localCaptureAnalysis = useMemo(() => buildCaptureAnalysisLocal(captureDraft), [captureDraft]);
+  const localCaptureAnalysis = useMemo(
+    () => buildCaptureAnalysisLocal(captureDraft),
+    [captureDraft]
+  );
 
   const captureAnalysis = useMemo(() => {
     if (isCaptureEmpty) return EMPTY_CAPTURE_ANALYSIS;
@@ -761,14 +830,19 @@ export default function App() {
 
   const wrongQuestionAnalysis = useMemo(
     () => ({
-      questionText: aiAnalysisResult?.questionText || buildWrongQuestionQuestionText(wrongQuestionDraftText),
+      questionText:
+        aiAnalysisResult?.questionText || buildWrongQuestionQuestionText(wrongQuestionDraftText),
       summary: aiAnalysisResult?.summary || buildWrongQuestionSummary(wrongQuestionDraftText),
-      correctAnswer: aiAnalysisResult?.correctAnswer || buildWrongQuestionCorrectAnswer(wrongQuestionDraftText),
+      correctAnswer:
+        aiAnalysisResult?.correctAnswer || buildWrongQuestionCorrectAnswer(wrongQuestionDraftText),
       answerExtraction:
-        aiAnalysisResult?.answerExtraction || buildWrongQuestionAnswerExtraction(wrongQuestionDraftText),
-      bulletPoints: aiAnalysisResult?.bulletPoints || buildWrongQuestionBulletPoints(wrongQuestionDraftText),
+        aiAnalysisResult?.answerExtraction ||
+        buildWrongQuestionAnswerExtraction(wrongQuestionDraftText),
+      bulletPoints:
+        aiAnalysisResult?.bulletPoints || buildWrongQuestionBulletPoints(wrongQuestionDraftText),
       trapPoint: aiAnalysisResult?.trapPoint || buildWrongQuestionTrapPoint(wrongQuestionDraftText),
-      memoryHook: aiAnalysisResult?.memoryHook || buildWrongQuestionMemoryHook(wrongQuestionDraftText)
+      memoryHook:
+        aiAnalysisResult?.memoryHook || buildWrongQuestionMemoryHook(wrongQuestionDraftText)
     }),
     [wrongQuestionDraftText, aiAnalysisResult]
   );
@@ -849,7 +923,6 @@ export default function App() {
       setWrongQuestionStatus("Please provide text first.");
       return;
     }
-
     setAiAnalysisResult(null);
     setWrongQuestionStatus("Local analysis refreshed.");
   };
@@ -990,24 +1063,29 @@ export default function App() {
     setCaptureStatus("AI thinking...");
 
     try {
-      const response = await fetch("/api/ai", {
+      const res = await fetch("/api/ai", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json"
+        },
         body: JSON.stringify({ text: captureDraft, type: "capture" })
       });
 
-      const data = await response.json();
+      const data = await res.json().catch(() => null);
 
-      if (!response.ok) {
-        setCaptureStatus(`AI Error: ${data.error || "Unknown error"}`);
-      } else if (data.analysis) {
+      if (!res.ok) {
+        setCaptureStatus(`AI Error: ${data?.error || `HTTP ${res.status}`}`);
+        return;
+      }
+
+      if (data?.analysis) {
         setCaptureAiResult(data.analysis);
         setCaptureStatus("AI analysis complete.");
       } else {
         setCaptureStatus("AI Error: Invalid response.");
       }
     } catch {
-      setCaptureStatus("AI Error: network or timeout. Check Vercel function and GEMINI_API_KEY.");
+      setCaptureStatus("AI Error: request failed. Check Vercel deployment and GEMINI_API_KEY.");
     } finally {
       setIsCaptureAnalyzing(false);
     }
@@ -1023,38 +1101,40 @@ export default function App() {
     setWrongQuestionStatus("AI analyzing...");
 
     try {
-      const response = await fetch("/api/ai", {
+      const res = await fetch("/api/ai", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json"
+        },
         body: JSON.stringify({ text: wrongQuestionDraftText, type: "wrong_question" })
       });
 
-      const data = await response.json();
+      const data = await res.json().catch(() => null);
 
-      if (!response.ok) {
-        setWrongQuestionStatus(`AI Error: ${data.error || "Unknown error"}`);
-      } else if (data.analysis) {
+      if (!res.ok) {
+        setWrongQuestionStatus(`AI Error: ${data?.error || `HTTP ${res.status}`}`);
+        return;
+      }
+
+      if (data?.analysis) {
         setAiAnalysisResult(data.analysis);
         setWrongQuestionStatus("AI analysis complete.");
       } else {
         setWrongQuestionStatus("AI Error: Invalid response.");
       }
     } catch {
-      setWrongQuestionStatus("AI Error: network or timeout. Check Vercel function and GEMINI_API_KEY.");
+      setWrongQuestionStatus("AI Error: request failed. Check Vercel deployment and GEMINI_API_KEY.");
     } finally {
       setIsAnalyzing(false);
     }
   };
-
-  const captureEngineMode = captureAiResult ? "ai" : "local";
-  const wrongQuestionEngineMode = aiAnalysisResult ? "ai" : "local";
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand-card">
           <div className="brand-title">ARE Study Vault</div>
-          <div className="brand-subtitle">Capture notes, structure logic, and build wrong-question flashcards.</div>
+          <div className="brand-subtitle">Capture notes, analyze logic, and save wrong questions.</div>
         </div>
 
         <div className="sidebar-section">
@@ -1130,7 +1210,10 @@ export default function App() {
             <div className="panel capture-analysis-panel">
               <div className="panel-head-row">
                 <h3>
-                  Analysis <span className={`engine-badge ${captureEngineMode}`}>{captureEngineMode === "ai" ? "✨ AI Active" : "⚙️ Local Smart Engine"}</span>
+                  Analysis{" "}
+                  <span className={`engine-badge ${captureAiResult ? "ai" : "local"}`}>
+                    {captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
+                  </span>
                 </h3>
                 <button className="ask-ai-btn" onClick={handleCaptureRunAI} disabled={isCaptureAnalyzing}>
                   {isCaptureAnalyzing ? "Thinking..." : "✨ Ask AI"}
@@ -1138,32 +1221,34 @@ export default function App() {
               </div>
 
               <div className="analysis-stack">
-                <CapturePanelSection title="Summary" empty={!captureAnalysis.summary}>
-                  {captureAnalysis.summary || ""}
+                <CapturePanelSection title="Summary" empty={isCaptureEmpty || !captureAnalysis.summary}>
+                  {!isCaptureEmpty ? captureAnalysis.summary : ""}
                 </CapturePanelSection>
 
-                <CapturePanelSection title="Bullet Points" empty={!captureAnalysis.bulletPoints.length}>
-                  {captureAnalysis.bulletPoints.length ? (
+                <CapturePanelSection
+                  title="Bullet Points"
+                  empty={isCaptureEmpty || !captureAnalysis.bulletPoints.length}
+                >
+                  {!isCaptureEmpty && captureAnalysis.bulletPoints.length ? (
                     <ul className="clean-list">
                       {captureAnalysis.bulletPoints.map((item, index) => (
                         <li key={`${item}-${index}`}>{item}</li>
                       ))}
                     </ul>
-                  ) : (
-                    ""
-                  )}
+                  ) : null}
                 </CapturePanelSection>
 
-                <CapturePanelSection title="Logic Links" empty={!captureAnalysis.logicLinks.length}>
-                  {captureAnalysis.logicLinks.length ? (
+                <CapturePanelSection
+                  title="Logic Links"
+                  empty={isCaptureEmpty || !captureAnalysis.logicLinks.length}
+                >
+                  {!isCaptureEmpty && captureAnalysis.logicLinks.length ? (
                     <ul className="clean-list logic-links-list">
                       {captureAnalysis.logicLinks.map((item, index) => (
                         <li key={`${item}-${index}`}>{item}</li>
                       ))}
                     </ul>
-                  ) : (
-                    ""
-                  )}
+                  ) : null}
                 </CapturePanelSection>
               </div>
             </div>
@@ -1171,14 +1256,15 @@ export default function App() {
             <div className="panel live-logic-graph-panel">
               <div className="panel-head-row">
                 <h3>
-                  Live Logic Image <span className={`engine-badge ${captureEngineMode}`}>{captureEngineMode === "ai" ? "✨ AI Active" : "⚙️ Local Smart Engine"}</span>
+                  Live Logic Image{" "}
+                  <span className={`engine-badge ${captureAiResult ? "ai" : "local"}`}>
+                    {captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
+                  </span>
                 </h3>
               </div>
 
               <div className="logic-image-shell">
-                {!captureAnalysis.logicForest.length ? (
-                  <div className="analysis-box is-empty">{isCaptureEmpty ? "" : "输入内容生成导图..."}</div>
-                ) : (
+                {!isCaptureEmpty && captureAnalysis.logicForest.length ? (
                   <div className="logic-forest">
                     {captureAnalysis.logicForest.map((tree, index) => (
                       <div key={`${tree.label}-${index}`} className="logic-tree-card">
@@ -1186,7 +1272,7 @@ export default function App() {
                       </div>
                     ))}
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
           </div>
@@ -1210,20 +1296,17 @@ export default function App() {
                   <div className="image-placeholder">Image Preview</div>
                 )}
 
-                <div className="button-row wrongq-button-row top-gap">
-                  <label className="upload-nav-pill">
+                <div className="button-row top-gap wrongq-button-row">
+                  <label className="nav-pill upload-nav-pill">
                     Upload Image
                     <input type="file" accept="image/*" onChange={handleWrongQuestionImageChange} hidden />
                   </label>
 
                   {wrongQuestionImagePreview ? (
-                    <button
-                      className="danger-lite-btn"
-                      onClick={() => {
-                        setWrongQuestionImageFile(null);
-                        setWrongQuestionImagePreview("");
-                      }}
-                    >
+                    <button className="danger-lite-btn" onClick={() => {
+                      setWrongQuestionImageFile(null);
+                      setWrongQuestionImagePreview("");
+                    }}>
                       Delete Image
                     </button>
                   ) : null}
@@ -1252,7 +1335,10 @@ export default function App() {
             <div className="panel wrong-question-analysis-panel">
               <div className="panel-head-row">
                 <h3>
-                  Analysis <span className={`engine-badge ${wrongQuestionEngineMode}`}>{wrongQuestionEngineMode === "ai" ? "✨ AI Active" : "⚙️ Local Smart Engine"}</span>
+                  Analysis{" "}
+                  <span className={`engine-badge ${aiAnalysisResult ? "ai" : "local"}`}>
+                    {aiAnalysisResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
+                  </span>
                 </h3>
                 <button className="ask-ai-btn" onClick={handleWrongQuestionRunAI} disabled={isAnalyzing}>
                   {isAnalyzing ? "Thinking..." : "✨ Ask AI"}
@@ -1338,7 +1424,10 @@ export default function App() {
                   <div className="flashcard-counter">
                     {flashcardIndex + 1} / {wrongQuestionFlashcards.length}
                   </div>
-                  <button onClick={handleNextFlashcard} disabled={flashcardIndex === wrongQuestionFlashcards.length - 1}>
+                  <button
+                    onClick={handleNextFlashcard}
+                    disabled={flashcardIndex === wrongQuestionFlashcards.length - 1}
+                  >
                     Next →
                   </button>
                 </div>
@@ -1425,7 +1514,7 @@ export default function App() {
       </main>
 
       {expandedImage ? (
-        <div className="image-modal-backdrop" onClick={() => setExpandedImage("")}>
+        <div className="image-modal-backdrop" onClick={() => setExpandedImage("")}> 
           <div className="image-modal-content" onClick={event => event.stopPropagation()}>
             <button className="image-modal-close" onClick={() => setExpandedImage("")}>×</button>
             <img src={expandedImage} alt="Expanded" className="image-modal-img" />
