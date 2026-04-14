@@ -14,201 +14,544 @@ const ROOMS_BY_DIVISION = {
 };
 
 const SAMPLE_BY_DIVISION = {
-  PA: `Site analysis should start with climate, zoning, topography, and access.\nProgramming should connect client needs to spatial requirements.\nEarly code review helps define occupancy, egress, and height/area limits.`,
-  PPD: `Building system: active system relies on mechanical equipment and uses more energy.\nPassive system relies on sun, air, and wind flow.\nIn cold climate, reduce heat loss and gain solar heat.\nIn hot climate, control heat gain and optimize natural ventilation.\nTrombe wall helps stabilize temperature but takes more space.`,
-  PDD: `Envelope detailing must control water, air, vapor, and thermal transfer.\nMaterial selection affects durability, constructability, and maintenance.\nDocumentation should clearly coordinate assemblies, dimensions, and specifications.`,
-  PCM: `Practice management connects staffing, risk, finance, and firm operations.\nA sustainable office workflow depends on planning, communication, and resource control.`,
-  PJM: `Project management coordinates scope, schedule, consultant communication, and delivery expectations.\nConstruction administration requires tracking submittals, RFIs, and field conditions.`,
-  CE: `Construction evaluation depends on site observation, documentation, and follow-up.\nPunch list review compares completed work against contract expectations.`
+  PA: `Site analysis should start with climate, zoning, topography, and access.
+Programming should connect client needs to spatial requirements.
+Early code review helps define occupancy, egress, and height/area limits.`,
+  PPD: `Building system: active system relies on mechanical equipment and uses more energy.
+Passive system relies on sun, air, and wind flow.
+In cold climate, reduce heat loss and gain solar heat.
+In hot climate, control heat gain and optimize natural ventilation.
+Trombe wall helps stabilize temperature but takes more space.`,
+  PDD: `Envelope detailing must control water, air, vapor, and thermal transfer.
+Material selection affects durability, constructability, and maintenance.
+Documentation should clearly coordinate assemblies, dimensions, and specifications.`,
+  PCM: `Practice management connects staffing, risk, finance, and firm operations.
+A sustainable office workflow depends on planning, communication, and resource control.`,
+  PJM: `Project management coordinates scope, schedule, consultant communication, and delivery expectations.
+Construction administration requires tracking submittals, RFIs, and field conditions.`,
+  CE: `Construction evaluation depends on site observation, documentation, and follow-up.
+Punch list review compares completed work against contract expectations.`
 };
 
-// ==========================================
-// 🧠 Capture Smart Parser
-// ==========================================
-function capitalizeWords(text) {
-  return (text || "")
-    .trim()
-    .split(" ")
-    .map(word => (word ? word.charAt(0).toUpperCase() + word.slice(1) : word))
+const EMPTY_CAPTURE_ANALYSIS = {
+  summary: "",
+  bulletPoints: [],
+  logicLinks: [],
+  logicForest: []
+};
+
+const PREDICATE_RE =
+  /(relies on|uses|use|needs|need|requires|require|controls|control|reduces|reduce|minimizes|minimize|maximizes|maximize|optimizes|optimize|gains|gain|provides|provide|improves|improve|stabilizes|stabilize|limits|limit|affects|affect|influences|influence|includes|include|consists of|can be|is|are|means|refers to|defined as|helps|help|takes|take)/i;
+
+const LEADING_VERB_RE =
+  /^(relies on|uses|use|needs|need|requires|require|controls|control|reduces|reduce|minimizes|minimize|maximizes|maximize|optimizes|optimize|gains|gain|provides|provide|improves|improve|stabilizes|stabilize|limits|limit|affects|affect|influences|influence|includes|include|consists of|helps|help|takes|take|avoid|avoids|block|blocks|collect|collects|get|gets|minimize|maximize|optimize|gain|reduce|provide|store|stores)/i;
+
+function normalizeWhitespace(text = "") {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function stripBulletPrefix(line = "") {
+  return line.replace(/^\s*(?:[-*•▪▫◦●○►▸▹]+|\d+[.)])\s+/, "").trim();
+}
+
+function cleanLine(line = "") {
+  return normalizeWhitespace(stripBulletPrefix(line).replace(/[\t]+/g, " "));
+}
+
+function sentenceCase(text = "") {
+  const trimmed = normalizeWhitespace(text);
+  if (!trimmed) return "";
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
+}
+
+function titleCaseLabel(text = "") {
+  const trimmed = normalizeWhitespace(text)
+    .replace(/^\[|\]$/g, "")
+    .replace(/[.:;,!?]+$/g, "")
+    .trim();
+
+  if (!trimmed) return "";
+
+  return trimmed
+    .split(/\s+/)
+    .map(word => {
+      if (/^[A-Z0-9-]{2,}$/.test(word)) return word;
+      if (word.length <= 2 && word === word.toLowerCase()) return word;
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
     .join(" ");
 }
 
-function smartSplit(text) {
-  if (!text) return [];
-  const formatted = text
-    .replace(/\r/g, " ")
-    .replace(/\n+/g, " ")
-    .replace(/(\d+\.)/g, "| $1");
-  return formatted
-    .split(/[。！？;；|.!?]/)
-    .map(s => s.trim())
-    .filter(s => s.length > 3);
+function relationLabel(raw = "") {
+  const value = normalizeWhitespace(raw).toLowerCase();
+
+  if (["is", "are", "means", "refers to", "defined as"].includes(value)) return "is";
+  if (["use", "uses"].includes(value)) return "uses";
+  if (["need", "needs", "require", "requires"].includes(value)) return "requires";
+  if (["control", "controls"].includes(value)) return "controls";
+  if (["reduce", "reduces"].includes(value)) return "reduces";
+  if (["optimize", "optimizes"].includes(value)) return "optimizes";
+  if (["gain", "gains"].includes(value)) return "gains";
+  if (["help", "helps"].includes(value)) return "benefit";
+  if (["take", "takes"].includes(value)) return "tradeoff";
+  if (["include", "includes", "consists of"].includes(value)) return "includes";
+  return value;
 }
 
-function stripFillerPrefix(text) {
-  return (text || "")
-    .replace(/^let'?s\s+look\s+at\s+/i, "")
-    .replace(/^in\s+summary[:,]?\s*/i, "")
+function inferGroupRelation(group = "", subject = "") {
+  const groupLower = group.toLowerCase();
+  const subjectLower = subject.toLowerCase();
+
+  if (!groupLower || !subjectLower || groupLower === subjectLower) return null;
+  if (groupLower.includes("system") && subjectLower.includes("system")) return "has type";
+  if (groupLower.includes("climate") && subjectLower.includes("climate")) return "includes";
+  if (groupLower.includes("strategy") || groupLower.includes("response")) return "includes";
+  return "includes";
+}
+
+function createUnit(subject, relation, object, priority = 1) {
+  const cleanSubject = titleCaseLabel(subject);
+  const cleanRelation = normalizeWhitespace(relation);
+  const cleanObject = sentenceCase(object)
+    .replace(/^\[|\]$/g, "")
+    .replace(/[.;]+$/g, "")
     .trim();
+
+  if (!cleanSubject || !cleanRelation || !cleanObject) return null;
+
+  return {
+    subject: cleanSubject,
+    relation: cleanRelation,
+    object: cleanObject,
+    priority
+  };
 }
 
-function sentenceScore(sentence) {
-  const lower = sentence.toLowerCase();
-  let score = 0;
-  if (/(is|are|means|refers to|defined as)/.test(lower)) score += 3;
-  if (/(ratio|far|setback|yard|lot|design|zoning)/.test(lower)) score += 3;
-  if (/(however|but|must|needs to|required|typically)/.test(lower)) score += 2;
-  if (sentence.length > 180) score -= 2;
-  if (/^let'?s\s+look\s+at/i.test(lower)) score -= 3;
-  return score;
+function pushUnit(units, subject, relation, object, priority = 1) {
+  const unit = createUnit(subject, relation, object, priority);
+  if (!unit) return;
+
+  const key = `${unit.subject}|||${unit.relation.toLowerCase()}|||${unit.object.toLowerCase()}`;
+  if (!units.some(item => `${item.subject}|||${item.relation.toLowerCase()}|||${item.object.toLowerCase()}` === key)) {
+    units.push(unit);
+  }
 }
 
-function buildCaptureSummary(text) {
-  if (!text) return "等待输入...";
-  const frags = smartSplit(text).map(stripFillerPrefix);
-  if (!frags.length) return "无法生成摘要";
-  const ranked = [...frags].sort((a, b) => sentenceScore(b) - sentenceScore(a));
-  const definitions = ranked.filter(s => /(is|are|means|defined as|refers to)/i.test(s));
-  const constraints = ranked.filter(s => /(must|needs to|required|typically|however|but)/i.test(s));
-  const examples = ranked.filter(s => /(for example|could|combination|include|such as)/i.test(s));
+function extractSubject(text = "") {
+  const match = normalizeWhitespace(text).match(new RegExp(`^(.*?)\\s+${PREDICATE_RE.source}`, "i"));
+  return match ? titleCaseLabel(match[1]) : "";
+}
 
-  const selected = [];
-  [definitions[0], constraints[0], examples[0], ranked[0]].forEach(item => {
-    if (item && !selected.includes(item)) selected.push(item);
+function splitCompoundClause(clause = "") {
+  const clean = normalizeWhitespace(clause.replace(/[。！？]/g, ".").replace(/[;；]+/g, "."));
+  if (!clean) return [];
+
+  const splitter = clean
+    .replace(/\s+(?:and|but)\s+(?=(uses?|needs?|requires?|controls?|reduces?|minimizes?|maximizes?|optimizes?|gains?|provides?|improves?|stabilizes?|limits?|affects?|influences?|includes?|consists of|helps?|takes?)\b)/gi, " | ");
+
+  const parts = splitter
+    .split("|")
+    .map(item => item.trim())
+    .filter(Boolean);
+
+  if (parts.length <= 1) return parts;
+
+  const baseSubject = extractSubject(parts[0]);
+
+  return parts.map((part, index) => {
+    if (!index) return part;
+    if (baseSubject && LEADING_VERB_RE.test(part)) return `${baseSubject} ${part}`;
+    return part;
+  });
+}
+
+function looksLikeStandaloneHeader(line = "") {
+  const clean = cleanLine(line).replace(/[:：]$/, "");
+  if (!clean) return false;
+  if (/[.!?。！？]$/.test(clean)) return false;
+  return clean.split(/\s+/).length <= 6;
+}
+
+function shortHeadColon(line = "") {
+  const match = cleanLine(line).match(/^([^:：]{1,48})[:：]\s*(.+)$/);
+  if (!match) return null;
+
+  const head = titleCaseLabel(match[1]);
+  const rest = normalizeWhitespace(match[2]);
+  if (!head || !rest) return null;
+  if (head.split(/\s+/).length > 6) return null;
+
+  return { head, rest };
+}
+
+function textToSemanticLines(text = "") {
+  const byLine = text
+    .replace(/\r/g, "")
+    .split("\n")
+    .map(cleanLine)
+    .filter(Boolean);
+
+  if (byLine.length > 1) return byLine;
+
+  return text
+    .replace(/\r/g, "")
+    .replace(/([.!?。！？;；])\s+/g, "$1\n")
+    .split("\n")
+    .map(cleanLine)
+    .filter(Boolean);
+}
+
+function parseClause(clause, context, units) {
+  const clean = normalizeWhitespace(clause).replace(/[.;]+$/g, "");
+  if (!clean) return;
+
+  const group = context?.group || "";
+  const headerSubject = context?.headerSubject || "";
+
+  if (/^in\s+/i.test(clean)) {
+    const climateMatch = clean.match(/^in\s+([^,]+?)\s*,?\s*(.+)$/i);
+    if (climateMatch) {
+      const climate = titleCaseLabel(climateMatch[1]);
+      const strategy = sentenceCase(climateMatch[2]);
+      pushUnit(units, "Climate Response", "includes", climate, 3);
+      pushUnit(units, climate, "strategy", strategy, 3);
+      return;
+    }
+  }
+
+  const helpMatch = clean.match(/^(.*?)\s+helps\s+(.+?)(?:\s+but\s+(.+))?$/i);
+  if (helpMatch) {
+    const subject = titleCaseLabel(helpMatch[1]);
+    const benefit = sentenceCase(helpMatch[2]);
+    const tradeoff = sentenceCase(helpMatch[3] || "");
+    const parentRelation = inferGroupRelation(group, subject);
+
+    if (parentRelation) pushUnit(units, group, parentRelation, subject, 2);
+    pushUnit(units, subject, "benefit", benefit, 3);
+    if (tradeoff) pushUnit(units, subject, "tradeoff", tradeoff, 3);
+    return;
+  }
+
+  const mainMatch = clean.match(
+    /^(.*?)\s+(relies on|uses|use|needs|need|requires|require|controls|control|reduces|reduce|minimizes|minimize|maximizes|maximize|optimizes|optimize|gains|gain|provides|provide|improves|improve|stabilizes|stabilize|limits|limit|affects|affect|influences|influence|includes|include|consists of|can be|is|are|means|refers to|defined as|takes|take)\s+(.+)$/i
+  );
+
+  if (mainMatch) {
+    const subject = titleCaseLabel(mainMatch[1]);
+    const relation = relationLabel(mainMatch[2]);
+    const object = sentenceCase(mainMatch[3]);
+    const parentRelation = inferGroupRelation(group, subject);
+
+    if (parentRelation) pushUnit(units, group, parentRelation, subject, 2);
+    pushUnit(units, subject, relation, object, 3);
+    return;
+  }
+
+  if (headerSubject && LEADING_VERB_RE.test(clean)) {
+    parseClause(`${headerSubject} ${clean}`, { group, headerSubject }, units);
+    return;
+  }
+
+  if (headerSubject && !PREDICATE_RE.test(clean) && clean.split(/\s+/).length <= 10) {
+    const parentRelation = inferGroupRelation(group, headerSubject);
+    if (group && headerSubject !== group && parentRelation) {
+      pushUnit(units, group, parentRelation, headerSubject, 2);
+    }
+    pushUnit(units, headerSubject, "is", clean, 2);
+  }
+}
+
+function extractCaptureUnits(text = "") {
+  const lines = textToSemanticLines(text);
+  const units = [];
+  let currentHeader = "";
+
+  lines.forEach(line => {
+    const colon = shortHeadColon(line);
+
+    if (colon) {
+      currentHeader = colon.head;
+      if (LEADING_VERB_RE.test(colon.rest)) {
+        splitCompoundClause(`${colon.head} ${colon.rest}`).forEach(part => {
+          parseClause(part, { group: colon.head, headerSubject: colon.head }, units);
+        });
+        return;
+      }
+
+      splitCompoundClause(colon.rest).forEach(part => {
+        parseClause(part, { group: colon.head, headerSubject: colon.head }, units);
+      });
+      return;
+    }
+
+    if (looksLikeStandaloneHeader(line)) {
+      currentHeader = titleCaseLabel(line.replace(/[:：]$/, ""));
+      return;
+    }
+
+    splitCompoundClause(line).forEach(part => {
+      parseClause(part, { group: currentHeader, headerSubject: currentHeader }, units);
+    });
   });
 
-  return selected.slice(0, 3).join(" ");
+  return units;
 }
 
-function buildCaptureBulletPoints(text) {
-  if (!text) return ["等待输入..."];
-  const frags = smartSplit(text);
-  const cleaned = frags
-    .map(f => {
-  let clean = stripFillerPrefix(f).replace(/^[1-9]\.\s*/, "");
-      if (clean.includes(":") || clean.includes("：")) {
-        const parts = clean.split(/[:：]/);
-        return `${capitalizeWords(parts[0])}: ${parts[1]?.trim() || ""}`;
-      }
-      return clean;
-    })
-    .filter(f => f.length > 5);
- 
-  const unique = Array.from(new Set(cleaned));
-  return unique.slice(0, 8);
+function groupCaptureUnits(units = []) {
+  const groups = {};
+
+  units.forEach((unit, index) => {
+    if (!groups[unit.subject]) {
+      groups[unit.subject] = { items: [], firstIndex: index, score: 0 };
+    }
+
+    groups[unit.subject].items.push(unit);
+    groups[unit.subject].score += unit.priority || 1;
+  });
+
+  return groups;
 }
 
-function buildCaptureLogicLinks(text) {
-  if (!text) return ["等待输入以生成逻辑链..."];
-  const links = [];
-  const frags = smartSplit(text);
+function joinObjects(items = []) {
+  const clean = Array.from(
+    new Set(
+      items
+        .map(item => sentenceCase(item))
+        .filter(Boolean)
+    )
+  );
 
-  frags.forEach(f => {
-    const clean = stripFillerPrefix(f);
-    const farMatch = clean.match(/far.*?(?:is|means|=)\s*(.*)/i);
-    if (farMatch) {
-      links.push(`[FAR] ➔ defines ➔ ${farMatch[1]}`);
-      return;
-    }
+  if (!clean.length) return "";
+  if (clean.length === 1) return clean[0];
+  if (clean.length === 2) return `${clean[0]} and ${clean[1]}`;
+  return `${clean.slice(0, -1).join(", ")}, and ${clean[clean.length - 1]}`;
+}
 
-    const wayMatch = clean.match(/to meet an? far of ([\d.]+).*?(build.*)/i);
-    if (wayMatch) {
-      links.push(`[FAR ${wayMatch[1]}] ➔ can be achieved by ➔ ${wayMatch[2]}`);
-      return;
-    }
+function subjectSentence(subject, items = []) {
+  const byRelation = items.reduce((acc, item) => {
+    const key = item.relation.toLowerCase();
+    acc[key] = acc[key] || [];
+    acc[key].push(item.object);
+    return acc;
+  }, {});
 
-    const setbackMatch = clean.match(/setbacks?.*?(?:are|is)\s*(.*)/i);
-    if (setbackMatch) {
-      links.push(`[Setbacks] ➔ define ➔ ${setbackMatch[1]}`);
-      return;
-    }
+  const parts = [];
 
-    const yardMatch = clean.match(/(front yard|side yards?|rear yard)/i);
-    if (yardMatch) {
-      links.push(`[Setback Types] ➔ include ➔ front / side / rear yard`);
-      return;
-    }
+  if (byRelation["is"]) parts.push(`is ${joinObjects(byRelation["is"])}`);
+  if (byRelation["relies on"]) parts.push(`relies on ${joinObjects(byRelation["relies on"])}`);
+  if (byRelation["uses"]) parts.push(`uses ${joinObjects(byRelation["uses"])}`);
+  if (byRelation["requires"]) parts.push(`requires ${joinObjects(byRelation["requires"])}`);
+  if (byRelation["controls"]) parts.push(`controls ${joinObjects(byRelation["controls"])}`);
+  if (byRelation["reduces"]) parts.push(`reduces ${joinObjects(byRelation["reduces"])}`);
+  if (byRelation["optimizes"]) parts.push(`optimizes ${joinObjects(byRelation["optimizes"])}`);
+  if (byRelation["gains"]) parts.push(`gains ${joinObjects(byRelation["gains"])}`);
+  if (byRelation["provides"]) parts.push(`provides ${joinObjects(byRelation["provides"])}`);
+  if (byRelation["benefit"]) parts.push(`helps ${joinObjects(byRelation["benefit"])}`);
+  if (byRelation["tradeoff"]) parts.push(`but ${joinObjects(byRelation["tradeoff"])}`);
+  if (byRelation["strategy"]) parts.push(`focuses on ${joinObjects(byRelation["strategy"])}`);
+  if (byRelation["includes"]) parts.push(`includes ${joinObjects(byRelation["includes"])}`);
+  if (byRelation["has type"]) parts.push(`includes ${joinObjects(byRelation["has type"])}`);
 
-   const definitionMatch = clean.match(/^(.*?)\s+(is|are|means|refers to|defined as)\s+(.*)$/i);
-    if (definitionMatch) {
-      links.push(`[${capitalizeWords(definitionMatch[1])}] ➔ defines ➔ ${definitionMatch[3]}`);
-      return;
-    }
+  if (!parts.length) return "";
 
-    const causeEffectMatch = clean.match(/^(.*?)\s+(affects|influences|controls|limits|requires|determines)\s+(.*)$/i);
-    if (causeEffectMatch) {
-      links.push(`[${capitalizeWords(causeEffectMatch[1])}] ➔ ${causeEffectMatch[2].toLowerCase()} ➔ ${causeEffectMatch[3]}`);
-      return;
-    }
+  const sentence = `${subject} ${parts.join(" and ")}`
+    .replace(/\s+and\s+but\s+/g, " but ")
+    .replace(/\s+/g, " ")
+    .trim();
 
-    const includeMatch = clean.match(/^(.*?)\s+(include|includes|consists of)\s+(.*)$/i);
-    if (includeMatch) {
-      links.push(`[${capitalizeWords(includeMatch[1])}] ➔ includes ➔ ${includeMatch[3]}`);
-      return;
-    }
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1) + ".";
+}
 
-    if (clean.includes(":") || clean.includes("：")) {
-      const pts = clean.split(/[:：]/);
-      links.push(`[${capitalizeWords(pts[0])}] ➔ explains ➔ ${pts[1]?.trim() || ""}`);
-    } else if (f.includes(" - ") || f.includes(" – ")) {
-      const pts = f.split(/\s*[-–]\s*/);
-      links.push(`[${capitalizeWords(pts[0])}] ➔ ${pts[1]?.trim() || ""}`);
+function buildCaptureSummaryLocal(text = "") {
+  const units = extractCaptureUnits(text);
+  if (!units.length) return "";
+
+  const groups = groupCaptureUnits(units);
+  const sentences = [];
+  const usedSubjects = new Set();
+
+  const active = groups["Active System"]?.items || [];
+  const passive = groups["Passive System"]?.items || [];
+  if (active.length || passive.length) {
+    const activePart = active.length ? subjectSentence("Active systems", active) : "";
+    const passivePart = passive.length ? subjectSentence("Passive systems", passive) : "";
+
+    if (activePart && passivePart) {
+      const left = activePart.replace(/\.$/, "");
+      const right = passivePart.charAt(0).toLowerCase() + passivePart.slice(1).replace(/\.$/, "");
+      sentences.push(`Building systems can be active or passive: ${left.slice(0, 1).toLowerCase() + left.slice(1)}, while ${right}.`);
     } else {
-      const match = f.match(/(.*?)\s+(need to|avoid|use|provide|minimize|reduce|gain|collect)\s+(.*)/i);
-      if (match && match[1].length < 30) {
-        links.push(`[${capitalizeWords(match[1])}] ➔ ${match[2].toLowerCase()} ➔ ${match[3]}`);
-      }
+      if (activePart) sentences.push(activePart);
+      if (passivePart) sentences.push(passivePart);
     }
+
+    usedSubjects.add("Active System");
+    usedSubjects.add("Passive System");
+  }
+
+  const cold = groups["Cold Climate"]?.items || [];
+  const hot = groups["Hot Climate"]?.items || [];
+  if (cold.length || hot.length) {
+    const coldStrategy = cold.find(item => item.relation.toLowerCase() === "strategy")?.object || "";
+    const hotStrategy = hot.find(item => item.relation.toLowerCase() === "strategy")?.object || "";
+
+    if (coldStrategy || hotStrategy) {
+      const parts = [];
+      if (coldStrategy) parts.push(`in cold climates the goal is to ${coldStrategy.charAt(0).toLowerCase() + coldStrategy.slice(1)}`);
+      if (hotStrategy) parts.push(`in hot climates the goal is to ${hotStrategy.charAt(0).toLowerCase() + hotStrategy.slice(1)}`);
+      sentences.push(`Climate response changes by context: ${parts.join(", while ")}.`);
+    }
+
+    usedSubjects.add("Cold Climate");
+    usedSubjects.add("Hot Climate");
+    usedSubjects.add("Climate Response");
+  }
+
+  if (groups["Trombe Wall"]?.items?.length) {
+    sentences.push(subjectSentence("A Trombe wall", groups["Trombe Wall"].items));
+    usedSubjects.add("Trombe Wall");
+  }
+
+  const fallbackSubjects = Object.entries(groups)
+    .filter(([subject]) => !usedSubjects.has(subject))
+    .sort((a, b) => {
+      if (b[1].score !== a[1].score) return b[1].score - a[1].score;
+      return a[1].firstIndex - b[1].firstIndex;
+    })
+    .slice(0, Math.max(0, 4 - sentences.length));
+
+  fallbackSubjects.forEach(([subject, group]) => {
+    const line = subjectSentence(subject, group.items);
+    if (line) sentences.push(line);
   });
 
-  return links.length > 0
-    ? links
-    : ["💡 提示：在笔记中使用冒号 (:) 或破折号 (-) 即可自动生成完美逻辑链。"];
+  return sentences.slice(0, 4).join(" ").trim();
 }
 
-function node(label, relation = null, children = []) {
-  return { label, relation, children };
+function buildCaptureBulletPointsLocal(text = "") {
+  const units = extractCaptureUnits(text);
+  if (!units.length) return [];
+
+  const groups = groupCaptureUnits(units);
+  const bullets = [];
+  const used = new Set();
+
+  const pushBullet = value => {
+    const clean = value.replace(/\.$/, "").trim();
+    if (clean && !bullets.includes(clean)) bullets.push(clean);
+  };
+
+  if (groups["Active System"]?.items?.length) {
+    pushBullet(subjectSentence("Active system", groups["Active System"].items));
+    used.add("Active System");
+  }
+
+  if (groups["Passive System"]?.items?.length) {
+    pushBullet(subjectSentence("Passive system", groups["Passive System"].items));
+    used.add("Passive System");
+  }
+
+  if (groups["Cold Climate"]?.items?.length) {
+    pushBullet(subjectSentence("Cold climate", groups["Cold Climate"].items));
+    used.add("Cold Climate");
+  }
+
+  if (groups["Hot Climate"]?.items?.length) {
+    pushBullet(subjectSentence("Hot climate", groups["Hot Climate"].items));
+    used.add("Hot Climate");
+  }
+
+  if (groups["Trombe Wall"]?.items?.length) {
+    pushBullet(subjectSentence("Trombe wall", groups["Trombe Wall"].items));
+    used.add("Trombe Wall");
+  }
+
+  Object.entries(groups)
+    .filter(([subject, group]) => {
+      if (used.has(subject)) return false;
+      const relations = group.items.map(item => item.relation.toLowerCase());
+      const onlyStructural = relations.every(rel => rel === "includes" || rel === "has type");
+      return !onlyStructural;
+    })
+    .sort((a, b) => {
+      if (b[1].score !== a[1].score) return b[1].score - a[1].score;
+      return a[1].firstIndex - b[1].firstIndex;
+    })
+    .forEach(([subject, group]) => {
+      pushBullet(subjectSentence(subject, group.items));
+    });
+
+  return bullets.slice(0, 8);
 }
 
-function buildCaptureLogicForest(text) {
-  if (!text) return [];
-  const links = buildCaptureLogicLinks(text).filter(item => item.includes("➔"));
-  if (!links.length) return [];
+function buildCaptureLogicLinksLocal(text = "") {
+  const units = extractCaptureUnits(text);
+  return units.map(unit => `[${unit.subject}] ➔ ${unit.relation} ➔ [${unit.object}]`);
+}
 
+function buildCaptureLogicForestFromLinks(links = []) {
   const adjacency = new Map();
   const inbound = new Map();
+  const nodes = new Set();
 
   links.forEach(link => {
-    const parts = link.split("➔").map(part => part.trim());
+    const parts = link.split("➔").map(item => item.trim());
     if (parts.length !== 3) return;
 
     const from = parts[0].replace(/^\[|\]$/g, "");
     const relation = parts[1];
     const to = parts[2].replace(/^\[|\]$/g, "");
 
+    if (!from || !relation || !to) return;
+
+    nodes.add(from);
+    nodes.add(to);
     if (!adjacency.has(from)) adjacency.set(from, []);
     adjacency.get(from).push({ relation, to });
     inbound.set(to, (inbound.get(to) || 0) + 1);
     if (!inbound.has(from)) inbound.set(from, inbound.get(from) || 0);
   });
 
-  const roots = [...adjacency.keys()].filter(key => (inbound.get(key) || 0) === 0);
-  const buildTree = (current, depth = 0, visited = new Set()) => {
-    if (depth > 3 || visited.has(current)) return node(current);
-    const nextVisited = new Set(visited);
-    nextVisited.add(current);
-    const children = (adjacency.get(current) || []).map(edge =>
-      node(edge.to, edge.relation, buildTree(edge.to, depth + 1, nextVisited).children)
-    );
-     return node(current, null, children);
+  const roots = Array.from(nodes)
+    .filter(node => (inbound.get(node) || 0) === 0)
+    .sort((a, b) => a.localeCompare(b));
+
+  const buildNode = (label, path = new Set()) => {
+    if (path.has(label)) return { label, relation: null, children: [] };
+
+    const nextPath = new Set(path);
+    nextPath.add(label);
+    const children = (adjacency.get(label) || []).map(edge => {
+      const childTree = buildNode(edge.to, nextPath);
+      return {
+        label: childTree.label,
+        relation: edge.relation,
+        children: childTree.children
+      };
+    });
+
+    return { label, relation: null, children };
   };
-  
-  return (roots.length ? roots : [...adjacency.keys()].slice(0, 1)).map(root => buildTree(root));
+
+  return (roots.length ? roots : Array.from(nodes).slice(0, 1)).map(root => buildNode(root));
 }
 
-// ==========================================
-// ❌ Wrong Question Parser
-// ==========================================
+function buildCaptureAnalysisLocal(text = "") {
+  if (!normalizeWhitespace(text)) return EMPTY_CAPTURE_ANALYSIS;
+
+  const summary = buildCaptureSummaryLocal(text);
+  const bulletPoints = buildCaptureBulletPointsLocal(text);
+  const logicLinks = buildCaptureLogicLinksLocal(text);
+  const logicForest = buildCaptureLogicForestFromLinks(logicLinks);
+
+  return {
+    summary,
+    bulletPoints,
+    logicLinks,
+    logicForest
+  };
+}
+
 function splitLines(text) {
   return (text || "")
     .replace(/\r/g, "")
@@ -274,9 +617,7 @@ function buildWrongQuestionAnswerExtraction(text) {
   );
 
   return correctLines.length
-    ? correctLines.map(line =>
-        line.replace(/^(?:☑|✔|\[x\]|✓)?\s*Correct[\.\s:-]+/i, "").trim()
-      )
+    ? correctLines.map(line => line.replace(/^(?:☑|✔|\[x\]|✓)?\s*Correct[\.\s:-]+/i, "").trim())
     : ["未检测到 Correct 关键词，请手动修改。"];
 }
 
@@ -286,9 +627,7 @@ function buildWrongQuestionTrapPoint(text) {
   );
 
   return incorrectLines.length
-    ? incorrectLines.map(line =>
-        line.replace(/^(?:☐|❌|\[\s\]|✗)?\s*Incorrect[\.\s:-]+/i, "").trim()
-      )
+    ? incorrectLines.map(line => line.replace(/^(?:☐|❌|\[\s\]|✗)?\s*Incorrect[\.\s:-]+/i, "").trim())
     : ["未检测到 Incorrect 关键词。"];
 }
 
@@ -354,17 +693,13 @@ function LogicTreeNode({ tree, depth = 0 }) {
   return (
     <div className={`logic-tree-level depth-${depth}`}>
       <div className="logic-tree-row">
-        {tree.relation && (
-          <span className={`logic-relation-pill relation-${tree.relation.replace(/\s+/g, "-")}`}>
-            {capitalizeWords(tree.relation)}
-          </span>
-        )}
+        {tree.relation ? <span className="logic-relation-pill">{tree.relation}</span> : null}
         <div className={`logic-node-card ${depth === 0 ? "root" : ""}`}>{tree.label}</div>
       </div>
       {tree.children?.length ? (
         <div className="logic-children">
-          {tree.children.map((child, i) => (
-            <LogicTreeNode key={i} tree={child} depth={depth + 1} />
+          {tree.children.map((child, index) => (
+            <LogicTreeNode key={`${child.label}-${index}`} tree={child} depth={depth + 1} />
           ))}
         </div>
       ) : null}
@@ -398,9 +733,15 @@ function formatSavedAt(dateString) {
     : `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${d.toLocaleTimeString()}`;
 }
 
-// ==========================================
-// 🎯 Main App
-// ==========================================
+function CapturePanelSection({ title, children, empty = false }) {
+  return (
+    <div className="subcard">
+      <div className="subcard-title">{title}</div>
+      <div className={`analysis-box ${empty ? "is-empty" : ""}`}>{children}</div>
+    </div>
+  );
+}
+
 export default function App() {
   const [selectedDivision, setSelectedDivision] = useState("PPD");
   const [selectedRoom, setSelectedRoom] = useState("Site");
@@ -452,47 +793,40 @@ export default function App() {
 
   useEffect(() => {
     setCaptureAiResult(null);
-  }, [captureDraft, savedNotesByTopic, currentTopicKey]);
+  }, [captureDraft, currentTopicKey]);
 
   useEffect(() => {
     setAiAnalysisResult(null);
   }, [wrongQuestionDraftText]);
 
-  const effectiveCaptureText = useMemo(() => captureDraft.trim(), [captureDraft]);
+  const effectiveCaptureText = useMemo(() => normalizeWhitespace(captureDraft), [captureDraft]);
+  const isCaptureEmpty = !effectiveCaptureText;
 
-  const isCaptureEmpty = !effectiveCaptureText.trim();
-
-  const captureSummary = useMemo(
-    () =>
-      isCaptureEmpty
-        ? "等待输入..."
-        : captureAiResult?.summary || buildCaptureSummary(effectiveCaptureText),
-    [effectiveCaptureText, captureAiResult, isCaptureEmpty]
+  const localCaptureAnalysis = useMemo(
+    () => buildCaptureAnalysisLocal(captureDraft),
+    [captureDraft]
   );
 
-  const captureBulletPoints = useMemo(
-    () =>
-      isCaptureEmpty
-        ? ["等待输入..."]
-        : captureAiResult?.bulletPoints || buildCaptureBulletPoints(effectiveCaptureText),
-    [effectiveCaptureText, captureAiResult, isCaptureEmpty]
-  );
+  const captureAnalysis = useMemo(() => {
+    if (isCaptureEmpty) return EMPTY_CAPTURE_ANALYSIS;
+    if (!captureAiResult) return localCaptureAnalysis;
 
-  const captureLogicLinks = useMemo(
-    () =>
-      isCaptureEmpty
-        ? ["等待输入以生成逻辑链..."]
-        : captureAiResult?.logicLinks || buildCaptureLogicLinks(effectiveCaptureText),
-    [effectiveCaptureText, captureAiResult, isCaptureEmpty]
-  );
-
-  const captureLogicForest = useMemo(
-    () =>
-      isCaptureEmpty
-        ? []
-        : captureAiResult?.logicForest || buildCaptureLogicForest(effectiveCaptureText),
-    [effectiveCaptureText, captureAiResult, isCaptureEmpty]
-  );
+    return {
+      summary: captureAiResult.summary || localCaptureAnalysis.summary,
+      bulletPoints:
+        Array.isArray(captureAiResult.bulletPoints) && captureAiResult.bulletPoints.length
+          ? captureAiResult.bulletPoints
+          : localCaptureAnalysis.bulletPoints,
+      logicLinks:
+        Array.isArray(captureAiResult.logicLinks) && captureAiResult.logicLinks.length
+          ? captureAiResult.logicLinks
+          : localCaptureAnalysis.logicLinks,
+      logicForest:
+        Array.isArray(captureAiResult.logicForest) && captureAiResult.logicForest.length
+          ? captureAiResult.logicForest
+          : localCaptureAnalysis.logicForest
+    };
+  }, [captureAiResult, isCaptureEmpty, localCaptureAnalysis]);
 
   const wrongQuestionAnalysis = useMemo(
     () => ({
@@ -515,23 +849,23 @@ export default function App() {
 
   const currentFlashcard = wrongQuestionFlashcards[flashcardIndex] || null;
 
-  // =========================
-  // Capture handlers
-  // =========================
   const handleAnalyzeCapture = () => {
-    if (!effectiveCaptureText.trim()) {
+    if (!effectiveCaptureText) {
       setCaptureAiResult(null);
-      setCaptureStatus("Please type notes first.");
+      setCaptureStatus("Editor is empty.");
       return;
     }
+
     setCaptureAiResult(null);
-    setCaptureStatus("Analysis refreshed.");
+    setCaptureStatus("Local analysis refreshed.");
   };
 
-  const handleCaptureTextareaKeyDown = e => {
-    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+  const handleCaptureTextareaKeyDown = event => {
+    if (event.key === "Enter" && !event.nativeEvent.isComposing) {
       setTimeout(() => {
-        handleAnalyzeCapture();
+        if (normalizeWhitespace(event.currentTarget.value)) {
+          setCaptureStatus("Local analysis refreshed.");
+        }
       }, 0);
     }
   };
@@ -555,11 +889,13 @@ export default function App() {
 
     setCaptureDraft("");
     setCaptureAiResult(null);
-    setCaptureStatus("Saved locally and analysis refreshed.");
+    setCaptureStatus("Saved locally.");
   };
 
   const handleLoadSavedNotes = () => {
     if (!savedNotesForTopic.length) {
+      setCaptureDraft("");
+      setCaptureAiResult(null);
       setCaptureStatus(`No notes found for ${currentTopicKey}.`);
       return;
     }
@@ -567,7 +903,7 @@ export default function App() {
     const mergedText = savedNotesForTopic.map(item => item.text).join("\n\n");
     setCaptureDraft(mergedText);
     setCaptureAiResult(null);
-    setCaptureStatus(`${currentTopicKey} loaded ${savedNotesForTopic.length} notes.`);
+    setCaptureStatus(`${currentTopicKey} loaded ${savedNotesForTopic.length} note(s).`);
   };
 
   const handleLoadTopicSample = () => {
@@ -582,22 +918,21 @@ export default function App() {
     setCaptureStatus("Editor cleared.");
   };
 
-  // =========================
-  // Wrong question handlers
-  // =========================
   const handleAnalyzeWrongQuestion = () => {
     if (!wrongQuestionDraftText.trim()) {
       setWrongQuestionStatus("Please provide text first.");
       return;
     }
     setAiAnalysisResult(null);
-    setWrongQuestionStatus("Analysis refreshed.");
+    setWrongQuestionStatus("Local analysis refreshed.");
   };
 
-  const handleWrongQuestionTextareaKeyDown = e => {
-    if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+  const handleWrongQuestionTextareaKeyDown = event => {
+    if (event.key === "Enter" && !event.nativeEvent.isComposing) {
       setTimeout(() => {
-        handleAnalyzeWrongQuestion();
+        if (normalizeWhitespace(event.currentTarget.value)) {
+          setWrongQuestionStatus("Local analysis refreshed.");
+        }
       }, 0);
     }
   };
@@ -610,18 +945,18 @@ export default function App() {
       setWrongQuestionStatus("Reading image...");
 
       const result = await Tesseract.recognize(file, "eng");
+      const detectedText = result?.data?.text?.trim() || "";
 
-      if (!result?.data?.text?.trim()) {
+      if (!detectedText) {
         setWrongQuestionStatus("No text detected.");
         return;
       }
 
-      const detectedText = result.data.text.trim();
       setWrongQuestionOcrText(detectedText);
       setWrongQuestionDraftText(detectedText);
       setAiAnalysisResult(null);
-      setWrongQuestionStatus("OCR completed and analysis refreshed.");
-    } catch (e) {
+      setWrongQuestionStatus("OCR completed.");
+    } catch {
       setWrongQuestionStatus("OCR failed.");
     } finally {
       setIsRunningOcr(false);
@@ -630,6 +965,7 @@ export default function App() {
 
   const handleWrongQuestionImageChange = async event => {
     const file = event.target.files?.[0] || null;
+
     if (!file) {
       setWrongQuestionImageFile(null);
       setWrongQuestionImagePreview("");
@@ -654,6 +990,7 @@ export default function App() {
       setWrongQuestionStatus("Please select an image first.");
       return;
     }
+
     await runOcrFromFile(wrongQuestionImageFile);
   };
 
@@ -701,25 +1038,23 @@ export default function App() {
   };
 
   const handlePrevFlashcard = () => {
-    setFlashcardIndex(p => Math.max(0, p - 1));
+    setFlashcardIndex(prev => Math.max(0, prev - 1));
   };
 
   const handleNextFlashcard = () => {
-    setFlashcardIndex(p => Math.min(wrongQuestionFlashcards.length - 1, p + 1));
+    setFlashcardIndex(prev => Math.min(wrongQuestionFlashcards.length - 1, prev + 1));
   };
 
   const handleDeleteFlashcard = idToDelete => {
     if (!window.confirm("Delete this flashcard?")) return;
-    setWrongQuestionFlashcards(prev => prev.filter(c => c.id !== idToDelete));
-    setFlashcardIndex(p => (p > 0 ? p - 1 : 0));
+
+    setWrongQuestionFlashcards(prev => prev.filter(card => card.id !== idToDelete));
+    setFlashcardIndex(prev => (prev > 0 ? prev - 1 : 0));
     setWrongQuestionStatus("Deleted.");
   };
 
-  // =========================
-  // AI handlers
-  // =========================
   const handleCaptureRunAI = async () => {
-    if (!effectiveCaptureText.trim()) {
+    if (!effectiveCaptureText) {
       setCaptureStatus("Please type notes first.");
       return;
     }
@@ -730,23 +1065,30 @@ export default function App() {
     try {
       const res = await fetch("/api/ai", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: effectiveCaptureText, type: "capture" })
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ text: captureDraft, type: "capture" })
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
 
-      if (data.analysis) {
-        setCaptureAiResult(data.analysis);
-        setCaptureStatus("AI Analysis Complete!");
-      } else {
-        setCaptureStatus("AI Error: " + (data.error || "Unknown"));
+      if (!res.ok) {
+        setCaptureStatus(`AI Error: ${data?.error || `HTTP ${res.status}`}`);
+        return;
       }
-    } catch (e) {
-      setCaptureStatus("AI Error: Network/Timeout. Please check Vercel API Key.");
-    }
 
-    setIsCaptureAnalyzing(false);
+      if (data?.analysis) {
+        setCaptureAiResult(data.analysis);
+        setCaptureStatus("AI analysis complete.");
+      } else {
+        setCaptureStatus("AI Error: Invalid response.");
+      }
+    } catch {
+      setCaptureStatus("AI Error: request failed. Check Vercel deployment and GEMINI_API_KEY.");
+    } finally {
+      setIsCaptureAnalyzing(false);
+    }
   };
 
   const handleWrongQuestionRunAI = async () => {
@@ -761,112 +1103,30 @@ export default function App() {
     try {
       const res = await fetch("/api/ai", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json"
+        },
         body: JSON.stringify({ text: wrongQuestionDraftText, type: "wrong_question" })
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => null);
 
-      if (data.analysis) {
-        setAiAnalysisResult(data.analysis);
-        setWrongQuestionStatus("AI Analysis Complete!");
-      } else {
-        setWrongQuestionStatus("AI Error: " + (data.error || "Unknown"));
+      if (!res.ok) {
+        setWrongQuestionStatus(`AI Error: ${data?.error || `HTTP ${res.status}`}`);
+        return;
       }
-    } catch (e) {
-      setWrongQuestionStatus("AI Error: Network/Timeout. Please check Vercel API Key.");
+
+      if (data?.analysis) {
+        setAiAnalysisResult(data.analysis);
+        setWrongQuestionStatus("AI analysis complete.");
+      } else {
+        setWrongQuestionStatus("AI Error: Invalid response.");
+      }
+    } catch {
+      setWrongQuestionStatus("AI Error: request failed. Check Vercel deployment and GEMINI_API_KEY.");
+    } finally {
+      setIsAnalyzing(false);
     }
-
-    setIsAnalyzing(false);
-  };
-
-  const scrollableStyle = {
-    maxHeight: "250px",
-    overflowY: "auto",
-    padding: "12px",
-    backgroundColor: "#f8fafc",
-    borderRadius: "6px",
-    border: "1px solid #e2e8f0",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-word",
-    marginTop: "6px"
-  };
-
-  const summaryScrollableStyle = {
-    ...scrollableStyle,
-    minHeight: "120px",
-    maxHeight: "140px",
-    overflowY: "scroll"
-  };
-
-  const captureAnalysisScrollStyle = {
-    maxHeight: "600px",
-    overflowY: "auto",
-    paddingRight: "4px"
-  };
-
-  const analysisMiniGridStyle = {
-    display: "grid",
-    gridTemplateColumns: "1fr 1fr",
-    gap: "16px",
-    alignItems: "start"
-  };
-
-  const spanTwoStyle = {
-    gridColumn: "1 / -1"
-  };
-
-  const flashcardSlideStyle = {
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: "18px",
-    padding: "20px",
-    display: "flex",
-    flexDirection: "column",
-    gap: "18px"
-  };
-
-  const flashcardSlideTopStyle = {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "12px",
-    flexWrap: "wrap"
-  };
-
-  const flashcardSlideBodyStyle = {
-    display: "grid",
-    gridTemplateColumns: "360px 1fr",
-    gap: "20px",
-    alignItems: "start"
-  };
-
-  const flashcardColStyle = {
-    display: "flex",
-    flexDirection: "column",
-    gap: "14px"
-  };
-
-  const flashcardImageStyle = {
-    width: "100%",
-    maxHeight: "260px",
-    objectFit: "contain",
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
-    borderRadius: "12px",
-    cursor: "pointer"
-  };
-
-  const flashcardNoImageStyle = {
-    width: "100%",
-    height: "260px",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "#f8fafc",
-    border: "1px dashed #cbd5e1",
-    borderRadius: "12px",
-    color: "#64748b"
   };
 
   return (
@@ -874,6 +1134,7 @@ export default function App() {
       <aside className="sidebar">
         <div className="brand-card">
           <div className="brand-title">ARE Study Vault</div>
+          <div className="brand-subtitle">Capture notes, analyze logic, and save wrong questions.</div>
         </div>
 
         <div className="sidebar-section">
@@ -911,7 +1172,6 @@ export default function App() {
       </aside>
 
       <main className="main-workspace">
-        {/* ================= Capture Workspace ================= */}
         <section className="workspace-card capture-workspace">
           <div className="workspace-header">
             <h2>Capture Notes Workspace</h2>
@@ -927,11 +1187,11 @@ export default function App() {
             <textarea
               className="panel-textarea"
               value={captureDraft}
-              onChange={e => setCaptureDraft(e.target.value)}
+              onChange={event => setCaptureDraft(event.target.value)}
               onKeyDown={handleCaptureTextareaKeyDown}
               placeholder="粘贴长笔记，本地智脑会自动生成结构化解析..."
             />
-            <div className="button-row" style={{ marginTop: "12px" }}>
+            <div className="button-row top-gap">
               <button onClick={handleAnalyzeCapture}>Analyze</button>
             </div>
           </div>
@@ -943,101 +1203,81 @@ export default function App() {
               <button onClick={handleLoadTopicSample}>Load {selectedDivision} Sample</button>
               <button onClick={handleClearEditor}>Clear Editor</button>
             </div>
-            <div style={{ color: "#10b981", marginTop: "10px" }}>{captureStatus}</div>
+            <div className="status-text success">{captureStatus}</div>
           </div>
 
           <div className="workspace-grid">
             <div className="panel capture-analysis-panel">
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
-                <h3 style={{ margin: 0 }}>
+              <div className="panel-head-row">
+                <h3>
                   Analysis{" "}
-                  <span
-                    style={{
-                      fontSize: "12px",
-                      background: captureAiResult ? "#dbeafe" : "#f1f5f9",
-                      padding: "4px 8px",
-                      borderRadius: "12px"
-                    }}
-                  >
+                  <span className={`engine-badge ${captureAiResult ? "ai" : "local"}`}>
                     {captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
                   </span>
                 </h3>
-                <button
-                  onClick={handleCaptureRunAI}
-                  disabled={isCaptureAnalyzing}
-                  style={{
-                    background: "#2563eb",
-                    color: "white",
-                    padding: "6px 12px",
-                    borderRadius: "6px",
-                    border: "none",
-                    cursor: "pointer"
-                  }}
-                >
+                <button className="ask-ai-btn" onClick={handleCaptureRunAI} disabled={isCaptureAnalyzing}>
                   {isCaptureAnalyzing ? "Thinking..." : "✨ Ask AI"}
                 </button>
               </div>
 
-              <div style={captureAnalysisScrollStyle}>
-                <div className="subcard">
-                  <div className="subcard-title">Summary</div>
-                  <div style={summaryScrollableStyle} className="summary-scroll">{captureSummary}</div>
-                </div>
+              <div className="analysis-stack">
+                <CapturePanelSection title="Summary" empty={isCaptureEmpty || !captureAnalysis.summary}>
+                  {!isCaptureEmpty ? captureAnalysis.summary : ""}
+                </CapturePanelSection>
 
-                <div className="subcard">
-                  <div className="subcard-title">Logic Links</div>
-                  <div style={scrollableStyle}>
-                    <ul>
-                      {captureLogicLinks.map((item, i) => (
-                        <li key={i}>{item}</li>
+                <CapturePanelSection
+                  title="Bullet Points"
+                  empty={isCaptureEmpty || !captureAnalysis.bulletPoints.length}
+                >
+                  {!isCaptureEmpty && captureAnalysis.bulletPoints.length ? (
+                    <ul className="clean-list">
+                      {captureAnalysis.bulletPoints.map((item, index) => (
+                        <li key={`${item}-${index}`}>{item}</li>
                       ))}
                     </ul>
-                  </div>
-                </div>
+                  ) : null}
+                </CapturePanelSection>
+
+                <CapturePanelSection
+                  title="Logic Links"
+                  empty={isCaptureEmpty || !captureAnalysis.logicLinks.length}
+                >
+                  {!isCaptureEmpty && captureAnalysis.logicLinks.length ? (
+                    <ul className="clean-list logic-links-list">
+                      {captureAnalysis.logicLinks.map((item, index) => (
+                        <li key={`${item}-${index}`}>{item}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </CapturePanelSection>
               </div>
             </div>
 
             <div className="panel live-logic-graph-panel">
-              <h3 style={{ margin: 0, marginBottom: "10px" }}>
-                Live Logic Image{" "}
-                <span
-                  style={{
-                    fontSize: "12px",
-                    background: captureAiResult ? "#dbeafe" : "#f1f5f9",
-                    padding: "4px 8px",
-                    borderRadius: "12px"
-                  }}
-                >
-                  {captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
-                </span>
-              </h3>
+              <div className="panel-head-row">
+                <h3>
+                  Live Logic Image{" "}
+                  <span className={`engine-badge ${captureAiResult ? "ai" : "local"}`}>
+                    {captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
+                  </span>
+                </h3>
+              </div>
 
-              <div
-                style={{
-                  maxHeight: "600px",
-                  overflowY: "auto",
-                  background: "#f8fafc",
-                  padding: "10px",
-                  borderRadius: "8px"
-                }}
-              >
-                {captureLogicForest.length === 0 ? (
-                  <div style={{ color: "#64748b" }}>输入内容生成导图...</div>
-                ) : (
+              <div className="logic-image-shell">
+                {!isCaptureEmpty && captureAnalysis.logicForest.length ? (
                   <div className="logic-forest">
-                    {captureLogicForest.map((tree, i) => (
-                      <div key={i} className="logic-tree-card">
+                    {captureAnalysis.logicForest.map((tree, index) => (
+                      <div key={`${tree.label}-${index}`} className="logic-tree-card">
                         <LogicTreeNode tree={tree} />
                       </div>
                     ))}
                   </div>
-                )}
+                ) : null}
               </div>
             </div>
           </div>
         </section>
 
-        {/* ================= Wrong Question Workspace ================= */}
         <section className="workspace-card wrong-question-workspace">
           <div className="workspace-header">
             <h2>Wrong Question Workspace</h2>
@@ -1056,32 +1296,22 @@ export default function App() {
                   <div className="image-placeholder">Image Preview</div>
                 )}
 
-                <div className="button-row wrongq-button-row" style={{ marginTop: 12 }}>
+                <div className="button-row top-gap wrongq-button-row">
                   <label className="nav-pill upload-nav-pill">
                     Upload Image
                     <input type="file" accept="image/*" onChange={handleWrongQuestionImageChange} hidden />
                   </label>
 
-                  {wrongQuestionImagePreview && (
-                    <button
-                      className="nav-pill"
-                      onClick={() => {
-                        setWrongQuestionImageFile(null);
-                        setWrongQuestionImagePreview("");
-                      }}
-                      style={{ backgroundColor: "#fee2e2", color: "#dc2626" }}
-                      type="button"
-                    >
+                  {wrongQuestionImagePreview ? (
+                    <button className="danger-lite-btn" onClick={() => {
+                      setWrongQuestionImageFile(null);
+                      setWrongQuestionImagePreview("");
+                    }}>
                       Delete Image
                     </button>
-                  )}
+                  ) : null}
 
-                  <button
-                    className="nav-pill nav-action-pill"
-                    onClick={handleRunOcr}
-                    disabled={isRunningOcr}
-                    type="button"
-                  >
+                  <button className="nav-action-pill" onClick={handleRunOcr} disabled={isRunningOcr}>
                     {isRunningOcr ? "Running..." : "Run OCR"}
                   </button>
                 </div>
@@ -1092,57 +1322,38 @@ export default function App() {
                 <textarea
                   className="panel-textarea wrong-question-textarea"
                   value={wrongQuestionDraftText}
-                  onChange={e => setWrongQuestionDraftText(e.target.value)}
+                  onChange={event => setWrongQuestionDraftText(event.target.value)}
                   onKeyDown={handleWrongQuestionTextareaKeyDown}
                   placeholder="粘贴错题..."
-                  style={{ minHeight: "200px" }}
                 />
-                <div className="button-row" style={{ marginTop: "12px" }}>
+                <div className="button-row top-gap">
                   <button onClick={handleAnalyzeWrongQuestion}>Analyze</button>
                 </div>
               </div>
             </div>
 
             <div className="panel wrong-question-analysis-panel">
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "10px" }}>
-                <h3 style={{ margin: 0 }}>
+              <div className="panel-head-row">
+                <h3>
                   Analysis{" "}
-                  <span
-                    style={{
-                      fontSize: "12px",
-                      background: aiAnalysisResult ? "#dbeafe" : "#f1f5f9",
-                      padding: "4px 8px",
-                      borderRadius: "12px"
-                    }}
-                  >
+                  <span className={`engine-badge ${aiAnalysisResult ? "ai" : "local"}`}>
                     {aiAnalysisResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
                   </span>
                 </h3>
-                <button
-                  onClick={handleWrongQuestionRunAI}
-                  disabled={isAnalyzing}
-                  style={{
-                    background: "#2563eb",
-                    color: "white",
-                    padding: "6px 12px",
-                    borderRadius: "6px",
-                    border: "none",
-                    cursor: "pointer"
-                  }}
-                >
+                <button className="ask-ai-btn" onClick={handleWrongQuestionRunAI} disabled={isAnalyzing}>
                   {isAnalyzing ? "Thinking..." : "✨ Ask AI"}
                 </button>
               </div>
 
-              <div style={analysisMiniGridStyle}>
-                <div className="subcard" style={spanTwoStyle}>
+              <div className="analysis-mini-grid">
+                <div className="subcard analysis-span-2">
                   <div className="subcard-title">Summary</div>
-                  <div style={scrollableStyle}>{wrongQuestionAnalysis.summary}</div>
+                  <div className="analysis-box">{wrongQuestionAnalysis.summary}</div>
                 </div>
 
                 <div className="subcard">
                   <div className="subcard-title">Correct Answer</div>
-                  <div style={scrollableStyle}>
+                  <div className="analysis-box">
                     {Array.isArray(wrongQuestionAnalysis.correctAnswer)
                       ? wrongQuestionAnalysis.correctAnswer.join(" / ")
                       : wrongQuestionAnalysis.correctAnswer}
@@ -1151,37 +1362,37 @@ export default function App() {
 
                 <div className="subcard">
                   <div className="subcard-title">Memory Hook</div>
-                  <div style={scrollableStyle}>{wrongQuestionAnalysis.memoryHook}</div>
+                  <div className="analysis-box">{wrongQuestionAnalysis.memoryHook}</div>
                 </div>
 
-                <div className="subcard" style={spanTwoStyle}>
+                <div className="subcard analysis-span-2">
                   <div className="subcard-title">Bullet Points</div>
-                  <div style={scrollableStyle}>
-                    <ul>
-                      {wrongQuestionAnalysis.bulletPoints.map((item, i) => (
-                        <li key={i}>{item}</li>
+                  <div className="analysis-box">
+                    <ul className="clean-list">
+                      {wrongQuestionAnalysis.bulletPoints.map((item, index) => (
+                        <li key={`${item}-${index}`}>{item}</li>
                       ))}
                     </ul>
                   </div>
                 </div>
 
-                <div className="subcard" style={spanTwoStyle}>
+                <div className="subcard analysis-span-2">
                   <div className="subcard-title">Answer Extraction</div>
-                  <div style={scrollableStyle}>
-                    <ul>
-                      {wrongQuestionAnalysis.answerExtraction.map((item, i) => (
-                        <li key={i}>{item}</li>
+                  <div className="analysis-box">
+                    <ul className="clean-list">
+                      {wrongQuestionAnalysis.answerExtraction.map((item, index) => (
+                        <li key={`${item}-${index}`}>{item}</li>
                       ))}
                     </ul>
                   </div>
                 </div>
 
-                <div className="subcard" style={spanTwoStyle}>
+                <div className="subcard analysis-span-2">
                   <div className="subcard-title">Trap Point</div>
-                  <div style={scrollableStyle}>
-                    <ul>
-                      {wrongQuestionAnalysis.trapPoint.map((item, i) => (
-                        <li key={i}>{item}</li>
+                  <div className="analysis-box">
+                    <ul className="clean-list">
+                      {wrongQuestionAnalysis.trapPoint.map((item, index) => (
+                        <li key={`${item}-${index}`}>{item}</li>
                       ))}
                     </ul>
                   </div>
@@ -1196,13 +1407,13 @@ export default function App() {
               <button onClick={handleLoadSavedFlashcards}>Load Saved Flashcards</button>
               <button onClick={handleClearWrongQuestion}>Clear Wrong Question</button>
             </div>
-            <div style={{ color: "#10b981", marginTop: "10px" }}>{wrongQuestionStatus}</div>
+            <div className="status-text success">{wrongQuestionStatus}</div>
           </div>
 
           <div className="panel flashcard-panel">
             <div className="panel-title">Wrong Question Flashcards</div>
 
-            {wrongQuestionFlashcards.length === 0 ? (
+            {!wrongQuestionFlashcards.length ? (
               <div className="flashcard-placeholder">No saved flashcards yet.</div>
             ) : (
               <div className="flashcard-carousel">
@@ -1222,96 +1433,73 @@ export default function App() {
                 </div>
 
                 {currentFlashcard ? (
-                  <div style={flashcardSlideStyle}>
-                    <div style={flashcardSlideTopStyle}>
+                  <div className="flashcard-slide">
+                    <div className="flashcard-slide-top">
                       <div className="flashcard-meta">
                         {currentFlashcard.topicKey} · {formatSavedAt(currentFlashcard.savedAt)}
                       </div>
-
-                      <div style={{ display: "flex", gap: "12px", alignItems: "center" }}>
-                        <button
-                          onClick={() => handleDeleteFlashcard(currentFlashcard.id)}
-                          style={{
-                            background: "#fee2e2",
-                            color: "#dc2626",
-                            border: "1px solid #fecaca",
-                            borderRadius: "8px",
-                            padding: "6px 10px",
-                            cursor: "pointer",
-                            fontSize: "12px",
-                            fontWeight: "bold"
-                          }}
-                        >
-                          Delete
-                        </button>
-                      </div>
+                      <button className="danger-lite-btn" onClick={() => handleDeleteFlashcard(currentFlashcard.id)}>
+                        Delete
+                      </button>
                     </div>
 
-                    <div
-                      style={{
-                        ...flashcardSlideBodyStyle,
-                        gridTemplateColumns:
-                          typeof window !== "undefined" && window.innerWidth <= 1100 ? "1fr" : "360px 1fr"
-                      }}
-                    >
-                      <div style={flashcardColStyle}>
+                    <div className="flashcard-slide-body">
+                      <div className="flashcard-col">
                         {currentFlashcard.imagePreview ? (
                           <img
                             src={currentFlashcard.imagePreview}
                             alt="Wrong question"
-                            style={flashcardImageStyle}
+                            className="flashcard-image"
                             onClick={() => setExpandedImage(currentFlashcard.imagePreview)}
                           />
                         ) : (
-                          <div style={flashcardNoImageStyle}>No image</div>
+                          <div className="flashcard-no-image">No image</div>
                         )}
 
                         <div className="subcard compact-subcard">
                           <div className="subcard-title">Wrong Question Summary</div>
-                          <p style={{ margin: 0, lineHeight: 1.6 }}>{currentFlashcard.summary}</p>
+                          <p className="plain-paragraph">{currentFlashcard.summary}</p>
                         </div>
                       </div>
 
-                      <div style={flashcardColStyle}>
+                      <div className="flashcard-col">
                         <div className="subcard compact-subcard">
                           <div className="subcard-title">Correct Answer</div>
-                          {Array.isArray(currentFlashcard.correctAnswer) ? (
-                            <p style={{ margin: 0, lineHeight: 1.6 }}>
-                              {currentFlashcard.correctAnswer.join(" / ")}
-                            </p>
-                          ) : (
-                            <p style={{ margin: 0, lineHeight: 1.6 }}>{currentFlashcard.correctAnswer}</p>
-                          )}
+                          <p className="plain-paragraph">
+                            {Array.isArray(currentFlashcard.correctAnswer)
+                              ? currentFlashcard.correctAnswer.join(" / ")
+                              : currentFlashcard.correctAnswer}
+                          </p>
                         </div>
 
                         <div className="subcard compact-subcard">
                           <div className="subcard-title">Bullet Points</div>
-                          <ul style={{ margin: 0, paddingLeft: "18px" }}>
-                            {(currentFlashcard.bulletPoints || []).map((item, i) => (
-                              <li key={i}>{item}</li>
+                          <ul className="clean-list">
+                            {(currentFlashcard.bulletPoints || []).map((item, index) => (
+                              <li key={`${item}-${index}`}>{item}</li>
                             ))}
                           </ul>
                         </div>
 
                         <div className="subcard compact-subcard">
                           <div className="subcard-title">Memory Hook</div>
-                          <p style={{ margin: 0, lineHeight: 1.6 }}>{currentFlashcard.memoryHook}</p>
+                          <p className="plain-paragraph">{currentFlashcard.memoryHook}</p>
                         </div>
 
                         <div className="subcard compact-subcard">
                           <div className="subcard-title">Trap Point</div>
-                          <ul style={{ margin: 0, paddingLeft: "18px" }}>
-                            {(currentFlashcard.trapPoint || []).map((item, i) => (
-                              <li key={i}>{item}</li>
+                          <ul className="clean-list">
+                            {(currentFlashcard.trapPoint || []).map((item, index) => (
+                              <li key={`${item}-${index}`}>{item}</li>
                             ))}
                           </ul>
                         </div>
 
                         <div className="subcard compact-subcard">
                           <div className="subcard-title">Answer Extraction</div>
-                          <ul style={{ margin: 0, paddingLeft: "18px" }}>
-                            {(currentFlashcard.answerExtraction || []).map((item, i) => (
-                              <li key={i}>{item}</li>
+                          <ul className="clean-list">
+                            {(currentFlashcard.answerExtraction || []).map((item, index) => (
+                              <li key={`${item}-${index}`}>{item}</li>
                             ))}
                           </ul>
                         </div>
@@ -1326,11 +1514,9 @@ export default function App() {
       </main>
 
       {expandedImage ? (
-        <div className="image-modal-backdrop" onClick={() => setExpandedImage("")}>
-          <div className="image-modal-content" onClick={e => e.stopPropagation()}>
-            <button className="image-modal-close" onClick={() => setExpandedImage("")}>
-              ×
-            </button>
+        <div className="image-modal-backdrop" onClick={() => setExpandedImage("")}> 
+          <div className="image-modal-content" onClick={event => event.stopPropagation()}>
+            <button className="image-modal-close" onClick={() => setExpandedImage("")}>×</button>
             <img src={expandedImage} alt="Expanded" className="image-modal-img" />
           </div>
         </div>
