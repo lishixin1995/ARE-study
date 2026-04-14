@@ -326,16 +326,16 @@ ul {
 }
 
 .mindmap-board {
-  min-width: 900px;
+  min-width: 920px;
   min-height: 520px;
-  padding: 12px;
+  padding: 18px 12px;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
 }
 
 .mindmap-node {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 22px;
   position: relative;
 }
@@ -348,6 +348,7 @@ ul {
   flex: 0 0 auto;
   min-width: 130px;
   max-width: 240px;
+  min-height: 52px;
   padding: 10px 14px;
   border-radius: 14px;
   border: 1px solid #d9e1ee;
@@ -356,6 +357,8 @@ ul {
   font-weight: 600;
   line-height: 1.45;
   box-shadow: 0 1px 0 rgba(15, 23, 42, 0.03);
+  display: flex;
+  align-items: center;
 }
 
 .mindmap-label.root {
@@ -363,8 +366,11 @@ ul {
   color: #ffffff;
   border-color: #172033;
   min-width: 170px;
+  min-height: 56px;
   font-size: 16px;
   font-weight: 800;
+  display: flex;
+  align-items: center;
 }
 
 .mindmap-children {
@@ -378,8 +384,8 @@ ul {
   content: "";
   position: absolute;
   left: 8px;
-  top: 16px;
-  bottom: 16px;
+  top: 26px;
+  bottom: 26px;
   width: 2px;
   background: #d7deea;
 }
@@ -389,6 +395,7 @@ ul {
   align-items: center;
   gap: 12px;
   position: relative;
+  min-height: 56px;
 }
 
 .mindmap-connector {
@@ -397,6 +404,7 @@ ul {
   background: #d7deea;
   position: relative;
   flex: 0 0 22px;
+  align-self: center;
 }
 
 .mindmap-connector-dot {
