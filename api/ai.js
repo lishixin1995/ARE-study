@@ -1,108 +1,69 @@
-function stripCodeFence(text = "") {
-  return String(text)
-    .replace(/```json/gi, "")
-    .replace(/```/g, "")
-    .trim();
-}
+import { GoogleGenerativeAI } from "@google/generative-ai";
 
-function extractJsonBlock(text = "") {
-  const cleaned = stripCodeFence(text);
-  const start = cleaned.indexOf("{");
-  const end = cleaned.lastIndexOf("}");
-
-  if (start !== -1 && end !== -1 && end > start) {
-    return cleaned.slice(start, end + 1);
+export default async function handler(request, response) {
+  if (request.method !== "POST") {
+    return response.status(405).json({ error: "Method not allowed" });
   }
 
-  return cleaned;
-}
-
-function getNextNonWhitespaceChar(text, startIndex) {
-  for (let i = startIndex; i < text.length; i += 1) {
-    if (!/\s/.test(text[i])) return text[i];
+  if (!process.env.GEMINI_API_KEY) {
+    return response.status(500).json({ error: "Missing GEMINI_API_KEY" });
   }
-  return "";
-}
-
-function repairJsonString(text = "") {
-  let s = String(text)
-    .replace(/\u201C|\u201D/g, '"')
-    .replace(/\u2018|\u2019/g, "'")
-    .replace(/\u00A0/g, " ")
-    .replace(/,\s*([}\]])/g, "$1");
-
-  let out = "";
-  let inString = false;
-  let escaped = false;
-
-  for (let i = 0; i < s.length; i += 1) {
-    const ch = s[i];
-
-    if (!inString) {
-      if (ch === '"') {
-        inString = true;
-      }
-      out += ch;
-      continue;
-    }
-
-    if (escaped) {
-      out += ch;
-      escaped = false;
-      continue;
-    }
-
-    if (ch === "\\") {
-      out += ch;
-      escaped = true;
-      continue;
-    }
-
-    if (ch === "\n" || ch === "\r") {
-      out += "\\n";
-      continue;
-    }
-
-    if (ch === "\t") {
-      out += " ";
-      continue;
-    }
-
-    if (ch === '"') {
-      const nextNonWs = getNextNonWhitespaceChar(s, i + 1);
-
-      // 合法的字符串结尾：
-      // 1. key 后面接 :
-      // 2. value 后面接 , } ]
-      if (nextNonWs === ":" || nextNonWs === "," || nextNonWs === "}" || nextNonWs === "]" || !nextNonWs) {
-        inString = false;
-        out += '"';
-      } else {
-        // 否则大概率是字符串内部没转义的引号
-        out += '\\"';
-      }
-      continue;
-    }
-
-    out += ch;
-  }
-
-  return out.replace(/,\s*([}\]])/g, "$1");
-}
-
-function safeJsonParse(text = "") {
-  const candidate = extractJsonBlock(text);
 
   try {
-    return JSON.parse(candidate);
-  } catch (firstError) {
-    try {
-      const repaired = repairJsonString(candidate);
-      return JSON.parse(repaired);
-    } catch (secondError) {
-      throw new Error(
-        `JSON parse failed. First: ${firstError.message}. Second: ${secondError.message}. Raw preview: ${candidate.slice(0, 600)}`
-      );
+    const { text = "", type = "capture" } =
+      typeof request.body === "object" ? request.body : JSON.parse(request.body || "{}");
+
+    if (!text.trim()) {
+      return response.status(400).json({ error: "Empty text" });
     }
+
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash"
+    });
+
+    const prompt =
+      type === "wrong_question"
+        ? `Analyze this wrong-question text and return strict JSON only:
+{
+  "questionText": "",
+  "summary": "",
+  "correctAnswer": "",
+  "answerExtraction": [""],
+  "bulletPoints": [""],
+  "trapPoint": [""],
+  "memoryHook": ""
+}
+
+Text:
+${text}`
+        : `Analyze these study notes and return strict JSON only:
+{
+  "summary": "",
+  "bulletPoints": [""],
+  "logicLinks": [""],
+  "logicForest": []
+}
+
+Text:
+${text}`;
+
+    const result = await model.generateContent(prompt);
+    const raw = result.response.text().replace(/```json/gi, "").replace(/```/g, "").trim();
+
+    let analysis;
+    try {
+      analysis = JSON.parse(raw);
+    } catch {
+      return response.status(500).json({
+        error: `Model returned invalid JSON: ${raw.slice(0, 500)}`
+      });
+    }
+
+    return response.status(200).json({ analysis });
+  } catch (error) {
+    return response.status(500).json({
+      error: error?.message || "AI API Error"
+    });
   }
 }
