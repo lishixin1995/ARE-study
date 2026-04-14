@@ -1,6 +1,6 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
-const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-1.5-flash";
+const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 
 function readJsonBody(request) {
   if (!request?.body) return {};
@@ -198,16 +198,16 @@ export default async function handler(request, response) {
 
   try {
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({
-      model: MODEL_NAME,
-      generationConfig: {
-        temperature: 0.25,
-        topP: 0.9,
-        topK: 32,
-        maxOutputTokens: 2048,
-        responseMimeType: "application/json"
-      }
-    });
+const model = genAI.getGenerativeModel({
+  model: MODEL_NAME,
+  generationConfig: {
+    temperature: 0.25,
+    topP: 0.9,
+    topK: 32,
+    maxOutputTokens: 2048,
+    responseMimeType: "application/json"
+  }
+});
 
     const language = detectLanguage(text);
     const prompt =
