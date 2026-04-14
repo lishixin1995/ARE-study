@@ -1425,23 +1425,17 @@ async function handleSaveWrongQuestion() {
                     <input type="file" accept="image/*" onChange={handleWrongQuestionImageChange} hidden />
                   </label>
 
-                  {wrongQuestionImagePreview ? (
-                    <button
-<button
-  className="danger-lite-btn"
-  onClick={async () => {
-    if (!window.confirm("Delete this flashcard?")) return;
-
-    const ok = await deleteWrongQuestionFlashcardFromCloud(currentFlashcard.id);
-    if (!ok) return;
-
-    setWrongQuestionFlashcards(prev => prev.filter(card => card.id !== currentFlashcard.id));
-    setFlashcardIndex(prev => (prev > 0 ? prev - 1 : 0));
-  }}
->
-  Delete
-</button>
-                  ) : null}
+{wrongQuestionImagePreview ? (
+  <button
+    className="danger-lite-btn"
+    onClick={() => {
+      setWrongQuestionImageFile(null);
+      setWrongQuestionImagePreview("");
+    }}
+  >
+    Delete Image
+  </button>
+) : null}
 
                   <button className="nav-action-pill" onClick={handleRunOcr} disabled={isRunningOcr}>
                     {isRunningOcr ? "Running..." : "Run OCR"}
