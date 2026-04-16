@@ -269,6 +269,10 @@ function buildMindMapFromText(text = "") {
     }
 
     if (["reduce", "gain", "control", "optimize", "uses", "stabilizes", "helps", "takes"].includes(lowerRelation)) {
+      const verbPrefix = new RegExp(`^${lowerRelation}\b`, "i");
+      if (verbPrefix.test(clean)) {
+        return [sentenceCase(clean)];
+      }
       return [sentenceCase(`${titleCase(lowerRelation)} ${clean}`)];
     }
 
@@ -634,31 +638,37 @@ function formatAnalysisSectionForPdf(title, items = []) {
 
 
 function renderMindMapNodeForPdf(node) {
-  if (!node?.label) return "";
+  if (!node) return "";
 
   const children = Array.isArray(node.children) ? node.children : [];
 
   return `
-    <div class="pdf-mindmap-node ${children.length ? "has-children" : "is-leaf"}">
-      <div class="pdf-mindmap-label">${escapeHtml(node.label)}</div>
+    <li class="pdf-tree-item">
+      <div class="pdf-tree-label ${children.length ? "has-children" : "is-leaf"}">${escapeHtml(node.label)}</div>
       ${
         children.length
-          ? `<div class="pdf-mindmap-children">${children.map(child => renderMindMapNodeForPdf(child)).join("")}</div>`
+          ? `<ul class="pdf-tree-children">${children.map(child => renderMindMapNodeForPdf(child)).join("")}</ul>`
           : ""
       }
-    </div>
+    </li>
   `;
 }
 
 function formatMindMapSectionForPdf(mindMap) {
-  if (!mindMap?.label) return "";
-
   return `
-    <section class="pdf-section">
+    <section class="pdf-section pdf-page-break">
       <div class="pdf-section-title">Logic Image</div>
-      <div class="pdf-mindmap-shell">
-        ${renderMindMapNodeForPdf(mindMap)}
-      </div>
+      ${
+        mindMap
+          ? `
+            <div class="pdf-tree-shell">
+              <ul class="pdf-tree-root">
+                ${renderMindMapNodeForPdf(mindMap)}
+              </ul>
+            </div>
+          `
+          : `<p class="pdf-empty">No logic image available.</p>`
+      }
     </section>
   `;
 }
@@ -1031,82 +1041,74 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
             .empty-note {
               color: #6b7280;
               font-style: italic;
+            }            .pdf-tree-shell {
+              margin-top: 8px;
+              border: 1px solid #d7dee8;
+              border-radius: 12px;
+              padding: 18px 18px 18px 10px;
+              background: #f8fafc;
             }
 
-            .pdf-mindmap-shell {
-              width: 100%;
-              overflow: hidden;
-            }
-
-            .pdf-mindmap-node {
+            .pdf-tree-root,
+            .pdf-tree-children {
+              list-style: none;
+              margin: 0;
+              padding-left: 24px;
               position: relative;
-              margin-top: 12px;
-              text-align: center;
             }
 
-            .pdf-mindmap-node:first-child {
-              margin-top: 0;
+            .pdf-tree-root {
+              padding-left: 8px;
             }
 
-            .pdf-mindmap-label {
+            .pdf-tree-item {
+              position: relative;
+              margin: 10px 0;
+            }
+
+            .pdf-tree-label {
               display: inline-block;
               padding: 6px 12px;
               border: 1px solid #cbd5e1;
               border-radius: 999px;
-              background: #f8fafc;
-              font-size: 12px;
+              background: #ffffff;
+              color: #0f172a;
+              font-size: 13px;
               font-weight: 600;
-              color: #111827;
-              max-width: 100%;
-              word-break: break-word;
+              line-height: 1.35;
             }
 
-            .pdf-mindmap-node.has-children > .pdf-mindmap-children {
-              position: relative;
-              display: flex;
-              justify-content: center;
-              flex-wrap: wrap;
-              gap: 12px 10px;
-              margin-top: 18px;
-              padding-top: 18px;
+            .pdf-tree-label.has-children {
+              background: #eff6ff;
+              border-color: #bfdbfe;
             }
 
-            .pdf-mindmap-node.has-children > .pdf-mindmap-children::before {
+            .pdf-tree-label.is-leaf {
+              background: #ffffff;
+            }
+
+            .pdf-tree-children::before {
               content: "";
               position: absolute;
               top: 0;
-              left: 50%;
-              transform: translateX(-50%);
+              bottom: 0;
+              left: 9px;
               width: 1px;
-              height: 14px;
-              background: #94a3b8;
+              background: #cbd5e1;
             }
 
-            .pdf-mindmap-node.has-children > .pdf-mindmap-children::after {
+            .pdf-tree-children > .pdf-tree-item::before {
               content: "";
               position: absolute;
-              top: 0;
-              left: 10px;
-              right: 10px;
+              top: 18px;
+              left: -15px;
+              width: 15px;
               height: 1px;
-              background: #94a3b8;
+              background: #cbd5e1;
             }
 
-            .pdf-mindmap-node.has-children > .pdf-mindmap-children > .pdf-mindmap-node {
-              min-width: 110px;
-              flex: 1 1 150px;
-              max-width: 220px;
-            }
-
-            .pdf-mindmap-node.has-children > .pdf-mindmap-children > .pdf-mindmap-node::before {
-              content: "";
-              position: absolute;
-              top: -18px;
-              left: 50%;
-              transform: translateX(-50%);
-              width: 1px;
-              height: 18px;
-              background: #94a3b8;
+            .pdf-tree-root > .pdf-tree-item::before {
+              display: none;
             }
 
             .print-note {
