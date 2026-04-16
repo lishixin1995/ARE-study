@@ -610,6 +610,28 @@ function SavedNotesModal({
   );
 }
 
+function escapeHtml(text = "") {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function formatAnalysisSectionForPdf(title, items = []) {
+  if (!items.length) return "";
+
+  return `
+    <section class="pdf-section">
+      <div class="pdf-section-title">${escapeHtml(title)}</div>
+      <ul class="pdf-list">
+        ${items.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
+      </ul>
+    </section>
+  `;
+}
+
 export default function App() {
   const [selectedDivision, setSelectedDivision] = useState("PPD");
   const [roomTree, setRoomTree] = useState({});
@@ -849,6 +871,14 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     return buildMindMapFromText(captureDraft);
   }, [captureAnalysisCleared, captureDraft]);
 
+  const hasCaptureAnalysisContent = useMemo(() => {
+    return Boolean(
+      activeCaptureAnalysis.summary ||
+        activeCaptureAnalysis.bulletPoints.length ||
+        activeCaptureAnalysis.logicLinks.length
+    );
+  }, [activeCaptureAnalysis]);
+
   const wrongQuestionAnalysis = useMemo(
     () => ({
       questionText: aiAnalysisResult?.questionText || buildWrongQuestionQuestionText(wrongQuestionDraftText),
@@ -862,6 +892,168 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     }),
     [wrongQuestionDraftText, aiAnalysisResult]
   );
+
+  function handleExportAnalysisPdf() {
+    if (!hasCaptureAnalysisContent) {
+      setCaptureStatus("Nothing to export yet.");
+      return;
+    }
+
+    const exportWindow = window.open("", "_blank", "width=980,height=760");
+
+    if (!exportWindow) {
+      setCaptureStatus("Popup blocked. Please allow popups and try again.");
+      return;
+    }
+
+    const exportTime = formatSavedAt(new Date().toISOString());
+    const metadata = [
+      `Division: ${selectedDivision}`,
+      `Room: ${selectedRoom?.name || "No Room"}`,
+      `Sub Room: ${selectedSubroom?.name || "Root Level"}`,
+      `Path: ${currentPathLabel}`,
+      `Exported: ${exportTime}`
+    ];
+
+    const html = `
+      <!doctype html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>ARE Study Analysis PDF</title>
+          <style>
+            @page {
+              size: A4;
+              margin: 16mm;
+            }
+
+            * {
+              box-sizing: border-box;
+            }
+
+            body {
+              margin: 0;
+              color: #111827;
+              font-family: Arial, Helvetica, sans-serif;
+              line-height: 1.55;
+              background: #ffffff;
+            }
+
+            .pdf-shell {
+              width: 100%;
+            }
+
+            .pdf-title {
+              font-size: 24px;
+              font-weight: 700;
+              margin-bottom: 8px;
+            }
+
+            .pdf-subtitle {
+              font-size: 12px;
+              color: #4b5563;
+              margin-bottom: 20px;
+            }
+
+            .pdf-meta {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 8px 16px;
+              padding: 12px 14px;
+              border: 1px solid #d1d5db;
+              border-radius: 10px;
+              margin-bottom: 18px;
+              font-size: 12px;
+            }
+
+            .pdf-section {
+              border: 1px solid #d1d5db;
+              border-radius: 12px;
+              padding: 14px 16px;
+              margin-bottom: 16px;
+              page-break-inside: avoid;
+            }
+
+            .pdf-section-title {
+              font-size: 15px;
+              font-weight: 700;
+              margin-bottom: 10px;
+            }
+
+            .pdf-paragraph {
+              white-space: pre-wrap;
+              word-break: break-word;
+              margin: 0;
+            }
+
+            .pdf-list {
+              margin: 0;
+              padding-left: 18px;
+            }
+
+            .pdf-list li {
+              margin: 0 0 6px;
+              white-space: pre-wrap;
+              word-break: break-word;
+            }
+
+            .empty-note {
+              color: #6b7280;
+              font-style: italic;
+            }
+
+            .print-note {
+              margin-top: 20px;
+              font-size: 11px;
+              color: #6b7280;
+            }
+
+            @media print {
+              .print-note {
+                display: none;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="pdf-shell">
+            <div class="pdf-title">ARE Study Analysis</div>
+            <div class="pdf-subtitle">Exported from Capture Notes Workspace</div>
+
+            <div class="pdf-meta">
+              ${metadata.map(item => `<div>${escapeHtml(item)}</div>`).join("")}
+            </div>
+
+            <section class="pdf-section">
+              <div class="pdf-section-title">Summary</div>
+              <p class="pdf-paragraph ${activeCaptureAnalysis.summary ? "" : "empty-note"}">
+                ${escapeHtml(activeCaptureAnalysis.summary || "No summary available.")}
+              </p>
+            </section>
+
+            ${formatAnalysisSectionForPdf("Bullet Points", activeCaptureAnalysis.bulletPoints)}
+            ${formatAnalysisSectionForPdf("Logic Links", activeCaptureAnalysis.logicLinks)}
+
+            <div class="print-note">When the print window opens, choose “Save as PDF”.</div>
+          </div>
+
+          <script>
+            window.onload = function () {
+              setTimeout(function () {
+                window.focus();
+                window.print();
+              }, 250);
+            };
+          <\/script>
+        </body>
+      </html>
+    `;
+
+    exportWindow.document.open();
+    exportWindow.document.write(html);
+    exportWindow.document.close();
+    setCaptureStatus("PDF export opened.");
+  }
 
   function handleAnalyzeCapture() {
     if (!normalizeWhitespace(captureDraft)) {
@@ -1414,9 +1606,14 @@ async function handleSaveWrongQuestion() {
                     {captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
                   </span>
                 </h3>
-                <button className="ask-ai-btn" onClick={handleCaptureRunAI} disabled={isCaptureAnalyzing}>
-                  {isCaptureAnalyzing ? "Thinking..." : "✨ Ask AI"}
-                </button>
+                <div className="button-row">
+                  <button onClick={handleExportAnalysisPdf} disabled={!hasCaptureAnalysisContent}>
+                    Export PDF
+                  </button>
+                  <button className="ask-ai-btn" onClick={handleCaptureRunAI} disabled={isCaptureAnalyzing}>
+                    {isCaptureAnalyzing ? "Thinking..." : "✨ Ask AI"}
+                  </button>
+                </div>
               </div>
 
               <div className="analysis-stack">
