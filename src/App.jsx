@@ -102,7 +102,6 @@ function splitEditorLines(text = "") {
       name,
       children: []
     }));
-  });
 
   return tree;
 }
