@@ -269,10 +269,6 @@ function buildMindMapFromText(text = "") {
     }
 
     if (["reduce", "gain", "control", "optimize", "uses", "stabilizes", "helps", "takes"].includes(lowerRelation)) {
-      const verbPrefix = new RegExp(`^${lowerRelation}\b`, "i");
-      if (verbPrefix.test(clean)) {
-        return [sentenceCase(clean)];
-      }
       return [sentenceCase(`${titleCase(lowerRelation)} ${clean}`)];
     }
 
@@ -614,6 +610,7 @@ function SavedNotesModal({
   );
 }
 
+
 function escapeHtml(text = "") {
   return String(text)
     .replace(/&/g, "&amp;")
@@ -623,68 +620,32 @@ function escapeHtml(text = "") {
     .replace(/'/g, "&#39;");
 }
 
-function formatAnalysisSectionForPdf(title, items = []) {
-  if (!items.length) return "";
-
-  return `
-    <section class="pdf-section">
-      <div class="pdf-section-title">${escapeHtml(title)}</div>
-      <ul class="pdf-list">
-        ${items.map(item => `<li>${escapeHtml(item)}</li>`).join("")}
-      </ul>
-    </section>
-  `;
-}
-
-
-function renderMindMapNodeForPdf(node, isRoot = false) {
+function renderMindMapHtml(node, isRoot = false) {
   if (!node) return "";
 
-  const children = Array.isArray(node.children) ? node.children : [];
-
-  return `
-    <div class="pdf-mindmap-node ${isRoot ? "is-root" : ""}">
-      <div class="pdf-mindmap-label ${isRoot ? "root" : ""}">${escapeHtml(node.label)}</div>
-      ${
-        children.length
-          ? `
-            <div class="pdf-mindmap-children">
-              ${children
-                .map(
-                  child => `
-                    <div class="pdf-mindmap-child-row">
-                      <div class="pdf-mindmap-connector">
-                        <span class="pdf-mindmap-connector-dot"></span>
-                      </div>
-                      ${renderMindMapNodeForPdf(child)}
-                    </div>
-                  `
-                )
-                .join("")}
-            </div>
-          `
-          : ""
-      }
-    </div>
-  `;
-}
-
-function formatMindMapSectionForPdf(mindMap) {
-  return `
-    <section class="pdf-section pdf-page-break">
-      <div class="pdf-section-title">Logic Image</div>
-      ${
-        mindMap
-          ? `
-            <div class="pdf-mindmap-shell">
-              <div class="pdf-mindmap-board">
-                ${renderMindMapNodeForPdf(mindMap, true)}
+  const label = escapeHtml(node.label || "");
+  const childrenHtml = Array.isArray(node.children) && node.children.length
+    ? `
+      <div class="mindmap-children">
+        ${node.children
+          .map(
+            child => `
+              <div class="mindmap-child-row">
+                <div class="mindmap-connector"><span class="mindmap-connector-dot"></span></div>
+                ${renderMindMapHtml(child, false)}
               </div>
-            </div>
-          `
-          : `<p class="pdf-empty">No logic image available.</p>`
-      }
-    </section>
+            `
+          )
+          .join("")}
+      </div>
+    `
+    : "";
+
+  return `
+    <div class="mindmap-node ${isRoot ? "is-root" : ""}">
+      <div class="mindmap-label ${isRoot ? "root" : ""}">${label}</div>
+      ${childrenHtml}
+    </div>
   `;
 }
 
@@ -927,13 +888,269 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     return buildMindMapFromText(captureDraft);
   }, [captureAnalysisCleared, captureDraft]);
 
-  const hasCaptureAnalysisContent = useMemo(() => {
-    return Boolean(
-      activeCaptureAnalysis.summary ||
-        activeCaptureAnalysis.bulletPoints.length ||
-        activeCaptureAnalysis.logicLinks.length
-    );
-  }, [activeCaptureAnalysis]);
+  function handleExportAnalysisPdf() {
+    const hasAnalysis =
+      normalizeWhitespace(activeCaptureAnalysis.summary) ||
+      activeCaptureAnalysis.bulletPoints.length ||
+      activeCaptureAnalysis.logicLinks.length ||
+      currentMindMap;
+
+    if (!hasAnalysis) {
+      setCaptureStatus("Nothing to export yet.");
+      return;
+    }
+
+    const printWindow = window.open("", "_blank", "width=900,height=1200");
+    if (!printWindow) {
+      setCaptureStatus("Please allow pop-ups to export PDF.");
+      return;
+    }
+
+    const exportTime = formatSavedAt(new Date().toISOString());
+    const summaryHtml = activeCaptureAnalysis.summary
+      ? `<div class="section-box"><div class="section-title">Summary</div><div class="text-block">${escapeHtml(
+          activeCaptureAnalysis.summary
+        )}</div></div>`
+      : "";
+
+    const bulletHtml = activeCaptureAnalysis.bulletPoints.length
+      ? `<div class="section-box"><div class="section-title">Bullet Points</div><ul>${activeCaptureAnalysis.bulletPoints
+          .map(item => `<li>${escapeHtml(item)}</li>`)
+          .join("")}</ul></div>`
+      : "";
+
+    const logicLinksHtml = activeCaptureAnalysis.logicLinks.length
+      ? `<div class="section-box"><div class="section-title">Logic Links</div><ul>${activeCaptureAnalysis.logicLinks
+          .map(item => `<li>${escapeHtml(item)}</li>`)
+          .join("")}</ul></div>`
+      : "";
+
+    const mindMapHtml = currentMindMap
+      ? `
+        <div class="section-box">
+          <div class="section-title">Logic Image</div>
+          <div class="mindmap-shell print-mindmap-shell">
+            <div class="mindmap-board print-mindmap-board">
+              ${renderMindMapHtml(currentMindMap, true)}
+            </div>
+          </div>
+        </div>
+      `
+      : "";
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>ARE Study Analysis PDF</title>
+          <style>
+            :root {
+              --line: #d8dee9;
+              --subtle: #5b6476;
+              --text: #172033;
+              --bg: #ffffff;
+              --pill-bg: #f7f9fc;
+              --pill-border: #cdd6e3;
+              --accent: #2f6fed;
+            }
+
+            * {
+              box-sizing: border-box;
+            }
+
+            html, body {
+              margin: 0;
+              padding: 0;
+              background: var(--bg);
+              color: var(--text);
+              font-family: Arial, sans-serif;
+              font-size: 12px;
+              line-height: 1.45;
+            }
+
+            @page {
+              size: A4;
+              margin: 16mm;
+            }
+
+            body {
+              padding: 0;
+            }
+
+            .page-header {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              font-size: 11px;
+              margin-bottom: 14px;
+              color: #333;
+            }
+
+            .page-title {
+              font-size: 32px;
+              margin: 0 0 6px;
+            }
+
+            .page-subtitle {
+              color: var(--subtle);
+              margin-bottom: 14px;
+            }
+
+            .meta-box,
+            .section-box {
+              border: 1px solid var(--line);
+              border-radius: 10px;
+              padding: 12px 14px;
+              margin-bottom: 14px;
+              break-inside: avoid;
+            }
+
+            .meta-grid {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 6px 20px;
+            }
+
+            .section-title {
+              font-weight: 700;
+              margin-bottom: 8px;
+              font-size: 14px;
+            }
+
+            .text-block {
+              white-space: pre-wrap;
+            }
+
+            ul {
+              margin: 0;
+              padding-left: 20px;
+            }
+
+            li {
+              margin: 4px 0;
+            }
+
+            .print-mindmap-shell {
+              min-height: auto;
+              overflow: visible;
+              padding: 6px;
+            }
+
+            .print-mindmap-board {
+              min-height: auto;
+              padding: 8px;
+              border: 1px solid var(--line);
+              border-radius: 8px;
+              background: #fff;
+              overflow: visible;
+            }
+
+            .mindmap-node {
+              display: flex;
+              flex-direction: column;
+              align-items: flex-start;
+              gap: 8px;
+            }
+
+            .mindmap-node.is-root {
+              align-items: center;
+            }
+
+            .mindmap-label {
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+              padding: 5px 12px;
+              border: 1px solid var(--pill-border);
+              background: var(--pill-bg);
+              border-radius: 999px;
+              min-height: 28px;
+              font-size: 12px;
+              color: var(--text);
+              text-align: center;
+              max-width: 320px;
+              word-break: break-word;
+            }
+
+            .mindmap-label.root {
+              border-color: #b5c7ea;
+              background: #eef4ff;
+              font-weight: 600;
+            }
+
+            .mindmap-children {
+              display: flex;
+              flex-direction: column;
+              gap: 8px;
+              margin-top: 2px;
+              width: 100%;
+            }
+
+            .mindmap-child-row {
+              display: flex;
+              align-items: flex-start;
+              gap: 10px;
+            }
+
+            .mindmap-connector {
+              width: 18px;
+              min-width: 18px;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              padding-top: 11px;
+            }
+
+            .mindmap-connector-dot {
+              width: 6px;
+              height: 6px;
+              border-radius: 999px;
+              background: #9bb2d9;
+            }
+
+            @media print {
+              .page-break {
+                break-before: page;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="page-header">
+            <div>${escapeHtml(new Date().toLocaleString())}</div>
+            <div>ARE Study Analysis PDF</div>
+            <div></div>
+          </div>
+
+          <h1 class="page-title">ARE Study Analysis</h1>
+          <div class="page-subtitle">Exported from Capture Notes Workspace</div>
+
+          <div class="meta-box">
+            <div class="meta-grid">
+              <div><strong>Division:</strong> ${escapeHtml(selectedDivision)}</div>
+              <div><strong>Room:</strong> ${escapeHtml(selectedRoom?.name || "—")}</div>
+              <div><strong>Sub Room:</strong> ${escapeHtml(selectedSubroom?.name || "Root Level")}</div>
+              <div><strong>Path:</strong> ${escapeHtml(currentPathLabel)}</div>
+              <div><strong>Exported:</strong> ${escapeHtml(exportTime)}</div>
+            </div>
+          </div>
+
+          ${summaryHtml}
+          ${bulletHtml}
+          ${logicLinksHtml}
+
+          ${mindMapHtml ? `<div class="page-break"></div>${mindMapHtml}` : ""}
+        </body>
+      </html>
+    `);
+
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => {
+      printWindow.print();
+    }, 250);
+  }
 
   const wrongQuestionAnalysis = useMemo(
     () => ({
@@ -948,247 +1165,6 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     }),
     [wrongQuestionDraftText, aiAnalysisResult]
   );
-
-  function handleExportAnalysisPdf() {
-    if (!hasCaptureAnalysisContent) {
-      setCaptureStatus("Nothing to export yet.");
-      return;
-    }
-
-    const exportWindow = window.open("", "_blank", "width=980,height=760");
-
-    if (!exportWindow) {
-      setCaptureStatus("Popup blocked. Please allow popups and try again.");
-      return;
-    }
-
-    const exportTime = formatSavedAt(new Date().toISOString());
-    const metadata = [
-      `Division: ${selectedDivision}`,
-      `Room: ${selectedRoom?.name || "No Room"}`,
-      `Sub Room: ${selectedSubroom?.name || "Root Level"}`,
-      `Path: ${currentPathLabel}`,
-      `Exported: ${exportTime}`
-    ];
-
-    const html = `
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <title>ARE Study Analysis PDF</title>
-          <style>
-            @page {
-              size: A4;
-              margin: 16mm;
-            }
-
-            * {
-              box-sizing: border-box;
-            }
-
-            body {
-              margin: 0;
-              color: #111827;
-              font-family: Arial, Helvetica, sans-serif;
-              line-height: 1.55;
-              background: #ffffff;
-            }
-
-            .pdf-shell {
-              width: 100%;
-            }
-
-            .pdf-title {
-              font-size: 24px;
-              font-weight: 700;
-              margin-bottom: 8px;
-            }
-
-            .pdf-subtitle {
-              font-size: 12px;
-              color: #4b5563;
-              margin-bottom: 20px;
-            }
-
-            .pdf-meta {
-              display: grid;
-              grid-template-columns: 1fr 1fr;
-              gap: 8px 16px;
-              padding: 12px 14px;
-              border: 1px solid #d1d5db;
-              border-radius: 10px;
-              margin-bottom: 18px;
-              font-size: 12px;
-            }
-
-            .pdf-section {
-              border: 1px solid #d1d5db;
-              border-radius: 12px;
-              padding: 14px 16px;
-              margin-bottom: 16px;
-              page-break-inside: avoid;
-            }
-
-            .pdf-section-title {
-              font-size: 15px;
-              font-weight: 700;
-              margin-bottom: 10px;
-            }
-
-            .pdf-paragraph {
-              white-space: pre-wrap;
-              word-break: break-word;
-              margin: 0;
-            }
-
-            .pdf-list {
-              margin: 0;
-              padding-left: 18px;
-            }
-
-            .pdf-list li {
-              margin: 0 0 6px;
-              white-space: pre-wrap;
-              word-break: break-word;
-            }
-
-            .empty-note {
-              color: #6b7280;
-              font-style: italic;
-            }
-
-            .pdf-mindmap-shell {
-              margin-top: 8px;
-              border: 1px solid #d7dee8;
-              border-radius: 12px;
-              background: #f8fafc;
-              padding: 16px;
-              page-break-inside: avoid;
-            }
-
-            .pdf-mindmap-board {
-              min-height: 220px;
-            }
-
-            .pdf-mindmap-node {
-              display: flex;
-              flex-direction: column;
-              align-items: flex-start;
-              gap: 10px;
-            }
-
-            .pdf-mindmap-node.is-root {
-              align-items: center;
-            }
-
-            .pdf-mindmap-label {
-              display: inline-flex;
-              align-items: center;
-              justify-content: center;
-              min-height: 32px;
-              padding: 6px 14px;
-              border-radius: 999px;
-              border: 1px solid #c7d2fe;
-              background: #ffffff;
-              color: #0f172a;
-              font-size: 13px;
-              font-weight: 600;
-              line-height: 1.35;
-              text-align: center;
-              max-width: 100%;
-              word-break: break-word;
-              box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-            }
-
-            .pdf-mindmap-label.root {
-              background: #eff6ff;
-              border-color: #93c5fd;
-            }
-
-            .pdf-mindmap-children {
-              display: flex;
-              flex-direction: column;
-              gap: 10px;
-              width: 100%;
-              padding-left: 24px;
-            }
-
-            .pdf-mindmap-child-row {
-              display: flex;
-              align-items: flex-start;
-              gap: 10px;
-            }
-
-            .pdf-mindmap-connector {
-              width: 12px;
-              min-width: 12px;
-              display: flex;
-              justify-content: center;
-              padding-top: 11px;
-            }
-
-            .pdf-mindmap-connector-dot {
-              width: 6px;
-              height: 6px;
-              border-radius: 50%;
-              background: #93c5fd;
-              display: inline-block;
-            }
-
-            .print-note {
-              margin-top: 20px;
-              font-size: 11px;
-              color: #6b7280;
-            }
-
-            @media print {
-              .print-note {
-                display: none;
-              }
-            }
-          </style>
-        </head>
-        <body>
-          <div class="pdf-shell">
-            <div class="pdf-title">ARE Study Analysis</div>
-            <div class="pdf-subtitle">Exported from Capture Notes Workspace</div>
-
-            <div class="pdf-meta">
-              ${metadata.map(item => `<div>${escapeHtml(item)}</div>`).join("")}
-            </div>
-
-            <section class="pdf-section">
-              <div class="pdf-section-title">Summary</div>
-              <p class="pdf-paragraph ${activeCaptureAnalysis.summary ? "" : "empty-note"}">
-                ${escapeHtml(activeCaptureAnalysis.summary || "No summary available.")}
-              </p>
-            </section>
-
-            ${formatAnalysisSectionForPdf("Bullet Points", activeCaptureAnalysis.bulletPoints)}
-            ${formatAnalysisSectionForPdf("Logic Links", activeCaptureAnalysis.logicLinks)}
-            ${formatMindMapSectionForPdf(currentMindMap)}
-
-            <div class="print-note">When the print window opens, choose “Save as PDF”.</div>
-          </div>
-
-          <script>
-            window.onload = function () {
-              setTimeout(function () {
-                window.focus();
-                window.print();
-              }, 250);
-            };
-          <\/script>
-        </body>
-      </html>
-    `;
-
-    exportWindow.document.open();
-    exportWindow.document.write(html);
-    exportWindow.document.close();
-    setCaptureStatus("PDF export opened.");
-  }
 
   function handleAnalyzeCapture() {
     if (!normalizeWhitespace(captureDraft)) {
@@ -1742,7 +1718,16 @@ async function handleSaveWrongQuestion() {
                   </span>
                 </h3>
                 <div className="button-row">
-                  <button onClick={handleExportAnalysisPdf} disabled={!hasCaptureAnalysisContent}>
+                  <button
+                    className="ask-ai-btn"
+                    onClick={handleExportAnalysisPdf}
+                    disabled={
+                      !activeCaptureAnalysis.summary &&
+                      !activeCaptureAnalysis.bulletPoints.length &&
+                      !activeCaptureAnalysis.logicLinks.length &&
+                      !currentMindMap
+                    }
+                  >
                     Export PDF
                   </button>
                   <button className="ask-ai-btn" onClick={handleCaptureRunAI} disabled={isCaptureAnalyzing}>
