@@ -114,7 +114,6 @@ function readSavedCaptureNotes() {
   } catch {
     return [];
   }
-}
 
 function readWrongQuestionFlashcards() {
   try {
@@ -123,7 +122,6 @@ function readWrongQuestionFlashcards() {
   } catch {
     return [];
   }
-}
 
 function formatSavedAt(dateString) {
   if (!dateString) return "";
