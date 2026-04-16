@@ -637,20 +637,35 @@ function formatAnalysisSectionForPdf(title, items = []) {
 }
 
 
-function renderMindMapNodeForPdf(node) {
+function renderMindMapNodeForPdf(node, isRoot = false) {
   if (!node) return "";
 
   const children = Array.isArray(node.children) ? node.children : [];
 
   return `
-    <li class="pdf-tree-item">
-      <div class="pdf-tree-label ${children.length ? "has-children" : "is-leaf"}">${escapeHtml(node.label)}</div>
+    <div class="pdf-mindmap-node ${isRoot ? "is-root" : ""}">
+      <div class="pdf-mindmap-label ${isRoot ? "root" : ""}">${escapeHtml(node.label)}</div>
       ${
         children.length
-          ? `<ul class="pdf-tree-children">${children.map(child => renderMindMapNodeForPdf(child)).join("")}</ul>`
+          ? `
+            <div class="pdf-mindmap-children">
+              ${children
+                .map(
+                  child => `
+                    <div class="pdf-mindmap-child-row">
+                      <div class="pdf-mindmap-connector">
+                        <span class="pdf-mindmap-connector-dot"></span>
+                      </div>
+                      ${renderMindMapNodeForPdf(child)}
+                    </div>
+                  `
+                )
+                .join("")}
+            </div>
+          `
           : ""
       }
-    </li>
+    </div>
   `;
 }
 
@@ -661,10 +676,10 @@ function formatMindMapSectionForPdf(mindMap) {
       ${
         mindMap
           ? `
-            <div class="pdf-tree-shell">
-              <ul class="pdf-tree-root">
-                ${renderMindMapNodeForPdf(mindMap)}
-              </ul>
+            <div class="pdf-mindmap-shell">
+              <div class="pdf-mindmap-board">
+                ${renderMindMapNodeForPdf(mindMap, true)}
+              </div>
             </div>
           `
           : `<p class="pdf-empty">No logic image available.</p>`
@@ -1041,74 +1056,84 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
             .empty-note {
               color: #6b7280;
               font-style: italic;
-            }            .pdf-tree-shell {
+            }
+
+            .pdf-mindmap-shell {
               margin-top: 8px;
               border: 1px solid #d7dee8;
               border-radius: 12px;
-              padding: 18px 18px 18px 10px;
               background: #f8fafc;
+              padding: 16px;
+              page-break-inside: avoid;
             }
 
-            .pdf-tree-root,
-            .pdf-tree-children {
-              list-style: none;
-              margin: 0;
-              padding-left: 24px;
-              position: relative;
+            .pdf-mindmap-board {
+              min-height: 220px;
             }
 
-            .pdf-tree-root {
-              padding-left: 8px;
+            .pdf-mindmap-node {
+              display: flex;
+              flex-direction: column;
+              align-items: flex-start;
+              gap: 10px;
             }
 
-            .pdf-tree-item {
-              position: relative;
-              margin: 10px 0;
+            .pdf-mindmap-node.is-root {
+              align-items: center;
             }
 
-            .pdf-tree-label {
-              display: inline-block;
-              padding: 6px 12px;
-              border: 1px solid #cbd5e1;
+            .pdf-mindmap-label {
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+              min-height: 32px;
+              padding: 6px 14px;
               border-radius: 999px;
+              border: 1px solid #c7d2fe;
               background: #ffffff;
               color: #0f172a;
               font-size: 13px;
               font-weight: 600;
               line-height: 1.35;
+              text-align: center;
+              max-width: 100%;
+              word-break: break-word;
+              box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
             }
 
-            .pdf-tree-label.has-children {
+            .pdf-mindmap-label.root {
               background: #eff6ff;
-              border-color: #bfdbfe;
+              border-color: #93c5fd;
             }
 
-            .pdf-tree-label.is-leaf {
-              background: #ffffff;
+            .pdf-mindmap-children {
+              display: flex;
+              flex-direction: column;
+              gap: 10px;
+              width: 100%;
+              padding-left: 24px;
             }
 
-            .pdf-tree-children::before {
-              content: "";
-              position: absolute;
-              top: 0;
-              bottom: 0;
-              left: 9px;
-              width: 1px;
-              background: #cbd5e1;
+            .pdf-mindmap-child-row {
+              display: flex;
+              align-items: flex-start;
+              gap: 10px;
             }
 
-            .pdf-tree-children > .pdf-tree-item::before {
-              content: "";
-              position: absolute;
-              top: 18px;
-              left: -15px;
-              width: 15px;
-              height: 1px;
-              background: #cbd5e1;
+            .pdf-mindmap-connector {
+              width: 12px;
+              min-width: 12px;
+              display: flex;
+              justify-content: center;
+              padding-top: 11px;
             }
 
-            .pdf-tree-root > .pdf-tree-item::before {
-              display: none;
+            .pdf-mindmap-connector-dot {
+              width: 6px;
+              height: 6px;
+              border-radius: 50%;
+              background: #93c5fd;
+              display: inline-block;
             }
 
             .print-note {
