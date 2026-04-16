@@ -96,9 +96,6 @@ function splitEditorLines(text = "") {
     .filter(Boolean);
 }
 
-function buildDefaultRoomTree() {
-  const tree = {};
-
   DIVISIONS.forEach(division => {
     tree[division] = (DEFAULT_ROOM_NAMES[division] || []).map(name => ({
       id: `${division}-${slugify(name)}`,
@@ -108,26 +105,6 @@ function buildDefaultRoomTree() {
   });
 
   return tree;
-}
-
-function readRoomTree() {
-  try {
-    const raw = localStorage.getItem("roomTreeByDivision");
-    if (!raw) return buildDefaultRoomTree();
-
-    const parsed = JSON.parse(raw);
-    const fallback = buildDefaultRoomTree();
-
-    DIVISIONS.forEach(division => {
-      if (!Array.isArray(parsed[division])) {
-        parsed[division] = fallback[division];
-      }
-    });
-
-    return parsed;
-  } catch {
-    return buildDefaultRoomTree();
-  }
 }
 
 function readSavedCaptureNotes() {
@@ -646,7 +623,7 @@ function SavedNotesModal({
 
 export default function App() {
   const [selectedDivision, setSelectedDivision] = useState("PPD");
-  const [roomTree, setRoomTree] = useState(() => readRoomTree());
+  const [roomTree, setRoomTree] = useState({});
   const [selectedRoomId, setSelectedRoomId] = useState("");
   const [selectedSubroomId, setSelectedSubroomId] = useState("");
 
@@ -689,10 +666,9 @@ export default function App() {
   );
 
   useEffect(() => {
-    localStorage.setItem("roomTreeByDivision", JSON.stringify(roomTree));
-  }, [roomTree]);
-
-
+  fetchRoomsFromCloud(selectedDivision);
+}, [selectedDivision]);
+  
   useEffect(() => {
     if (!divisionRooms.length) {
       setSelectedRoomId("");
@@ -727,6 +703,64 @@ export default function App() {
 
   const currentFlashcard = wrongQuestionFlashcards[flashcardIndex] || null;
 
+  async function fetchRoomsFromCloud(division) {
+  if (!division) return;
+
+  try {
+    const response = await fetch(`/api/rooms?division=${encodeURIComponent(division)}`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error(data.error || "Failed to load rooms.");
+      return;
+    }
+
+    setRoomTree(prev => ({
+      ...prev,
+      [division]: Array.isArray(data.rooms) ? data.rooms : []
+    }));
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function createRoomInCloud({ id, division, parentId = null, name, roomType, sortOrder = 0 }) {
+  const response = await fetch("/api/rooms", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      id,
+      division,
+      parentId,
+      name,
+      roomType,
+      sortOrder
+    })
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Failed to create room.");
+  }
+
+  return data;
+}
+
+async function deleteRoomFromCloud(id) {
+  const response = await fetch(`/api/rooms?id=${encodeURIComponent(id)}`, {
+    method: "DELETE"
+  });
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(data.error || "Failed to delete room.");
+  }
+
+  return data;
+}
+  
   async function fetchSavedNotesFromCloud(division, roomId, subroomId = "") {
   if (!division || !roomId) {
     setSavedCaptureNotes([]);
@@ -948,15 +982,25 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     }
   }
 
-  function handleAddRoom() {
-    const name = window.prompt(`New room name for ${selectedDivision}:`);
-    if (!name || !name.trim()) return;
+async function handleAddRoom() {
+  const name = window.prompt(`New room name for ${selectedDivision}:`);
+  if (!name || !name.trim()) return;
 
-    const newRoom = {
-      id: createId("room"),
-      name: name.trim(),
-      children: []
-    };
+  const newRoom = {
+    id: createId("room"),
+    name: name.trim(),
+    children: []
+  };
+
+  try {
+    await createRoomInCloud({
+      id: newRoom.id,
+      division: selectedDivision,
+      parentId: null,
+      name: newRoom.name,
+      roomType: "room",
+      sortOrder: divisionRooms.length
+    });
 
     setRoomTree(prev => ({
       ...prev,
@@ -965,16 +1009,35 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
 
     setSelectedRoomId(newRoom.id);
     setSelectedSubroomId("");
+  } catch (error) {
+    console.error(error);
+    window.alert("Failed to create room.");
+  }
+}
+
+async function handleAddSubroom() {
+  if (!selectedRoomId) {
+    window.alert("Please select a room first.");
+    return;
   }
 
-  function handleAddSubroom() {
-    if (!selectedRoomId) {
-      window.alert("Please select a room first.");
-      return;
-    }
+  const name = window.prompt(`New sub-room name under "${selectedRoom?.name || "room"}":`);
+  if (!name || !name.trim()) return;
 
-    const name = window.prompt(`New sub-room name under "${selectedRoom?.name || "room"}":`);
-    if (!name || !name.trim()) return;
+  const newSubroom = {
+    id: createId("subroom"),
+    name: name.trim()
+  };
+
+  try {
+    await createRoomInCloud({
+      id: newSubroom.id,
+      division: selectedDivision,
+      parentId: selectedRoomId,
+      name: newSubroom.name,
+      roomType: "subroom",
+      sortOrder: (selectedRoom?.children || []).length
+    });
 
     setRoomTree(prev => ({
       ...prev,
@@ -982,21 +1045,22 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
         if (room.id !== selectedRoomId) return room;
         return {
           ...room,
-          children: [
-            ...(room.children || []),
-            {
-              id: createId("subroom"),
-              name: name.trim()
-            }
-          ]
+          children: [...(room.children || []), newSubroom]
         };
       })
     }));
+  } catch (error) {
+    console.error(error);
+    window.alert("Failed to create sub-room.");
   }
+}
 
-  function handleDeleteSelectedRoomOrSubroom() {
-    if (selectedSubroomId) {
-      if (!window.confirm(`Delete sub-room "${selectedSubroom?.name || ""}"?`)) return;
+async function handleDeleteSelectedRoomOrSubroom() {
+  if (selectedSubroomId) {
+    if (!window.confirm(`Delete sub-room "${selectedSubroom?.name || ""}"?`)) return;
+
+    try {
+      await deleteRoomFromCloud(selectedSubroomId);
 
       setRoomTree(prev => ({
         ...prev,
@@ -1010,11 +1074,19 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       }));
 
       setSelectedSubroomId("");
-      return;
+    } catch (error) {
+      console.error(error);
+      window.alert("Failed to delete sub-room.");
     }
 
-    if (!selectedRoomId || !selectedRoom) return;
-    if (!window.confirm(`Delete room "${selectedRoom.name}" and all its sub-rooms?`)) return;
+    return;
+  }
+
+  if (!selectedRoomId || !selectedRoom) return;
+  if (!window.confirm(`Delete room "${selectedRoom.name}" and all its sub-rooms?`)) return;
+
+  try {
+    await deleteRoomFromCloud(selectedRoomId);
 
     setRoomTree(prev => ({
       ...prev,
@@ -1023,7 +1095,11 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
 
     setSelectedRoomId("");
     setSelectedSubroomId("");
+  } catch (error) {
+    console.error(error);
+    window.alert("Failed to delete room.");
   }
+}
 
   function handleAnalyzeWrongQuestion() {
     if (!wrongQuestionDraftText.trim()) {
