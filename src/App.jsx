@@ -96,17 +96,6 @@ function splitEditorLines(text = "") {
     .filter(Boolean);
 }
 
-  DIVISIONS.forEach(division => {
-    tree[division] = (DEFAULT_ROOM_NAMES[division] || []).map(name => ({
-      id: `${division}-${slugify(name)}`,
-      name,
-      children: []
-    }));
-
-  return tree;
-}
-
-function readSavedCaptureNotes() {
   try {
     const raw = localStorage.getItem("savedCaptureNotes");
     return raw ? JSON.parse(raw) : [];
