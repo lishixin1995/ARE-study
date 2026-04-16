@@ -28,6 +28,18 @@ if (!globalForDb.__studyVaultPool) {
 
 export async function ensureTables() {
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS study_rooms (
+      id TEXT PRIMARY KEY,
+      division TEXT NOT NULL,
+      parent_id TEXT,
+      room_name TEXT NOT NULL,
+      room_type TEXT NOT NULL CHECK (room_type IN ('room', 'subroom')),
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS study_notes (
       id TEXT PRIMARY KEY,
       division TEXT NOT NULL,
