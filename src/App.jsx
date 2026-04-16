@@ -96,12 +96,14 @@ function splitEditorLines(text = "") {
     .filter(Boolean);
 }
 
+function readSavedCaptureNotes() {
   try {
     const raw = localStorage.getItem("savedCaptureNotes");
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
   }
+}
 
 function readWrongQuestionFlashcards() {
   try {
@@ -110,6 +112,7 @@ function readWrongQuestionFlashcards() {
   } catch {
     return [];
   }
+}
 
 function formatSavedAt(dateString) {
   if (!dateString) return "";
