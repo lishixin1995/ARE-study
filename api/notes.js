@@ -16,10 +16,30 @@ export default async function handler(request, response) {
     await ensureTables();
 
     if (request.method === "GET") {
-      const { division, roomId, subroomId = "" } = request.query || {};
+      const {
+        division,
+        roomId = "",
+        subroomId = ""
+      } = request.query || {};
 
-      if (!division || !roomId) {
-        return response.status(400).json({ error: "Missing division or roomId." });
+      if (!division) {
+        return response.status(400).json({ error: "Missing division." });
+      }
+
+      const hasRoomFilter = String(roomId).trim() !== "";
+      const hasSubroomFilter = String(subroomId).trim() !== "";
+
+      const params = [division];
+      let whereSql = `WHERE division = $1`;
+
+      if (hasRoomFilter) {
+        params.push(roomId);
+        whereSql += ` AND room_id = $${params.length}`;
+      }
+
+      if (hasSubroomFilter) {
+        params.push(subroomId);
+        whereSql += ` AND COALESCE(subroom_id, '') = $${params.length}`;
       }
 
       const result = await pool.query(
@@ -34,12 +54,10 @@ export default async function handler(request, response) {
           note_text AS "text",
           saved_at AS "savedAt"
         FROM study_notes
-        WHERE division = $1
-          AND room_id = $2
-          AND COALESCE(subroom_id, '') = $3
+        ${whereSql}
         ORDER BY saved_at DESC
         `,
-        [division, roomId, subroomId]
+        params
       );
 
       return response.status(200).json({ notes: result.rows });
@@ -92,6 +110,32 @@ export default async function handler(request, response) {
       );
 
       return response.status(200).json({ note: result.rows[0] });
+    }
+
+    if (request.method === "DELETE") {
+      const id =
+        request.query?.id ||
+        readJsonBody(request)?.id ||
+        "";
+
+      if (!String(id).trim()) {
+        return response.status(400).json({ error: "Missing note id." });
+      }
+
+      const result = await pool.query(
+        `
+        DELETE FROM study_notes
+        WHERE id = $1
+        RETURNING id
+        `,
+        [id]
+      );
+
+      if (!result.rowCount) {
+        return response.status(404).json({ error: "Note not found." });
+      }
+
+      return response.status(200).json({ success: true, id });
     }
 
     return response.status(405).json({ error: "Method not allowed" });
