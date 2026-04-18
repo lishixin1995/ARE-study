@@ -693,3 +693,99 @@ ul {
     min-width: 680px;
   }
 }
+/* Append these rules to the bottom of your existing App.css */
+
+.notes-list {
+  display: grid;
+  gap: 12px;
+}
+
+.note-list-item.interactive-card {
+  width: 100%;
+  text-align: left;
+  border: 1px solid #d9e1ef;
+  border-radius: 16px;
+  background: #ffffff;
+  padding: 14px;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.note-list-item.interactive-card:hover {
+  transform: translateY(-1px);
+  border-color: #bfcbe4;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+}
+
+.note-list-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.note-list-time {
+  font-size: 12px;
+  font-weight: 600;
+  color: #44506a;
+}
+
+.note-list-path {
+  font-size: 12px;
+  color: #6b7280;
+  margin-bottom: 8px;
+}
+
+.note-list-preview {
+  font-size: 13px;
+  color: #1f2937;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.note-list-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.note-list-load-btn {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #1f2937;
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.note-list-load-btn:hover {
+  border-color: #94a3b8;
+}
+
+.preview-browser-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.preview-browser-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0 0 4px;
+}
+
+.preview-pill-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.flashcard-list-stack {
+  display: grid;
+  gap: 14px;
+}
