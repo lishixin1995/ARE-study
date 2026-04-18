@@ -704,6 +704,147 @@ function formatNotesCollectionForPdf(title, notes = []) {
   `;
 }
 
+
+function parseFlashcardPath(card = {}) {
+  const topicPath = String(card.topicPath || "").trim();
+  const parts = topicPath
+    .split('/')
+    .map(item => item.trim())
+    .filter(Boolean);
+
+  return {
+    division: card.division || parts[0] || "",
+    roomName: card.roomName || parts[1] || "",
+    subroomName: card.subroomName || parts[2] || ""
+  };
+}
+
+function flashcardMatchesRoom(card = {}, room = null) {
+  if (!room) return false;
+  const parsed = parseFlashcardPath(card);
+  const cardRoomId = card.roomId || "";
+  const cardRoomName = normalizeWhitespace(card.roomName || parsed.roomName).toLowerCase();
+  const targetRoomName = normalizeWhitespace(room.name || "").toLowerCase();
+  return cardRoomId === room.id || (!!cardRoomName && cardRoomName === targetRoomName);
+}
+
+function flashcardMatchesSubroom(card = {}, room = null, subroom = null) {
+  if (!room || !subroom) return false;
+  const parsed = parseFlashcardPath(card);
+  const cardSubroomId = card.subroomId || "";
+  const cardSubroomName = normalizeWhitespace(card.subroomName || parsed.subroomName).toLowerCase();
+  const targetSubroomName = normalizeWhitespace(subroom.name || "").toLowerCase();
+
+  if (cardSubroomId === subroom.id) return true;
+  if (!!cardSubroomName && cardSubroomName === targetSubroomName) return true;
+
+  if (!cardSubroomId && !cardSubroomName) {
+    return flashcardMatchesRoom(card, room);
+  }
+
+  return false;
+}
+
+function buildWrongQuestionSourceText({ imagePreview = "", ocrText = "", questionText = "", notesText = "" } = {}) {
+  const sections = [];
+
+  if (imagePreview) sections.push('Image attached.');
+  if (normalizeWhitespace(ocrText)) sections.push(`OCR Text:\n${String(ocrText).trim()}`);
+  if (normalizeWhitespace(questionText)) sections.push(`Wrong Question Text:\n${String(questionText).trim()}`);
+  if (normalizeWhitespace(notesText)) sections.push(`Wrong Question Notes:\n${String(notesText).trim()}`);
+
+  return sections.join('\n\n');
+}
+
+function normalizeWrongQuestionAnalysis(input) {
+  if (!input || typeof input !== 'object') {
+    return {
+      questionText: '',
+      summary: '',
+      correctAnswer: [],
+      answerExtraction: [],
+      bulletPoints: [],
+      trapPoint: [],
+      memoryHook: ''
+    };
+  }
+
+  const toArray = value => {
+    if (Array.isArray(value)) return value.map(item => sentenceCase(String(item || ''))).filter(Boolean);
+    if (typeof value === 'string') return splitEditorLines(value).map(sentenceCase);
+    return [];
+  };
+
+  return {
+    questionText: String(input.questionText || '').trim(),
+    summary: String(input.summary || '').trim(),
+    correctAnswer: toArray(input.correctAnswer),
+    answerExtraction: toArray(input.answerExtraction),
+    bulletPoints: toArray(input.bulletPoints),
+    trapPoint: toArray(input.trapPoint),
+    memoryHook: String(input.memoryHook || '').trim()
+  };
+}
+
+function buildLocalWrongQuestionAnalysis(text = '') {
+  const clean = String(text || '').trim();
+  const lines = splitEditorLines(clean);
+  const lower = clean.toLowerCase();
+
+  const findSection = labels => {
+    for (const line of lines) {
+      const lowered = line.toLowerCase();
+      for (const label of labels) {
+        const token = `${label.toLowerCase()}:`;
+        if (lowered.startsWith(token)) {
+          return line.slice(token.length).trim();
+        }
+      }
+    }
+    return '';
+  };
+
+  const questionText = findSection(['question', 'wrong question']) || sentenceCase(lines[0] || clean.slice(0, 180));
+  const explicitSummary = findSection(['summary', 'concept']);
+  const summary = explicitSummary || sentenceCase(lines.slice(0, 2).join(' ').slice(0, 280));
+
+  const explicitCorrect = findSection(['correct answer', 'answer']);
+  const correctAnswer = explicitCorrect
+    ? parseListItems(explicitCorrect)
+    : lower.includes('not')
+      ? ['Check the exception and confirm what is actually required.']
+      : ['Use the code-based answer, not the distractor.'];
+
+  const explicitExtraction = findSection(['answer extraction', 'extraction']);
+  const answerExtraction = explicitExtraction
+    ? parseListItems(explicitExtraction)
+    : questionText
+      ? [sentenceCase(questionText)]
+      : [];
+
+  const bulletPoints = lines.length
+    ? uniqueByLabel(lines.slice(0, 6).map(item => ({ label: sentenceCase(item) }))).map(item => item.label)
+    : [];
+
+  const explicitTrap = findSection(['trap point', 'trap', 'common mistake']);
+  const trapPoint = explicitTrap
+    ? parseListItems(explicitTrap)
+    : ['Do not rely only on keywords; verify the actual requirement.'];
+
+  const explicitMemory = findSection(['memory hook', 'memory']);
+  const memoryHook = explicitMemory || '先抓题目核心目标，再选直接对应目标的答案。';
+
+  return normalizeWrongQuestionAnalysis({
+    questionText,
+    summary,
+    correctAnswer,
+    answerExtraction,
+    bulletPoints,
+    trapPoint,
+    memoryHook
+  });
+}
+
 export default function App() {
   const [selectedDivision, setSelectedDivision] = useState("PPD");
   const [roomTree, setRoomTree] = useState({});
