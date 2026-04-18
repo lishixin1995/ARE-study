@@ -375,8 +375,38 @@ function buildLocalCaptureAnalysis(text = "") {
   };
 }
 
+function normalizeLogicTreeNode(node, depth = 0) {
+  if (!node || typeof node !== "object" || depth > 6) return null;
+
+  const label = normalizeWhitespace(node.label || node.title || node.name || "");
+  if (!label) return null;
+
+  const rawChildren = Array.isArray(node.children)
+    ? node.children
+    : Array.isArray(node.nodes)
+      ? node.nodes
+      : [];
+
+  const children = rawChildren
+    .map(child => normalizeLogicTreeNode(child, depth + 1))
+    .filter(Boolean);
+
+  return {
+    label,
+    type: normalizeWhitespace(node.type || "point") || "point",
+    children
+  };
+}
+
 function normalizeAiCaptureAnalysis(analysis) {
-  if (!analysis || typeof analysis !== "object") return EMPTY_CAPTURE_ANALYSIS;
+  if (!analysis || typeof analysis !== "object") {
+    return {
+      ...EMPTY_CAPTURE_ANALYSIS,
+      logicForest: null
+    };
+  }
+
+  const logicForest = normalizeLogicTreeNode(analysis.logicForest || analysis.root || null);
 
   return {
     summary: typeof analysis.summary === "string" ? analysis.summary.trim() : "",
@@ -385,7 +415,8 @@ function normalizeAiCaptureAnalysis(analysis) {
       : [],
     logicLinks: Array.isArray(analysis.logicLinks)
       ? analysis.logicLinks.map(item => String(item).trim()).filter(Boolean)
-      : []
+      : [],
+    logicForest
   };
 }
 
@@ -1168,8 +1199,14 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
 
   const activeCaptureMindMap = useMemo(() => {
     if (captureAnalysisCleared || !normalizeWhitespace(captureAnalysisSourceText)) return null;
+
+    if (captureAiResult) {
+      const normalized = normalizeAiCaptureAnalysis(captureAiResult);
+      if (normalized.logicForest) return normalized.logicForest;
+    }
+
     return buildMindMapFromText(captureAnalysisSourceText);
-  }, [captureAnalysisCleared, captureAnalysisSourceText]);
+  }, [captureAiResult, captureAnalysisCleared, captureAnalysisSourceText]);
 
   const activeDisplayAnalysis = useMemo(
     () => (canEditCapture ? activeCaptureAnalysis : previewAnalysis),
@@ -1690,14 +1727,6 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       savedAt: new Date().toISOString()
     };
 
-    const resetCaptureComposer = () => {
-      setCaptureDraft("");
-      setCaptureLocalAnalysis(EMPTY_CAPTURE_ANALYSIS);
-      setCaptureAiResult(null);
-      setCaptureAnalysisSourceText("");
-      setCaptureAnalysisCleared(true);
-    };
-
     try {
       const response = await fetch("/api/notes", {
         method: "POST",
@@ -1709,20 +1738,17 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
 
       if (!response.ok) {
         setSavedCaptureNotes(prev => [newNote, ...prev.filter(item => item.id !== newNote.id)]);
-        resetCaptureComposer();
-        setCaptureStatus(`Saved locally at ${formatSavedAt(newNote.savedAt)}. Cloud sync failed.`);
+        setCaptureStatus(`Saved locally at ${formatSavedAt(newNote.savedAt)}. Your editor and analysis were kept.`);
         return;
       }
 
       const savedNote = data.note || data.savedNote || newNote;
       setSavedCaptureNotes(prev => [savedNote, ...prev.filter(item => item.id !== savedNote.id && item.id !== newNote.id)]);
-      resetCaptureComposer();
-      setCaptureStatus(`Saved note at ${formatSavedAt(savedNote.savedAt || newNote.savedAt)}.`);
+      setCaptureStatus(`Saved note at ${formatSavedAt(savedNote.savedAt || newNote.savedAt)}. Your editor and analysis were kept.`);
     } catch (error) {
       console.error(error);
       setSavedCaptureNotes(prev => [newNote, ...prev.filter(item => item.id !== newNote.id)]);
-      resetCaptureComposer();
-      setCaptureStatus(`Saved locally at ${formatSavedAt(newNote.savedAt)}. Cloud sync failed.`);
+      setCaptureStatus(`Saved locally at ${formatSavedAt(newNote.savedAt)}. Cloud sync failed, but your editor and analysis were kept.`);
     }
   }
 
