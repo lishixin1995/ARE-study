@@ -638,6 +638,49 @@ function getDocumentStyles() {
     .join("\n");
 }
 
+function mergeNoteTextsForAnalysis(notes = []) {
+  return notes
+    .map(note => {
+      const body = String(note?.text || "").trim();
+      if (!body) return "";
+      const pathLabel = [note.roomName, note.subroomName].filter(Boolean).join(" / ");
+      return pathLabel ? `${pathLabel}\n${body}` : body;
+    })
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function formatNotesCollectionForPdf(title, notes = []) {
+  if (!notes.length) return "";
+
+  return `
+    <section class="pdf-section">
+      <div class="pdf-section-title">${escapeHtml(title)}</div>
+      <div class="pdf-note-stack">
+        ${notes
+          .map((note, index) => {
+            const label = [note.roomName, note.subroomName].filter(Boolean).join(" / ") || `Note ${index + 1}`;
+            const meta = [
+              note.division ? `Division: ${note.division}` : "",
+              note.savedAt ? `Saved: ${formatSavedAt(note.savedAt)}` : ""
+            ]
+              .filter(Boolean)
+              .join(" · ");
+
+            return `
+              <div class="pdf-note-card">
+                <div class="pdf-note-title">${escapeHtml(label)}</div>
+                ${meta ? `<div class="pdf-note-meta">${escapeHtml(meta)}</div>` : ""}
+                <p class="pdf-paragraph">${escapeHtml(note.text || "")}</p>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
 export default function App() {
   const [selectedDivision, setSelectedDivision] = useState("PPD");
   const [roomTree, setRoomTree] = useState({});
@@ -648,6 +691,7 @@ export default function App() {
   const [captureStatus, setCaptureStatus] = useState("Ready.");
   const [captureLocalAnalysis, setCaptureLocalAnalysis] = useState(EMPTY_CAPTURE_ANALYSIS);
   const [captureAiResult, setCaptureAiResult] = useState(null);
+  const [captureAnalysisSourceText, setCaptureAnalysisSourceText] = useState("");
   const [captureAnalysisCleared, setCaptureAnalysisCleared] = useState(true);
   const [isCaptureAnalyzing, setIsCaptureAnalyzing] = useState(false);
 
@@ -695,11 +739,13 @@ export default function App() {
       return;
     }
 
-    const roomStillExists = divisionRooms.some(room => room.id === selectedRoomId);
-    if (!selectedRoomId || !roomStillExists) {
-      setSelectedRoomId(divisionRooms[0].id);
-      setSelectedSubroomId("");
-      return;
+    if (selectedRoomId) {
+      const roomStillExists = divisionRooms.some(room => room.id === selectedRoomId);
+      if (!roomStillExists) {
+        setSelectedRoomId("");
+        setSelectedSubroomId("");
+        return;
+      }
     }
 
     if (selectedSubroomId) {
@@ -717,8 +763,8 @@ export default function App() {
   }, [wrongQuestionFlashcards, flashcardIndex]);
 
   useEffect(() => {
-  fetchSavedNotesFromCloud(selectedDivision, selectedRoomId, selectedSubroomId || "");
-}, [selectedDivision, selectedRoomId, selectedSubroomId]);
+    fetchSavedNotesFromCloud(selectedDivision);
+  }, [selectedDivision]);
 
   const currentFlashcard = wrongQuestionFlashcards[flashcardIndex] || null;
 
@@ -780,18 +826,22 @@ async function deleteRoomFromCloud(id) {
   return data;
 }
   
-  async function fetchSavedNotesFromCloud(division, roomId, subroomId = "") {
-  if (!division || !roomId) {
+  async function fetchSavedNotesFromCloud(division, roomId = "", subroomId = "") {
+  if (!division) {
     setSavedCaptureNotes([]);
     return;
   }
 
   try {
-    const params = new URLSearchParams({
-      division,
-      roomId,
-      subroomId: subroomId || ""
-    });
+    const params = new URLSearchParams({ division });
+
+    if (roomId) {
+      params.set("roomId", roomId);
+    }
+
+    if (subroomId) {
+      params.set("subroomId", subroomId);
+    }
 
     const response = await fetch(`/api/notes?${params.toString()}`);
     const data = await response.json();
@@ -857,8 +907,49 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());
   }, [savedCaptureNotes, selectedDivision, selectedRoomId, selectedSubroomId]);
 
+  const divisionSavedNotes = useMemo(() => {
+    return [...savedCaptureNotes]
+      .filter(note => note.division === selectedDivision)
+      .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());
+  }, [savedCaptureNotes, selectedDivision]);
+
+  const roomPreviewSavedNotes = useMemo(() => {
+    if (!selectedRoomId) return [];
+
+    const validSubroomIds = new Set((selectedRoom?.children || []).map(child => child.id));
+
+    return divisionSavedNotes.filter(note => {
+      if (note.roomId !== selectedRoomId) return false;
+      if (!note.subroomId) return true;
+      if (!validSubroomIds.size) return true;
+      return validSubroomIds.has(note.subroomId);
+    });
+  }, [divisionSavedNotes, selectedRoomId, selectedRoom]);
+
+  const canEditCapture = Boolean(selectedRoomId && selectedSubroomId);
+  const isRoomPreview = Boolean(selectedRoomId) && !selectedSubroomId;
+  const isDivisionPreview = !selectedRoomId && !selectedSubroomId;
+
+  const previewNotes = useMemo(() => {
+    if (isRoomPreview) return roomPreviewSavedNotes;
+    if (isDivisionPreview) return divisionSavedNotes;
+    return [];
+  }, [isRoomPreview, isDivisionPreview, roomPreviewSavedNotes, divisionSavedNotes]);
+
+  const previewSourceText = useMemo(() => mergeNoteTextsForAnalysis(previewNotes), [previewNotes]);
+
+  const previewAnalysis = useMemo(() => {
+    if (!normalizeWhitespace(previewSourceText)) return EMPTY_CAPTURE_ANALYSIS;
+    return buildLocalCaptureAnalysis(previewSourceText);
+  }, [previewSourceText]);
+
+  const previewMindMap = useMemo(() => {
+    if (!normalizeWhitespace(previewSourceText)) return null;
+    return buildMindMapFromText(previewSourceText);
+  }, [previewSourceText]);
+
   const activeCaptureAnalysis = useMemo(() => {
-    if (captureAnalysisCleared || !normalizeWhitespace(captureDraft)) {
+    if (captureAnalysisCleared || !normalizeWhitespace(captureAnalysisSourceText)) {
       return EMPTY_CAPTURE_ANALYSIS;
     }
 
@@ -872,20 +963,100 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     }
 
     return captureLocalAnalysis;
-  }, [captureAnalysisCleared, captureDraft, captureAiResult, captureLocalAnalysis]);
+  }, [captureAnalysisCleared, captureAnalysisSourceText, captureAiResult, captureLocalAnalysis]);
 
-  const currentMindMap = useMemo(() => {
-    if (captureAnalysisCleared || !normalizeWhitespace(captureDraft)) return null;
-    return buildMindMapFromText(captureDraft);
-  }, [captureAnalysisCleared, captureDraft]);
+  const activeCaptureSourceText = useMemo(() => {
+    if (captureAnalysisCleared) return "";
+    return captureAnalysisSourceText;
+  }, [captureAnalysisCleared, captureAnalysisSourceText]);
 
-  const hasCaptureAnalysisContent = useMemo(() => {
+  const activeCaptureMindMap = useMemo(() => {
+    if (captureAnalysisCleared || !normalizeWhitespace(captureAnalysisSourceText)) return null;
+    return buildMindMapFromText(captureAnalysisSourceText);
+  }, [captureAnalysisCleared, captureAnalysisSourceText]);
+
+  const activeDisplayAnalysis = useMemo(
+    () => (canEditCapture ? activeCaptureAnalysis : previewAnalysis),
+    [canEditCapture, activeCaptureAnalysis, previewAnalysis]
+  );
+
+  const activeDisplaySourceText = useMemo(
+    () => (canEditCapture ? activeCaptureSourceText : previewSourceText),
+    [canEditCapture, activeCaptureSourceText, previewSourceText]
+  );
+
+  const currentMindMap = useMemo(
+    () => (canEditCapture ? activeCaptureMindMap : previewMindMap),
+    [canEditCapture, activeCaptureMindMap, previewMindMap]
+  );
+
+  const hasActiveDisplayAnalysisContent = useMemo(() => {
     return Boolean(
-      activeCaptureAnalysis.summary ||
-        activeCaptureAnalysis.bulletPoints.length ||
-        activeCaptureAnalysis.logicLinks.length
+      activeDisplayAnalysis.summary ||
+        activeDisplayAnalysis.bulletPoints.length ||
+        activeDisplayAnalysis.logicLinks.length
     );
-  }, [activeCaptureAnalysis]);
+  }, [activeDisplayAnalysis]);
+
+  const activeDisplayNotesForExport = useMemo(() => {
+    if (canEditCapture) {
+      if (!normalizeWhitespace(activeDisplaySourceText)) return [];
+      return [
+        {
+          id: "current-capture-analysis",
+          division: selectedDivision,
+          roomId: selectedRoomId,
+          roomName: selectedRoom?.name || "",
+          subroomId: selectedSubroomId || "",
+          subroomName: selectedSubroom?.name || "",
+          savedAt: new Date().toISOString(),
+          text: activeDisplaySourceText
+        }
+      ];
+    }
+
+    return previewNotes;
+  }, [
+    canEditCapture,
+    activeDisplaySourceText,
+    previewNotes,
+    selectedDivision,
+    selectedRoomId,
+    selectedRoom,
+    selectedSubroomId,
+    selectedSubroom
+  ]);
+
+  const currentSavedNotesCount = useMemo(() => {
+    if (canEditCapture) return filteredSavedNotes.length;
+    return previewNotes.length;
+  }, [canEditCapture, filteredSavedNotes.length, previewNotes.length]);
+
+  const currentViewModeLabel = useMemo(() => {
+    if (canEditCapture) return "Sub-room Editing";
+    if (isRoomPreview) return "Room Preview";
+    return "Topic Preview";
+  }, [canEditCapture, isRoomPreview]);
+
+  const currentViewTitle = useMemo(() => {
+    if (canEditCapture) return "Analysis";
+    if (isRoomPreview) return `${selectedRoom?.name || "Room"} Preview`;
+    return `${selectedDivision} Topic Preview`;
+  }, [canEditCapture, isRoomPreview, selectedRoom, selectedDivision]);
+
+  const editorPlaceholderText = useMemo(() => {
+    if (canEditCapture) return "Paste notes here...";
+    if (!divisionRooms.length) return "Create a room and a sub-room first...";
+    if (!selectedRoomId) return "Topic preview mode. Select a room or sub-room to continue...";
+    return "Room preview mode. Select a sub-room to start writing notes...";
+  }, [canEditCapture, divisionRooms.length, selectedRoomId]);
+
+  const capturePanelStatusText = useMemo(() => {
+    if (canEditCapture) return captureStatus;
+    if (!divisionRooms.length) return "Create a room and a sub-room first before taking notes.";
+    if (!selectedRoomId) return "Viewing merged preview of all saved notes in this topic.";
+    return "Viewing merged preview of all saved notes inside this room.";
+  }, [canEditCapture, captureStatus, divisionRooms.length, selectedRoomId]);
 
   const wrongQuestionAnalysis = useMemo(
     () => ({
@@ -902,7 +1073,7 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
   );
 
   function handleExportAnalysisPdf() {
-    if (!hasCaptureAnalysisContent) {
+    if (!hasActiveDisplayAnalysisContent && !activeDisplayNotesForExport.length) {
       setCaptureStatus("Nothing to export yet.");
       return;
     }
@@ -917,9 +1088,11 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     const exportTime = formatSavedAt(new Date().toISOString());
     const metadata = [
       `Division: ${selectedDivision}`,
-      `Room: ${selectedRoom?.name || "No Room"}`,
-      `Sub Room: ${selectedSubroom?.name || "Root Level"}`,
+      `View: ${currentViewModeLabel}`,
+      `Room: ${selectedRoom?.name || "All Rooms"}`,
+      `Sub Room: ${selectedSubroom?.name || (canEditCapture ? "Selected Sub-room" : "All Sub-rooms")}`,
       `Path: ${currentPathLabel}`,
+      `Notes Included: ${activeDisplayNotesForExport.length}`,
       `Exported: ${exportTime}`
     ];
 
@@ -933,7 +1106,7 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
         <head>
           <meta charset="utf-8" />
           <base href="${window.location.origin}/" />
-          <title>ARE Study Analysis PDF</title>
+          <title>ARE Study Notes PDF</title>
           ${styles}
           <style>
             @page {
@@ -1011,6 +1184,30 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
               word-break: break-word;
             }
 
+            .pdf-note-stack {
+              display: flex;
+              flex-direction: column;
+              gap: 12px;
+            }
+
+            .pdf-note-card {
+              border: 1px solid #e5e7eb;
+              border-radius: 10px;
+              padding: 12px 14px;
+            }
+
+            .pdf-note-title {
+              font-size: 13px;
+              font-weight: 700;
+              margin-bottom: 4px;
+            }
+
+            .pdf-note-meta {
+              font-size: 11px;
+              color: #6b7280;
+              margin-bottom: 8px;
+            }
+
             .empty-note {
               color: #6b7280;
               font-style: italic;
@@ -1060,22 +1257,24 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
         </head>
         <body>
           <div class="pdf-shell">
-            <div class="pdf-title">ARE Study Analysis</div>
+            <div class="pdf-title">${escapeHtml(currentViewTitle)}</div>
             <div class="pdf-subtitle">Exported from Capture Notes Workspace</div>
 
             <div class="pdf-meta">
               ${metadata.map(item => `<div>${escapeHtml(item)}</div>`).join("")}
             </div>
 
+            ${formatNotesCollectionForPdf(canEditCapture ? "Capture Notes" : "Saved Notes Included", activeDisplayNotesForExport)}
+
             <section class="pdf-section">
               <div class="pdf-section-title">Summary</div>
-              <p class="pdf-paragraph ${activeCaptureAnalysis.summary ? "" : "empty-note"}">
-                ${escapeHtml(activeCaptureAnalysis.summary || "No summary available.")}
+              <p class="pdf-paragraph ${activeDisplayAnalysis.summary ? "" : "empty-note"}">
+                ${escapeHtml(activeDisplayAnalysis.summary || "No summary available.")}
               </p>
             </section>
 
-            ${formatAnalysisSectionForPdf("Bullet Points", activeCaptureAnalysis.bulletPoints)}
-            ${formatAnalysisSectionForPdf("Logic Links", activeCaptureAnalysis.logicLinks)}
+            ${formatAnalysisSectionForPdf("Bullet Points", activeDisplayAnalysis.bulletPoints)}
+            ${formatAnalysisSectionForPdf("Logic Links", activeDisplayAnalysis.logicLinks)}
 
             ${
               liveLogicHtml
@@ -1114,9 +1313,15 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
   }
 
   function handleAnalyzeCapture() {
+    if (!canEditCapture) {
+      setCaptureStatus("Select a sub-room to start writing notes.");
+      return;
+    }
+
     if (!normalizeWhitespace(captureDraft)) {
       setCaptureLocalAnalysis(EMPTY_CAPTURE_ANALYSIS);
       setCaptureAiResult(null);
+      setCaptureAnalysisSourceText("");
       setCaptureAnalysisCleared(true);
       setCaptureStatus("Editor is empty.");
       return;
@@ -1125,6 +1330,7 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     const local = buildLocalCaptureAnalysis(captureDraft);
     setCaptureLocalAnalysis(local);
     setCaptureAiResult(null);
+    setCaptureAnalysisSourceText(captureDraft);
     setCaptureAnalysisCleared(false);
     setCaptureStatus("Local analysis complete.");
   }
@@ -1132,19 +1338,27 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
   function handleClearAnalysis() {
     setCaptureLocalAnalysis(EMPTY_CAPTURE_ANALYSIS);
     setCaptureAiResult(null);
+    setCaptureAnalysisSourceText("");
     setCaptureAnalysisCleared(true);
     setCaptureStatus("Analysis cleared.");
   }
 
   function handleClearEditor() {
+    if (!canEditCapture) {
+      setCaptureStatus("Select a sub-room to start writing notes.");
+      return;
+    }
+
     setCaptureDraft("");
-    setCaptureLocalAnalysis(EMPTY_CAPTURE_ANALYSIS);
-    setCaptureAiResult(null);
-    setCaptureAnalysisCleared(true);
-    setCaptureStatus("Editor cleared.");
+    setCaptureStatus("Editor cleared. Analysis kept.");
   }
 
-  function handleSaveNote() {
+  async function handleSaveNote() {
+    if (!canEditCapture) {
+      setCaptureStatus("Please select a sub-room before saving notes.");
+      return;
+    }
+
     if (!normalizeWhitespace(captureDraft)) {
       setCaptureStatus("Editor is empty.");
       return;
@@ -1161,31 +1375,89 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       savedAt: new Date().toISOString()
     };
 
-    setSavedCaptureNotes(prev => [newNote, ...prev]);
-    setCaptureDraft("");
-    setCaptureLocalAnalysis(EMPTY_CAPTURE_ANALYSIS);
-    setCaptureAiResult(null);
-    setCaptureAnalysisCleared(true);
-    setCaptureStatus(`Saved note at ${formatSavedAt(newNote.savedAt)}.`);
+    const resetCaptureComposer = () => {
+      setCaptureDraft("");
+      setCaptureLocalAnalysis(EMPTY_CAPTURE_ANALYSIS);
+      setCaptureAiResult(null);
+      setCaptureAnalysisSourceText("");
+      setCaptureAnalysisCleared(true);
+    };
+
+    try {
+      const response = await fetch("/api/notes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newNote)
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setSavedCaptureNotes(prev => [newNote, ...prev.filter(item => item.id !== newNote.id)]);
+        resetCaptureComposer();
+        setCaptureStatus(`Saved locally at ${formatSavedAt(newNote.savedAt)}. Cloud sync failed.`);
+        return;
+      }
+
+      const savedNote = data.note || data.savedNote || newNote;
+      setSavedCaptureNotes(prev => [savedNote, ...prev.filter(item => item.id !== savedNote.id && item.id !== newNote.id)]);
+      resetCaptureComposer();
+      setCaptureStatus(`Saved note at ${formatSavedAt(savedNote.savedAt || newNote.savedAt)}.`);
+    } catch (error) {
+      console.error(error);
+      setSavedCaptureNotes(prev => [newNote, ...prev.filter(item => item.id !== newNote.id)]);
+      resetCaptureComposer();
+      setCaptureStatus(`Saved locally at ${formatSavedAt(newNote.savedAt)}. Cloud sync failed.`);
+    }
   }
 
   function handleLoadSavedNote(note) {
-    setCaptureDraft(note.text || "");
-    setCaptureLocalAnalysis(EMPTY_CAPTURE_ANALYSIS);
+    if (!canEditCapture) {
+      setCaptureStatus("Select a sub-room to load saved notes.");
+      return;
+    }
+
+    const mergedText = [captureDraft.trim(), String(note.text || "").trim()].filter(Boolean).join("\n\n");
+
+    if (!normalizeWhitespace(mergedText)) {
+      setCaptureStatus("Saved note is empty.");
+      return;
+    }
+
+    const local = buildLocalCaptureAnalysis(mergedText);
+
+    setCaptureDraft(mergedText);
+    setCaptureLocalAnalysis(local);
     setCaptureAiResult(null);
-    setCaptureAnalysisCleared(true);
-    setCaptureStatus(`Loaded saved note from ${formatSavedAt(note.savedAt)}.`);
+    setCaptureAnalysisSourceText(mergedText);
+    setCaptureAnalysisCleared(false);
+    setCaptureStatus(
+      normalizeWhitespace(captureDraft)
+        ? `Merged saved note from ${formatSavedAt(note.savedAt)} into the editor and refreshed analysis.`
+        : `Loaded saved note from ${formatSavedAt(note.savedAt)} and refreshed analysis.`
+    );
   }
 
   function handleLoadTopicSample() {
+    if (!canEditCapture) {
+      setCaptureStatus("Select a sub-room to start writing notes.");
+      return;
+    }
+
     setCaptureDraft(SAMPLE_BY_DIVISION[selectedDivision] || "");
     setCaptureLocalAnalysis(EMPTY_CAPTURE_ANALYSIS);
     setCaptureAiResult(null);
+    setCaptureAnalysisSourceText("");
     setCaptureAnalysisCleared(true);
     setCaptureStatus(`Loaded ${selectedDivision} sample.`);
   }
 
   async function handleCaptureRunAI() {
+    if (!canEditCapture) {
+      setCaptureStatus("Select a sub-room to use AI analysis.");
+      return;
+    }
+
     if (!normalizeWhitespace(captureDraft)) {
       setCaptureStatus("Please type notes first.");
       return;
@@ -1193,6 +1465,8 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
 
     const local = buildLocalCaptureAnalysis(captureDraft);
     setCaptureLocalAnalysis(local);
+    setCaptureAiResult(null);
+    setCaptureAnalysisSourceText(captureDraft);
     setCaptureAnalysisCleared(false);
     setIsCaptureAnalyzing(true);
     setCaptureStatus("AI thinking...");
@@ -1288,6 +1562,8 @@ async function handleAddSubroom() {
         };
       })
     }));
+
+    setSelectedSubroomId(newSubroom.id);
   } catch (error) {
     console.error(error);
     window.alert("Failed to create sub-room.");
@@ -1543,9 +1819,12 @@ async function handleSaveWrongQuestion() {
                 className={`nav-pill ${selectedDivision === division ? "active" : ""}`}
                 onClick={() => {
                   setSelectedDivision(division);
+                  setSelectedRoomId("");
+                  setSelectedSubroomId("");
                   setCaptureDraft("");
                   setCaptureLocalAnalysis(EMPTY_CAPTURE_ANALYSIS);
                   setCaptureAiResult(null);
+                  setCaptureAnalysisSourceText("");
                   setCaptureAnalysisCleared(true);
                   setCaptureStatus("Ready.");
                 }}
@@ -1618,9 +1897,10 @@ async function handleSaveWrongQuestion() {
             <h2>Capture Notes Workspace</h2>
             <div className="workspace-meta">
               <span>{selectedDivision}</span>
-              <span>{selectedRoom?.name || "No Room"}</span>
-              <span>{selectedSubroom?.name || "Root Level"}</span>
-              <span>Saved Notes: {filteredSavedNotes.length}</span>
+              <span>{currentViewModeLabel}</span>
+              <span>{selectedRoom?.name || "All Rooms"}</span>
+              <span>{selectedSubroom?.name || (canEditCapture ? "Selected Sub-room" : "All Sub-rooms")}</span>
+              <span>Saved Notes: {currentSavedNotesCount}</span>
             </div>
           </div>
 
@@ -1628,61 +1908,72 @@ async function handleSaveWrongQuestion() {
             <div className="panel-title">Capture Editor</div>
             <textarea
               className="panel-textarea"
-              value={captureDraft}
+              value={canEditCapture ? captureDraft : ""}
+              disabled={!canEditCapture}
               onChange={event => {
                 setCaptureDraft(event.target.value);
-                if (!normalizeWhitespace(event.target.value)) {
-                  setCaptureLocalAnalysis(EMPTY_CAPTURE_ANALYSIS);
-                  setCaptureAiResult(null);
-                  setCaptureAnalysisCleared(true);
-                }
               }}
-              placeholder="Paste notes here..."
+              placeholder={editorPlaceholderText}
             />
             <div className="button-row top-gap">
-              <button onClick={handleAnalyzeCapture}>Analyze</button>
+              <button onClick={handleAnalyzeCapture} disabled={!canEditCapture}>
+                Analyze
+              </button>
             </div>
           </div>
 
           <div className="panel">
             <div className="button-row">
-              <button onClick={handleSaveNote}>Save Note</button>
-              <button onClick={() => setIsSavedNotesModalOpen(true)}>Load Saved Notes</button>
-              <button onClick={handleLoadTopicSample}>Load {selectedDivision} Sample</button>
-              <button onClick={handleClearEditor}>Clear Editor</button>
-              <button onClick={handleClearAnalysis}>Clear Analysis</button>
+              <button onClick={handleSaveNote} disabled={!canEditCapture}>
+                Save Note
+              </button>
+              <button onClick={() => setIsSavedNotesModalOpen(true)} disabled={!canEditCapture || !filteredSavedNotes.length}>
+                Load Saved Notes
+              </button>
+              <button onClick={handleLoadTopicSample} disabled={!canEditCapture}>
+                Load {selectedDivision} Sample
+              </button>
+              <button onClick={handleClearEditor} disabled={!canEditCapture}>
+                Clear Editor
+              </button>
+              <button onClick={handleClearAnalysis} disabled={!canEditCapture || !normalizeWhitespace(activeCaptureSourceText)}>
+                Clear Analysis
+              </button>
             </div>
-            <div className="status-text success">{captureStatus}</div>
+            <div className="status-text success">{capturePanelStatusText}</div>
           </div>
 
           <div className="workspace-grid">
             <div className="panel">
               <div className="panel-head-row">
                 <h3>
-                  Analysis{" "}
-                  <span className={`engine-badge ${captureAiResult ? "ai" : "local"}`}>
-                    {captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
+                  {currentViewTitle}{" "}
+                  <span className={`engine-badge ${canEditCapture && captureAiResult ? "ai" : "local"}`}>
+                    {canEditCapture && captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
                   </span>
                 </h3>
                 <div className="button-row">
-                  <button onClick={handleExportAnalysisPdf} disabled={!hasCaptureAnalysisContent}>
+                  <button
+                    onClick={handleExportAnalysisPdf}
+                    disabled={!hasActiveDisplayAnalysisContent && !activeDisplayNotesForExport.length}
+                  >
                     Export PDF
                   </button>
-                  <button className="ask-ai-btn" onClick={handleCaptureRunAI} disabled={isCaptureAnalyzing}>
+                  <button className="ask-ai-btn" onClick={handleCaptureRunAI} disabled={!canEditCapture || isCaptureAnalyzing}>
                     {isCaptureAnalyzing ? "Thinking..." : "✨ Ask AI"}
                   </button>
                 </div>
               </div>
 
               <div className="analysis-stack">
-                <CapturePanelSection title="Summary" empty={!activeCaptureAnalysis.summary}>
-                  {activeCaptureAnalysis.summary || ""}
+                <CapturePanelSection title="Summary" empty={!activeDisplayAnalysis.summary}>
+                  {activeDisplayAnalysis.summary || ""}
                 </CapturePanelSection>
 
-                <CapturePanelSection title="Bullet Points" empty={!activeCaptureAnalysis.bulletPoints.length}>
-                  {activeCaptureAnalysis.bulletPoints.length ? (
+                <CapturePanelSection title="Bullet Points" empty={!activeDisplayAnalysis.bulletPoints.length}>
+                  {activeDisplayAnalysis.bulletPoints.length ? (
                     <ul className="clean-list">
-                      {activeCaptureAnalysis.bulletPoints.map((item, index) => (
+                      {activeDisplayAnalysis.bulletPoints.map((item, index) => (
                         <li key={`${item}-${index}`}>{item}</li>
                       ))}
                     </ul>
@@ -1691,10 +1982,10 @@ async function handleSaveWrongQuestion() {
                   )}
                 </CapturePanelSection>
 
-                <CapturePanelSection title="Logic Links" empty={!activeCaptureAnalysis.logicLinks.length}>
-                  {activeCaptureAnalysis.logicLinks.length ? (
+                <CapturePanelSection title="Logic Links" empty={!activeDisplayAnalysis.logicLinks.length}>
+                  {activeDisplayAnalysis.logicLinks.length ? (
                     <ul className="clean-list">
-                      {activeCaptureAnalysis.logicLinks.map((item, index) => (
+                      {activeDisplayAnalysis.logicLinks.map((item, index) => (
                         <li key={`${item}-${index}`}>{item}</li>
                       ))}
                     </ul>
@@ -1709,8 +2000,8 @@ async function handleSaveWrongQuestion() {
               <div className="panel-head-row">
                 <h3>
                   Live Logic Image{" "}
-                  <span className={`engine-badge ${captureAiResult ? "ai" : "local"}`}>
-                    {captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
+                  <span className={`engine-badge ${canEditCapture && captureAiResult ? "ai" : "local"}`}>
+                    {canEditCapture && captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
                   </span>
                 </h3>
               </div>
@@ -1718,7 +2009,9 @@ async function handleSaveWrongQuestion() {
               <div className="mindmap-shell">
                 {!currentMindMap ? (
                   <div className="analysis-box is-empty">
-                    {normalizeWhitespace(captureDraft) ? "" : ""}
+                    {!normalizeWhitespace(activeDisplaySourceText) && !canEditCapture
+                      ? "No saved notes to preview in this level yet."
+                      : ""}
                   </div>
                 ) : (
                   <div className="mindmap-board" ref={liveLogicPrintRef}>
