@@ -11,6 +11,23 @@ function readJsonBody(request) {
   }
 }
 
+function normalizeString(value) {
+  return String(value || "").trim();
+}
+
+function parseTopicPath(topicPath = "") {
+  const parts = String(topicPath || "")
+    .split("/")
+    .map(part => part.trim())
+    .filter(Boolean);
+
+  return {
+    division: parts[0] || "",
+    roomName: parts[1] || "",
+    subroomName: parts[2] || ""
+  };
+}
+
 export default async function handler(request, response) {
   try {
     await ensureTables();
@@ -35,7 +52,22 @@ export default async function handler(request, response) {
         ORDER BY saved_at DESC
       `);
 
-      return response.status(200).json({ flashcards: result.rows });
+      const flashcards = result.rows.map(card => {
+        const parsed = parseTopicPath(card.topicPath);
+
+        return {
+          ...card,
+          division: parsed.division,
+          roomName: parsed.roomName,
+          subroomName: parsed.subroomName,
+          roomId: "",
+          subroomId: "",
+          notesText: "",
+          analysisSourceText: ""
+        };
+      });
+
+      return response.status(200).json({ flashcards });
     }
 
     if (request.method === "POST") {
@@ -43,13 +75,20 @@ export default async function handler(request, response) {
 
       const {
         id,
+        division = "",
+        roomId = "",
+        roomName = "",
+        subroomId = "",
+        subroomName = "",
         topicPath = "",
         imagePreview = "",
         ocrText = "",
         editedText = "",
+        notesText = "",
+        analysisSourceText = "",
         questionText = "",
         summary = "",
-        correctAnswer = "",
+        correctAnswer = [],
         answerExtraction = [],
         bulletPoints = [],
         trapPoint = [],
@@ -57,9 +96,32 @@ export default async function handler(request, response) {
         savedAt
       } = body;
 
-      if (!id || !String(editedText).trim()) {
+      const hasAnyContent =
+        normalizeString(editedText) ||
+        normalizeString(notesText) ||
+        normalizeString(ocrText) ||
+        normalizeString(questionText) ||
+        normalizeString(summary) ||
+        normalizeString(imagePreview) ||
+        (Array.isArray(correctAnswer) && correctAnswer.length) ||
+        (Array.isArray(answerExtraction) && answerExtraction.length) ||
+        (Array.isArray(bulletPoints) && bulletPoints.length) ||
+        (Array.isArray(trapPoint) && trapPoint.length) ||
+        normalizeString(memoryHook);
+
+      if (!id || !hasAnyContent) {
         return response.status(400).json({ error: "Missing required flashcard fields." });
       }
+
+      const finalTopicPath =
+        normalizeString(topicPath) ||
+        [division, roomName, subroomName].filter(Boolean).join(" / ");
+
+      const finalEditedText = normalizeString(editedText);
+      const finalQuestionText =
+        normalizeString(questionText) ||
+        finalEditedText ||
+        normalizeString(ocrText);
 
       const result = await pool.query(
         `
@@ -85,34 +147,55 @@ export default async function handler(request, response) {
         `,
         [
           id,
-          topicPath,
-          imagePreview,
-          ocrText,
-          editedText,
-          questionText,
-          summary,
-          JSON.stringify(correctAnswer),
+          finalTopicPath,
+          imagePreview || "",
+          ocrText || "",
+          finalEditedText,
+          finalQuestionText,
+          summary || "",
+          JSON.stringify(correctAnswer || []),
           JSON.stringify(answerExtraction || []),
           JSON.stringify(bulletPoints || []),
           JSON.stringify(trapPoint || []),
-          memoryHook,
+          memoryHook || "",
           savedAt || new Date().toISOString()
         ]
       );
 
-      return response.status(200).json({ flashcard: result.rows[0] });
+      const flashcard = {
+        ...result.rows[0],
+        division,
+        roomId,
+        roomName,
+        subroomId,
+        subroomName,
+        notesText: notesText || "",
+        analysisSourceText: analysisSourceText || ""
+      };
+
+      return response.status(200).json({ flashcard });
     }
 
     if (request.method === "DELETE") {
-      const { id } = request.query || {};
+      const id =
+        request.query?.id ||
+        readJsonBody(request)?.id ||
+        "";
 
-      if (!id) {
+      if (!String(id).trim()) {
         return response.status(400).json({ error: "Missing flashcard id." });
       }
 
-      await pool.query(`DELETE FROM wrong_question_flashcards WHERE id = $1`, [id]);
+      const result = await pool.query(
+        `DELETE FROM wrong_question_flashcards WHERE id = $1 RETURNING id`,
+        [id]
+      );
 
-      return response.status(200).json({ success: true });
+      if (!result.rowCount) {
+        return response.status(404).json({ error: "Flashcard not found." });
+      }
+
+      return response.status(200).json({ success: true, id });
     }
 
     return response.status(405).json({ error: "Method not allowed" });
