@@ -559,9 +559,25 @@ function SavedNotesModal({
   onClose,
   notes,
   onLoadNote,
+  onDeleteNote,
   currentPathLabel
 }) {
+  const [deletingNoteId, setDeletingNoteId] = useState("");
+
   if (!isOpen) return null;
+
+  async function handleDelete(noteId) {
+    if (!noteId) return;
+    if (!window.confirm("Delete this saved note?")) return;
+
+    try {
+      setDeletingNoteId(noteId);
+      const deleted = await onDeleteNote(noteId);
+      if (!deleted) return;
+    } finally {
+      setDeletingNoteId("");
+    }
+  }
 
   return (
     <div className="overlay-backdrop" onClick={onClose}>
@@ -581,27 +597,34 @@ function SavedNotesModal({
         ) : (
           <div className="notes-list">
             {notes.map(note => (
-              <button
-                key={note.id}
-                className="note-list-item"
-                onClick={() => {
-                  onLoadNote(note);
-                  onClose();
-                }}
-              >
-                <div className="note-list-top">
-                  <span className="note-list-time">{formatSavedAt(note.savedAt)}</span>
-                  <span className="note-list-path">
-                    {note.division}
-                    {note.roomName ? ` / ${note.roomName}` : ""}
-                    {note.subroomName ? ` / ${note.subroomName}` : ""}
-                  </span>
+              <div key={note.id} className="note-list-item interactive-card">
+                <button
+                  className="note-list-load-btn"
+                  onClick={() => {
+                    onLoadNote(note);
+                    onClose();
+                  }}
+                >
+                  <div className="note-list-top">
+                    <span className="note-list-time">{formatSavedAt(note.savedAt)}</span>
+                    <span className="note-list-path">
+                      {note.division}
+                      {note.roomName ? ` / ${note.roomName}` : ""}
+                      {note.subroomName ? ` / ${note.subroomName}` : ""}
+                    </span>
+                  </div>
+                  <div className="note-list-preview">
+                    {note.text.slice(0, 160)}
+                    {note.text.length > 160 ? "..." : ""}
+                  </div>
+                </button>
+
+                <div className="note-list-actions">
+                  <button className="danger-lite-btn" onClick={() => handleDelete(note.id)} disabled={deletingNoteId === note.id}>
+                    {deletingNoteId === note.id ? "Deleting..." : "Delete"}
+                  </button>
                 </div>
-                <div className="note-list-preview">
-                  {note.text.slice(0, 160)}
-                  {note.text.length > 160 ? "..." : ""}
-                </div>
-              </button>
+              </div>
             ))}
           </div>
         )}
@@ -701,17 +724,24 @@ export default function App() {
   const [wrongQuestionImageFile, setWrongQuestionImageFile] = useState(null);
   const [wrongQuestionImagePreview, setWrongQuestionImagePreview] = useState("");
   const [wrongQuestionOcrText, setWrongQuestionOcrText] = useState("");
-  const [wrongQuestionDraftText, setWrongQuestionDraftText] = useState("");
+  const [wrongQuestionTextDraft, setWrongQuestionTextDraft] = useState("");
+  const [wrongQuestionNotesDraft, setWrongQuestionNotesDraft] = useState("");
   const [wrongQuestionStatus, setWrongQuestionStatus] = useState("Ready.");
   const [isRunningOcr, setIsRunningOcr] = useState(false);
 
   const [wrongQuestionFlashcards, setWrongQuestionFlashcards] = useState([]);
   const [flashcardIndex, setFlashcardIndex] = useState(0);
   const [expandedImage, setExpandedImage] = useState("");
-  const [aiAnalysisResult, setAiAnalysisResult] = useState(null);
+  const [wrongQuestionAiResult, setWrongQuestionAiResult] = useState(null);
+  const [wrongQuestionLocalAnalysis, setWrongQuestionLocalAnalysis] = useState(buildLocalWrongQuestionAnalysis(""));
+  const [wrongQuestionAnalysisSourceText, setWrongQuestionAnalysisSourceText] = useState("");
+  const [wrongQuestionAnalysisCleared, setWrongQuestionAnalysisCleared] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [previewFlashcardRoomId, setPreviewFlashcardRoomId] = useState("");
+  const [previewFlashcardSubroomId, setPreviewFlashcardSubroomId] = useState("");
 
   const liveLogicPrintRef = useRef(null);
+  const wrongQuestionFileInputRef = useRef(null);
 
   const divisionRooms = useMemo(() => getRoomsForDivision(roomTree, selectedDivision), [roomTree, selectedDivision]);
   const selectedRoom = useMemo(
@@ -756,17 +786,15 @@ export default function App() {
     }
   }, [divisionRooms, selectedRoomId, selectedSubroomId, selectedRoom]);
 
-  useEffect(() => {
-    if (flashcardIndex > wrongQuestionFlashcards.length - 1) {
-      setFlashcardIndex(Math.max(0, wrongQuestionFlashcards.length - 1));
-    }
-  }, [wrongQuestionFlashcards, flashcardIndex]);
 
   useEffect(() => {
     fetchSavedNotesFromCloud(selectedDivision);
   }, [selectedDivision]);
 
-  const currentFlashcard = wrongQuestionFlashcards[flashcardIndex] || null;
+  useEffect(() => {
+    fetchWrongQuestionFlashcardsFromCloud();
+  }, []);
+
 
   async function fetchRoomsFromCloud(division) {
   if (!division) return;
@@ -856,6 +884,33 @@ async function deleteRoomFromCloud(id) {
   } catch (error) {
     console.error(error);
     setSavedCaptureNotes([]);
+  }
+}
+
+async function deleteSavedNoteFromCloud(noteId) {
+  const fallbackDeleteLocal = () => {
+    setSavedCaptureNotes(prev => prev.filter(note => note.id !== noteId));
+  };
+
+  try {
+    const response = await fetch(`/api/notes?id=${encodeURIComponent(noteId)}`, {
+      method: "DELETE"
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      window.alert(data.error || "Failed to delete saved note.");
+      return false;
+    }
+
+    fallbackDeleteLocal();
+    setCaptureStatus("Saved note deleted.");
+    return true;
+  } catch (error) {
+    console.error(error);
+    window.alert("Failed to delete saved note.");
+    return false;
   }
 }
 
@@ -1058,19 +1113,138 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     return "Viewing merged preview of all saved notes inside this room.";
   }, [canEditCapture, captureStatus, divisionRooms.length, selectedRoomId]);
 
-  const wrongQuestionAnalysis = useMemo(
-    () => ({
-      questionText: aiAnalysisResult?.questionText || buildWrongQuestionQuestionText(wrongQuestionDraftText),
-      summary: aiAnalysisResult?.summary || buildWrongQuestionSummary(wrongQuestionDraftText),
-      correctAnswer: aiAnalysisResult?.correctAnswer || buildWrongQuestionCorrectAnswer(wrongQuestionDraftText),
-      answerExtraction:
-        aiAnalysisResult?.answerExtraction || buildWrongQuestionAnswerExtraction(wrongQuestionDraftText),
-      bulletPoints: aiAnalysisResult?.bulletPoints || buildWrongQuestionBulletPoints(wrongQuestionDraftText),
-      trapPoint: aiAnalysisResult?.trapPoint || buildWrongQuestionTrapPoint(wrongQuestionDraftText),
-      memoryHook: aiAnalysisResult?.memoryHook || buildWrongQuestionMemoryHook(wrongQuestionDraftText)
-    }),
-    [wrongQuestionDraftText, aiAnalysisResult]
+  const allFlashcardsWithPath = useMemo(() => {
+    return (wrongQuestionFlashcards || []).map(card => {
+      const parsed = parseFlashcardPath(card);
+      return {
+        ...card,
+        division: card.division || parsed.division,
+        roomName: card.roomName || parsed.roomName,
+        subroomName: card.subroomName || parsed.subroomName
+      };
+    });
+  }, [wrongQuestionFlashcards]);
+
+  const filteredWrongQuestionFlashcards = useMemo(() => {
+    return allFlashcardsWithPath.filter(card => {
+      if ((card.division || "") !== selectedDivision) return false;
+      if (selectedRoomId && !flashcardMatchesRoom(card, selectedRoom)) return false;
+      if (selectedSubroomId && !flashcardMatchesSubroom(card, selectedRoom, selectedSubroom)) return false;
+      return true;
+    });
+  }, [allFlashcardsWithPath, selectedDivision, selectedRoomId, selectedSubroomId, selectedRoom, selectedSubroom]);
+
+  const currentFlashcard = filteredWrongQuestionFlashcards[flashcardIndex] || null;
+
+  const topicPreviewFlashcardRooms = useMemo(() => {
+    return divisionRooms
+      .map(room => ({
+        ...room,
+        flashcards: allFlashcardsWithPath.filter(
+          card => (card.division || "") === selectedDivision && flashcardMatchesRoom(card, room)
+        )
+      }))
+      .filter(room => room.flashcards.length);
+  }, [divisionRooms, allFlashcardsWithPath, selectedDivision]);
+
+  const previewFlashcardRoom = useMemo(
+    () => topicPreviewFlashcardRooms.find(room => room.id === previewFlashcardRoomId) || null,
+    [topicPreviewFlashcardRooms, previewFlashcardRoomId]
   );
+
+  const roomPreviewFlashcardSubrooms = useMemo(() => {
+    const targetRoom = isRoomPreview ? selectedRoom : previewFlashcardRoom;
+    if (!targetRoom) return [];
+
+    return (targetRoom.children || [])
+      .map(subroom => ({
+        ...subroom,
+        flashcards: allFlashcardsWithPath.filter(card => {
+          if ((card.division || "") !== selectedDivision) return false;
+          return flashcardMatchesSubroom(card, targetRoom, subroom);
+        })
+      }))
+      .filter(subroom => subroom.flashcards.length);
+  }, [isRoomPreview, selectedRoom, previewFlashcardRoom, allFlashcardsWithPath, selectedDivision]);
+
+  const previewFlashcardSubroom = useMemo(
+    () => roomPreviewFlashcardSubrooms.find(subroom => subroom.id === previewFlashcardSubroomId) || null,
+    [roomPreviewFlashcardSubrooms, previewFlashcardSubroomId]
+  );
+
+  const previewFlashcards = useMemo(() => {
+    if (canEditCapture) return filteredWrongQuestionFlashcards;
+    if (isRoomPreview) return previewFlashcardSubroom?.flashcards || [];
+    return previewFlashcardSubroom?.flashcards || [];
+  }, [canEditCapture, filteredWrongQuestionFlashcards, isRoomPreview, previewFlashcardSubroom]);
+
+  useEffect(() => {
+    if (flashcardIndex > previewFlashcards.length - 1) {
+      setFlashcardIndex(Math.max(0, previewFlashcards.length - 1));
+    }
+  }, [previewFlashcards, flashcardIndex]);
+
+  useEffect(() => {
+    if (!isDivisionPreview) {
+      setPreviewFlashcardRoomId("");
+      return;
+    }
+
+    if (previewFlashcardRoomId && !topicPreviewFlashcardRooms.some(room => room.id === previewFlashcardRoomId)) {
+      setPreviewFlashcardRoomId("");
+      setPreviewFlashcardSubroomId("");
+    }
+  }, [isDivisionPreview, topicPreviewFlashcardRooms, previewFlashcardRoomId]);
+
+  useEffect(() => {
+    if (previewFlashcardSubroomId && !roomPreviewFlashcardSubrooms.some(subroom => subroom.id === previewFlashcardSubroomId)) {
+      setPreviewFlashcardSubroomId("");
+    }
+  }, [roomPreviewFlashcardSubrooms, previewFlashcardSubroomId]);
+
+  const wrongQuestionInputSource = useMemo(
+    () =>
+      buildWrongQuestionSourceText({
+        imagePreview: wrongQuestionImagePreview,
+        ocrText: wrongQuestionOcrText,
+        questionText: wrongQuestionTextDraft,
+        notesText: wrongQuestionNotesDraft
+      }),
+    [wrongQuestionImagePreview, wrongQuestionOcrText, wrongQuestionTextDraft, wrongQuestionNotesDraft]
+  );
+
+  const wrongQuestionAnalysis = useMemo(() => {
+    if (wrongQuestionAnalysisCleared || !normalizeWhitespace(wrongQuestionAnalysisSourceText)) {
+      return buildLocalWrongQuestionAnalysis("");
+    }
+
+    if (wrongQuestionAiResult) {
+      const normalized = normalizeWrongQuestionAnalysis(wrongQuestionAiResult);
+      return {
+        questionText: normalized.questionText || wrongQuestionLocalAnalysis.questionText,
+        summary: normalized.summary || wrongQuestionLocalAnalysis.summary,
+        correctAnswer:
+          Array.isArray(normalized.correctAnswer) && normalized.correctAnswer.length
+            ? normalized.correctAnswer
+            : wrongQuestionLocalAnalysis.correctAnswer,
+        answerExtraction:
+          Array.isArray(normalized.answerExtraction) && normalized.answerExtraction.length
+            ? normalized.answerExtraction
+            : wrongQuestionLocalAnalysis.answerExtraction,
+        bulletPoints:
+          Array.isArray(normalized.bulletPoints) && normalized.bulletPoints.length
+            ? normalized.bulletPoints
+            : wrongQuestionLocalAnalysis.bulletPoints,
+        trapPoint:
+          Array.isArray(normalized.trapPoint) && normalized.trapPoint.length
+            ? normalized.trapPoint
+            : wrongQuestionLocalAnalysis.trapPoint,
+        memoryHook: normalized.memoryHook || wrongQuestionLocalAnalysis.memoryHook
+      };
+    }
+
+    return wrongQuestionLocalAnalysis;
+  }, [wrongQuestionAnalysisCleared, wrongQuestionAnalysisSourceText, wrongQuestionAiResult, wrongQuestionLocalAnalysis]);
 
   function handleExportAnalysisPdf() {
     if (!hasActiveDisplayAnalysisContent && !activeDisplayNotesForExport.length) {
@@ -1617,13 +1791,21 @@ async function handleDeleteSelectedRoomOrSubroom() {
 }
 
   function handleAnalyzeWrongQuestion() {
-    if (!wrongQuestionDraftText.trim()) {
-      setWrongQuestionStatus("Please provide text first.");
+    if (!normalizeWhitespace(wrongQuestionInputSource)) {
+      setWrongQuestionLocalAnalysis(buildLocalWrongQuestionAnalysis(""));
+      setWrongQuestionAiResult(null);
+      setWrongQuestionAnalysisSourceText("");
+      setWrongQuestionAnalysisCleared(true);
+      setWrongQuestionStatus("Please provide an image, wrong-question text, or wrong-question notes first.");
       return;
     }
 
-    setAiAnalysisResult(null);
-    setWrongQuestionStatus("Local analysis refreshed.");
+    const local = buildLocalWrongQuestionAnalysis(wrongQuestionInputSource);
+    setWrongQuestionLocalAnalysis(local);
+    setWrongQuestionAiResult(null);
+    setWrongQuestionAnalysisSourceText(wrongQuestionInputSource);
+    setWrongQuestionAnalysisCleared(false);
+    setWrongQuestionStatus("Wrong question analysis refreshed.");
   }
 
   async function runOcrFromFile(file) {
@@ -1642,8 +1824,7 @@ async function handleDeleteSelectedRoomOrSubroom() {
       }
 
       setWrongQuestionOcrText(detectedText);
-      setWrongQuestionDraftText(detectedText);
-      setAiAnalysisResult(null);
+      setWrongQuestionTextDraft(detectedText);
       setWrongQuestionStatus("OCR completed.");
     } catch {
       setWrongQuestionStatus("OCR failed.");
@@ -1652,9 +1833,7 @@ async function handleDeleteSelectedRoomOrSubroom() {
     }
   }
 
-  async function handleWrongQuestionImageChange(event) {
-    const file = event.target.files?.[0] || null;
-
+  async function handleWrongQuestionFile(file) {
     if (!file) {
       setWrongQuestionImageFile(null);
       setWrongQuestionImagePreview("");
@@ -1674,6 +1853,24 @@ async function handleDeleteSelectedRoomOrSubroom() {
     await runOcrFromFile(file);
   }
 
+  async function handleWrongQuestionImageChange(event) {
+    const file = event.target.files?.[0] || null;
+    await handleWrongQuestionFile(file);
+  }
+
+  function handleWrongQuestionDragOver(event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  async function handleWrongQuestionDrop(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    const file = event.dataTransfer?.files?.[0] || null;
+    if (!file) return;
+    await handleWrongQuestionFile(file);
+  }
+
   async function handleRunOcr() {
     if (!wrongQuestionImageFile) {
       setWrongQuestionStatus("Please select an image first.");
@@ -1683,98 +1880,120 @@ async function handleDeleteSelectedRoomOrSubroom() {
     await runOcrFromFile(wrongQuestionImageFile);
   }
 
-  function handleClearWrongQuestion() {
-  setWrongQuestionImageFile(null);
-  setWrongQuestionImagePreview("");
-  setWrongQuestionOcrText("");
-  setWrongQuestionDraftText("");
-  setAiAnalysisResult(null);
-  setWrongQuestionStatus("Cleared.");
-}
-  
-  function handleSaveWrongQuestion() {
-    if (!wrongQuestionDraftText.trim()) {
-      setWrongQuestionStatus("Text is empty.");
+  function handleClearWrongQuestionText() {
+    setWrongQuestionTextDraft("");
+    setWrongQuestionStatus("Wrong question text cleared. Analysis kept.");
+  }
+
+  function handleClearWrongQuestionNotes() {
+    setWrongQuestionNotesDraft("");
+    setWrongQuestionStatus("Wrong question notes cleared. Analysis kept.");
+  }
+
+  function handleClearWrongQuestionAnalysis() {
+    setWrongQuestionAiResult(null);
+    setWrongQuestionLocalAnalysis(buildLocalWrongQuestionAnalysis(""));
+    setWrongQuestionAnalysisSourceText("");
+    setWrongQuestionAnalysisCleared(true);
+    setWrongQuestionStatus("Wrong question analysis cleared.");
+  }
+
+  function handleClearWrongQuestionAll() {
+    setWrongQuestionImageFile(null);
+    setWrongQuestionImagePreview("");
+    setWrongQuestionOcrText("");
+    setWrongQuestionTextDraft("");
+    setWrongQuestionNotesDraft("");
+    setWrongQuestionAiResult(null);
+    setWrongQuestionLocalAnalysis(buildLocalWrongQuestionAnalysis(""));
+    setWrongQuestionAnalysisSourceText("");
+    setWrongQuestionAnalysisCleared(true);
+    setWrongQuestionStatus("Wrong question workspace cleared.");
+    if (wrongQuestionFileInputRef.current) {
+      wrongQuestionFileInputRef.current.value = "";
+    }
+  }
+
+  async function handleSaveWrongQuestion() {
+    if (!canEditCapture) {
+      setWrongQuestionStatus("Please select a sub-room before saving a wrong-question flashcard.");
       return;
     }
+
+    if (!normalizeWhitespace(wrongQuestionInputSource)) {
+      setWrongQuestionStatus("Please provide an image, wrong-question text, or wrong-question notes first.");
+      return;
+    }
+
+    const sourceText = normalizeWhitespace(wrongQuestionAnalysisSourceText)
+      ? wrongQuestionAnalysisSourceText
+      : wrongQuestionInputSource;
+    const analysisToSave = normalizeWrongQuestionAnalysis(
+      normalizeWhitespace(wrongQuestionAnalysisSourceText) ? wrongQuestionAnalysis : buildLocalWrongQuestionAnalysis(sourceText)
+    );
 
     const newCard = {
       id: createId("flashcard"),
+      division: selectedDivision,
+      roomId: selectedRoomId || "",
+      roomName: selectedRoom?.name || "",
+      subroomId: selectedSubroomId || "",
+      subroomName: selectedSubroom?.name || "",
       topicPath: currentPathLabel,
       imagePreview: wrongQuestionImagePreview,
       ocrText: wrongQuestionOcrText,
-      editedText: wrongQuestionDraftText.trim(),
-      questionText: wrongQuestionAnalysis.questionText,
-      summary: wrongQuestionAnalysis.summary,
-      correctAnswer: wrongQuestionAnalysis.correctAnswer,
-      answerExtraction: wrongQuestionAnalysis.answerExtraction,
-      bulletPoints: wrongQuestionAnalysis.bulletPoints,
-      trapPoint: wrongQuestionAnalysis.trapPoint,
-      memoryHook: wrongQuestionAnalysis.memoryHook,
+      editedText: wrongQuestionTextDraft.trim(),
+      notesText: wrongQuestionNotesDraft.trim(),
+      analysisSourceText: sourceText,
+      questionText: analysisToSave.questionText,
+      summary: analysisToSave.summary,
+      correctAnswer: analysisToSave.correctAnswer,
+      answerExtraction: analysisToSave.answerExtraction,
+      bulletPoints: analysisToSave.bulletPoints,
+      trapPoint: analysisToSave.trapPoint,
+      memoryHook: analysisToSave.memoryHook,
       savedAt: new Date().toISOString()
     };
 
-    setWrongQuestionFlashcards(prev => [newCard, ...prev]);
-    setFlashcardIndex(0);
-    setWrongQuestionStatus("Flashcard saved.");
-  }
+    try {
+      const response = await fetch("/api/wrong-questions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newCard)
+      });
 
-async function handleLoadSavedFlashcards() {
-  await fetchWrongQuestionFlashcardsFromCloud();
-  setWrongQuestionStatus("Loaded saved flashcards from cloud.");
-}
-  
-async function handleSaveWrongQuestion() {
-  if (!wrongQuestionDraftText.trim()) {
-    setWrongQuestionStatus("Text is empty.");
-    return;
-  }
+      const data = await response.json();
 
-  const newCard = {
-    id: createId("flashcard"),
-    topicPath: currentPathLabel,
-    imagePreview: wrongQuestionImagePreview,
-    ocrText: wrongQuestionOcrText,
-    editedText: wrongQuestionDraftText.trim(),
-    questionText: wrongQuestionAnalysis.questionText,
-    summary: wrongQuestionAnalysis.summary,
-    correctAnswer: wrongQuestionAnalysis.correctAnswer,
-    answerExtraction: wrongQuestionAnalysis.answerExtraction,
-    bulletPoints: wrongQuestionAnalysis.bulletPoints,
-    trapPoint: wrongQuestionAnalysis.trapPoint,
-    memoryHook: wrongQuestionAnalysis.memoryHook,
-    savedAt: new Date().toISOString()
-  };
+      if (!response.ok) {
+        setWrongQuestionStatus(`Save failed: ${data.error || "Unknown error"}`);
+        return;
+      }
 
-  try {
-    const response = await fetch("/api/wrong-questions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(newCard)
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      setWrongQuestionStatus(`Save failed: ${data.error || "Unknown error"}`);
-      return;
+      setWrongQuestionFlashcards(prev => [data.flashcard || newCard, ...prev]);
+      setFlashcardIndex(0);
+      setWrongQuestionStatus("Flashcard saved to cloud.");
+    } catch (error) {
+      console.error(error);
+      setWrongQuestionStatus("Save failed: network error.");
     }
-
-    setWrongQuestionFlashcards(prev => [data.flashcard, ...prev]);
-    setFlashcardIndex(0);
-    setWrongQuestionStatus("Flashcard saved to cloud.");
-  } catch (error) {
-    console.error(error);
-    setWrongQuestionStatus("Save failed: network error.");
   }
-}
+
+  async function handleLoadSavedFlashcards() {
+    await fetchWrongQuestionFlashcardsFromCloud();
+    setWrongQuestionStatus("Loaded saved flashcards from cloud.");
+  }
 
   async function handleWrongQuestionRunAI() {
-    if (!wrongQuestionDraftText.trim()) {
-      setWrongQuestionStatus("Please provide text first.");
+    if (!normalizeWhitespace(wrongQuestionInputSource)) {
+      setWrongQuestionStatus("Please provide an image, wrong-question text, or wrong-question notes first.");
       return;
     }
 
+    const local = buildLocalWrongQuestionAnalysis(wrongQuestionInputSource);
+    setWrongQuestionLocalAnalysis(local);
+    setWrongQuestionAiResult(null);
+    setWrongQuestionAnalysisSourceText(wrongQuestionInputSource);
+    setWrongQuestionAnalysisCleared(false);
     setIsAnalyzing(true);
     setWrongQuestionStatus("AI analyzing...");
 
@@ -1782,7 +2001,7 @@ async function handleSaveWrongQuestion() {
       const response = await fetch("/api/ai", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: wrongQuestionDraftText, type: "wrong_question" })
+        body: JSON.stringify({ text: wrongQuestionInputSource, type: "wrong_question" })
       });
 
       const data = await response.json();
@@ -1790,7 +2009,7 @@ async function handleSaveWrongQuestion() {
       if (!response.ok) {
         setWrongQuestionStatus(`AI Error: ${data.error || `HTTP ${response.status}`}`);
       } else if (data.analysis) {
-        setAiAnalysisResult(data.analysis);
+        setWrongQuestionAiResult(data.analysis);
         setWrongQuestionStatus("AI analysis complete.");
       } else {
         setWrongQuestionStatus("AI Error: Invalid response.");
@@ -1827,6 +2046,9 @@ async function handleSaveWrongQuestion() {
                   setCaptureAnalysisSourceText("");
                   setCaptureAnalysisCleared(true);
                   setCaptureStatus("Ready.");
+                  setPreviewFlashcardRoomId("");
+                  setPreviewFlashcardSubroomId("");
+                  setFlashcardIndex(0);
                 }}
               >
                 {division}
@@ -1857,6 +2079,8 @@ async function handleSaveWrongQuestion() {
                     onClick={() => {
                       setSelectedRoomId(room.id);
                       setSelectedSubroomId("");
+                      setPreviewFlashcardSubroomId("");
+                      setFlashcardIndex(0);
                     }}
                   >
                     {room.name}
@@ -1872,6 +2096,7 @@ async function handleSaveWrongQuestion() {
                         onClick={() => {
                           setSelectedRoomId(room.id);
                           setSelectedSubroomId(subroom.id);
+                          setFlashcardIndex(0);
                         }}
                       >
                         {subroom.name}
@@ -2026,38 +2251,54 @@ async function handleSaveWrongQuestion() {
         <section className="workspace-card wrong-question-workspace">
           <div className="workspace-header">
             <h2>Wrong Question Workspace</h2>
+            <div className="workspace-meta">
+              <span>{selectedDivision}</span>
+              <span>{currentViewModeLabel}</span>
+              <span>{selectedRoom?.name || "All Rooms"}</span>
+              <span>{selectedSubroom?.name || (canEditCapture ? "Selected Sub-room" : "All Sub-rooms")}</span>
+              <span>Saved Flashcards: {previewFlashcards.length}</span>
+            </div>
           </div>
 
           <div className="workspace-grid">
             <div className="panel">
               <div className="panel-title">Wrong Question Input</div>
 
-              <div className="subcard compact-subcard">
+              <div
+                className="subcard compact-subcard"
+                onDragOver={handleWrongQuestionDragOver}
+                onDrop={handleWrongQuestionDrop}
+              >
                 <div className="subcard-title">Image Upload</div>
 
                 {wrongQuestionImagePreview ? (
                   <img src={wrongQuestionImagePreview} alt="Preview" className="image-preview" />
                 ) : (
-                  <div className="image-placeholder">Image Preview</div>
+                  <div className="image-placeholder">Drag and drop an image here, or upload one.</div>
                 )}
 
                 <div className="button-row top-gap">
                   <label className="upload-nav-pill">
                     Upload Image
-                    <input type="file" accept="image/*" onChange={handleWrongQuestionImageChange} hidden />
+                    <input ref={wrongQuestionFileInputRef} type="file" accept="image/*" onChange={handleWrongQuestionImageChange} hidden />
                   </label>
 
-{wrongQuestionImagePreview ? (
-  <button
-    className="danger-lite-btn"
-    onClick={() => {
-      setWrongQuestionImageFile(null);
-      setWrongQuestionImagePreview("");
-    }}
-  >
-    Delete Image
-  </button>
-) : null}
+                  {wrongQuestionImagePreview ? (
+                    <button
+                      className="danger-lite-btn"
+                      onClick={() => {
+                        setWrongQuestionImageFile(null);
+                        setWrongQuestionImagePreview("");
+                        setWrongQuestionOcrText("");
+                        setWrongQuestionStatus("Image removed. Analysis kept.");
+                        if (wrongQuestionFileInputRef.current) {
+                          wrongQuestionFileInputRef.current.value = "";
+                        }
+                      }}
+                    >
+                      Delete Image
+                    </button>
+                  ) : null}
 
                   <button className="nav-action-pill" onClick={handleRunOcr} disabled={isRunningOcr}>
                     {isRunningOcr ? "Running..." : "Run OCR"}
@@ -2069,9 +2310,19 @@ async function handleSaveWrongQuestion() {
                 <div className="subcard-title">Wrong Question Text</div>
                 <textarea
                   className="panel-textarea wrong-question-textarea"
-                  value={wrongQuestionDraftText}
-                  onChange={event => setWrongQuestionDraftText(event.target.value)}
-                  placeholder="Paste wrong-question text here..."
+                  value={wrongQuestionTextDraft}
+                  onChange={event => setWrongQuestionTextDraft(event.target.value)}
+                  placeholder="Paste wrong-question text here or edit the OCR result..."
+                />
+              </div>
+
+              <div className="subcard compact-subcard">
+                <div className="subcard-title">Wrong Question Notes</div>
+                <textarea
+                  className="panel-textarea wrong-question-textarea"
+                  value={wrongQuestionNotesDraft}
+                  onChange={event => setWrongQuestionNotesDraft(event.target.value)}
+                  placeholder="Write your own wrong-question notes here..."
                 />
                 <div className="button-row top-gap">
                   <button onClick={handleAnalyzeWrongQuestion}>Analyze</button>
@@ -2082,9 +2333,9 @@ async function handleSaveWrongQuestion() {
             <div className="panel">
               <div className="panel-head-row">
                 <h3>
-                  Analysis{" "}
-                  <span className={`engine-badge ${aiAnalysisResult ? "ai" : "local"}`}>
-                    {aiAnalysisResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
+                  Analysis {" "}
+                  <span className={`engine-badge ${wrongQuestionAiResult ? "ai" : "local"}`}>
+                    {wrongQuestionAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
                   </span>
                 </h3>
                 <button className="ask-ai-btn" onClick={handleWrongQuestionRunAI} disabled={isAnalyzing}>
@@ -2095,12 +2346,12 @@ async function handleSaveWrongQuestion() {
               <div className="analysis-mini-grid">
                 <div className="subcard analysis-span-2">
                   <div className="subcard-title">Summary</div>
-                  <div className="analysis-box">{wrongQuestionAnalysis.summary}</div>
+                  <div className={`analysis-box ${wrongQuestionAnalysisCleared ? "is-empty" : ""}`}>{wrongQuestionAnalysis.summary}</div>
                 </div>
 
                 <div className="subcard">
                   <div className="subcard-title">Correct Answer</div>
-                  <div className="analysis-box">
+                  <div className={`analysis-box ${wrongQuestionAnalysisCleared ? "is-empty" : ""}`}>
                     {Array.isArray(wrongQuestionAnalysis.correctAnswer)
                       ? wrongQuestionAnalysis.correctAnswer.join(" / ")
                       : wrongQuestionAnalysis.correctAnswer}
@@ -2109,12 +2360,12 @@ async function handleSaveWrongQuestion() {
 
                 <div className="subcard">
                   <div className="subcard-title">Memory Hook</div>
-                  <div className="analysis-box">{wrongQuestionAnalysis.memoryHook}</div>
+                  <div className={`analysis-box ${wrongQuestionAnalysisCleared ? "is-empty" : ""}`}>{wrongQuestionAnalysis.memoryHook}</div>
                 </div>
 
                 <div className="subcard analysis-span-2">
                   <div className="subcard-title">Bullet Points</div>
-                  <div className="analysis-box">
+                  <div className={`analysis-box ${wrongQuestionAnalysisCleared ? "is-empty" : ""}`}>
                     <ul className="clean-list">
                       {wrongQuestionAnalysis.bulletPoints.map((item, index) => (
                         <li key={`${item}-${index}`}>{item}</li>
@@ -2125,7 +2376,7 @@ async function handleSaveWrongQuestion() {
 
                 <div className="subcard analysis-span-2">
                   <div className="subcard-title">Answer Extraction</div>
-                  <div className="analysis-box">
+                  <div className={`analysis-box ${wrongQuestionAnalysisCleared ? "is-empty" : ""}`}>
                     <ul className="clean-list">
                       {wrongQuestionAnalysis.answerExtraction.map((item, index) => (
                         <li key={`${item}-${index}`}>{item}</li>
@@ -2136,7 +2387,7 @@ async function handleSaveWrongQuestion() {
 
                 <div className="subcard analysis-span-2">
                   <div className="subcard-title">Trap Point</div>
-                  <div className="analysis-box">
+                  <div className={`analysis-box ${wrongQuestionAnalysisCleared ? "is-empty" : ""}`}>
                     <ul className="clean-list">
                       {wrongQuestionAnalysis.trapPoint.map((item, index) => (
                         <li key={`${item}-${index}`}>{item}</li>
@@ -2150,9 +2401,12 @@ async function handleSaveWrongQuestion() {
 
           <div className="panel">
             <div className="button-row">
-              <button onClick={handleSaveWrongQuestion}>Save Wrong Question</button>
+              <button onClick={handleSaveWrongQuestion} disabled={!canEditCapture}>Save Wrong Question</button>
               <button onClick={handleLoadSavedFlashcards}>Load Saved Flashcards</button>
-              <button onClick={handleClearWrongQuestion}>Clear Wrong Question</button>
+              <button onClick={handleClearWrongQuestionText}>Clear Text</button>
+              <button onClick={handleClearWrongQuestionNotes}>Clear Notes</button>
+              <button onClick={handleClearWrongQuestionAnalysis}>Clear Analysis</button>
+              <button onClick={handleClearWrongQuestionAll}>Clear All</button>
             </div>
             <div className="status-text success">{wrongQuestionStatus}</div>
           </div>
@@ -2160,107 +2414,210 @@ async function handleSaveWrongQuestion() {
           <div className="panel">
             <div className="panel-title">Wrong Question Flashcards</div>
 
-            {!wrongQuestionFlashcards.length ? (
-              <div className="flashcard-placeholder">No saved flashcards yet.</div>
-            ) : (
-              <div className="flashcard-carousel">
-                <div className="flashcard-carousel-header">
-                  <button onClick={() => setFlashcardIndex(prev => Math.max(0, prev - 1))} disabled={flashcardIndex === 0}>
-                    ← Previous
-                  </button>
-                  <div className="flashcard-counter">
-                    {flashcardIndex + 1} / {wrongQuestionFlashcards.length}
+            {canEditCapture ? (
+              !previewFlashcards.length ? (
+                <div className="flashcard-placeholder">No saved flashcards in this sub-room yet.</div>
+              ) : (
+                <div className="flashcard-carousel">
+                  <div className="flashcard-carousel-header">
+                    <button onClick={() => setFlashcardIndex(prev => Math.max(0, prev - 1))} disabled={flashcardIndex === 0}>
+                      ← Previous
+                    </button>
+                    <div className="flashcard-counter">
+                      {flashcardIndex + 1} / {previewFlashcards.length}
+                    </div>
+                    <button
+                      onClick={() => setFlashcardIndex(prev => Math.min(previewFlashcards.length - 1, prev + 1))}
+                      disabled={flashcardIndex === previewFlashcards.length - 1}
+                    >
+                      Next →
+                    </button>
                   </div>
-                  <button
-                    onClick={() => setFlashcardIndex(prev => Math.min(wrongQuestionFlashcards.length - 1, prev + 1))}
-                    disabled={flashcardIndex === wrongQuestionFlashcards.length - 1}
-                  >
-                    Next →
-                  </button>
+
+                  {currentFlashcard ? (
+                    <div className="flashcard-slide">
+                      <div className="flashcard-slide-top">
+                        <div className="flashcard-meta">
+                          {currentFlashcard.topicPath} · {formatSavedAt(currentFlashcard.savedAt)}
+                        </div>
+                        <button
+                          className="danger-lite-btn"
+                          onClick={async () => {
+                            if (!window.confirm("Delete this flashcard?")) return;
+                            const deleted = await deleteWrongQuestionFlashcardFromCloud(currentFlashcard.id);
+                            if (!deleted) return;
+                            setWrongQuestionFlashcards(prev => prev.filter(card => card.id !== currentFlashcard.id));
+                            setFlashcardIndex(prev => (prev > 0 ? prev - 1 : 0));
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+
+                      <div className="flashcard-slide-body">
+                        <div className="flashcard-col">
+                          {currentFlashcard.imagePreview ? (
+                            <img
+                              src={currentFlashcard.imagePreview}
+                              alt="Wrong question"
+                              className="flashcard-image"
+                              onClick={() => setExpandedImage(currentFlashcard.imagePreview)}
+                            />
+                          ) : (
+                            <div className="flashcard-no-image">No image</div>
+                          )}
+
+                          <div className="subcard compact-subcard">
+                            <div className="subcard-title">Wrong Question Summary</div>
+                            <p className="plain-paragraph">{currentFlashcard.summary}</p>
+                          </div>
+                        </div>
+
+                        <div className="flashcard-col">
+                          <div className="subcard compact-subcard">
+                            <div className="subcard-title">Correct Answer</div>
+                            <p className="plain-paragraph">
+                              {Array.isArray(currentFlashcard.correctAnswer)
+                                ? currentFlashcard.correctAnswer.join(" / ")
+                                : currentFlashcard.correctAnswer}
+                            </p>
+                          </div>
+
+                          <div className="subcard compact-subcard">
+                            <div className="subcard-title">Bullet Points</div>
+                            <ul className="clean-list">
+                              {(currentFlashcard.bulletPoints || []).map((item, index) => (
+                                <li key={`${item}-${index}`}>{item}</li>
+                              ))}
+                            </ul>
+                          </div>
+
+                          <div className="subcard compact-subcard">
+                            <div className="subcard-title">Memory Hook</div>
+                            <p className="plain-paragraph">{currentFlashcard.memoryHook}</p>
+                          </div>
+
+                          <div className="subcard compact-subcard">
+                            <div className="subcard-title">Trap Point</div>
+                            <ul className="clean-list">
+                              {(currentFlashcard.trapPoint || []).map((item, index) => (
+                                <li key={`${item}-${index}`}>{item}</li>
+                              ))}
+                            </ul>
+                          </div>
+
+                          <div className="subcard compact-subcard">
+                            <div className="subcard-title">Answer Extraction</div>
+                            <ul className="clean-list">
+                              {(currentFlashcard.answerExtraction || []).map((item, index) => (
+                                <li key={`${item}-${index}`}>{item}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
-
-                {currentFlashcard ? (
-                  <div className="flashcard-slide">
-                    <div className="flashcard-slide-top">
-                      <div className="flashcard-meta">
-                        {currentFlashcard.topicPath} · {formatSavedAt(currentFlashcard.savedAt)}
-                      </div>
-                      <button
-                        className="danger-lite-btn"
-                        onClick={() => {
-                          if (!window.confirm("Delete this flashcard?")) return;
-                          setWrongQuestionFlashcards(prev => prev.filter(card => card.id !== currentFlashcard.id));
-                          setFlashcardIndex(prev => (prev > 0 ? prev - 1 : 0));
-                        }}
-                      >
-                        Delete
-                      </button>
+              )
+            ) : isRoomPreview ? (
+              <div className="preview-browser-stack">
+                <div className="preview-browser-title">Select a sub-room to preview saved flashcards in this room.</div>
+                {!roomPreviewFlashcardSubrooms.length ? (
+                  <div className="flashcard-placeholder">No saved flashcards in this room yet.</div>
+                ) : (
+                  <>
+                    <div className="preview-pill-grid">
+                      {roomPreviewFlashcardSubrooms.map(subroom => (
+                        <button
+                          key={subroom.id}
+                          className={`subroom-pill ${previewFlashcardSubroomId === subroom.id ? "active" : ""}`}
+                          onClick={() => {
+                            setPreviewFlashcardSubroomId(subroom.id);
+                            setFlashcardIndex(0);
+                          }}
+                        >
+                          {subroom.name} ({subroom.flashcards.length})
+                        </button>
+                      ))}
                     </div>
 
-                    <div className="flashcard-slide-body">
-                      <div className="flashcard-col">
-                        {currentFlashcard.imagePreview ? (
-                          <img
-                            src={currentFlashcard.imagePreview}
-                            alt="Wrong question"
-                            className="flashcard-image"
-                            onClick={() => setExpandedImage(currentFlashcard.imagePreview)}
-                          />
-                        ) : (
-                          <div className="flashcard-no-image">No image</div>
-                        )}
-
-                        <div className="subcard compact-subcard">
-                          <div className="subcard-title">Wrong Question Summary</div>
-                          <p className="plain-paragraph">{currentFlashcard.summary}</p>
-                        </div>
+                    {!previewFlashcardSubroom ? (
+                      <div className="flashcard-placeholder">Choose a sub-room above to preview its flashcards.</div>
+                    ) : (
+                      <div className="flashcard-list-stack">
+                        {previewFlashcards.map(card => (
+                          <div key={card.id} className="subcard compact-subcard">
+                            <div className="flashcard-meta">{card.subroomName} · {formatSavedAt(card.savedAt)}</div>
+                            <div className="subcard-title">{card.questionText}</div>
+                            <p className="plain-paragraph">{card.summary}</p>
+                          </div>
+                        ))}
                       </div>
-
-                      <div className="flashcard-col">
-                        <div className="subcard compact-subcard">
-                          <div className="subcard-title">Correct Answer</div>
-                          <p className="plain-paragraph">
-                            {Array.isArray(currentFlashcard.correctAnswer)
-                              ? currentFlashcard.correctAnswer.join(" / ")
-                              : currentFlashcard.correctAnswer}
-                          </p>
-                        </div>
-
-                        <div className="subcard compact-subcard">
-                          <div className="subcard-title">Bullet Points</div>
-                          <ul className="clean-list">
-                            {(currentFlashcard.bulletPoints || []).map((item, index) => (
-                              <li key={`${item}-${index}`}>{item}</li>
-                            ))}
-                          </ul>
-                        </div>
-
-                        <div className="subcard compact-subcard">
-                          <div className="subcard-title">Memory Hook</div>
-                          <p className="plain-paragraph">{currentFlashcard.memoryHook}</p>
-                        </div>
-
-                        <div className="subcard compact-subcard">
-                          <div className="subcard-title">Trap Point</div>
-                          <ul className="clean-list">
-                            {(currentFlashcard.trapPoint || []).map((item, index) => (
-                              <li key={`${item}-${index}`}>{item}</li>
-                            ))}
-                          </ul>
-                        </div>
-
-                        <div className="subcard compact-subcard">
-                          <div className="subcard-title">Answer Extraction</div>
-                          <ul className="clean-list">
-                            {(currentFlashcard.answerExtraction || []).map((item, index) => (
-                              <li key={`${item}-${index}`}>{item}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            ) : (
+              <div className="preview-browser-stack">
+                <div className="preview-browser-title">Select a room, then a sub-room, to preview saved flashcards in this topic.</div>
+                {!topicPreviewFlashcardRooms.length ? (
+                  <div className="flashcard-placeholder">No saved flashcards in this topic yet.</div>
+                ) : (
+                  <>
+                    <div className="preview-pill-grid">
+                      {topicPreviewFlashcardRooms.map(room => (
+                        <button
+                          key={room.id}
+                          className={`room-pill ${previewFlashcardRoomId === room.id ? "active" : ""}`}
+                          onClick={() => {
+                            setPreviewFlashcardRoomId(room.id);
+                            setPreviewFlashcardSubroomId("");
+                            setFlashcardIndex(0);
+                          }}
+                        >
+                          {room.name} ({room.flashcards.length})
+                        </button>
+                      ))}
                     </div>
-                  </div>
-                ) : null}
+
+                    {previewFlashcardRoom ? (
+                      <>
+                        <div className="preview-browser-title">{previewFlashcardRoom.name} sub-rooms</div>
+                        <div className="preview-pill-grid">
+                          {roomPreviewFlashcardSubrooms.map(subroom => (
+                            <button
+                              key={subroom.id}
+                              className={`subroom-pill ${previewFlashcardSubroomId === subroom.id ? "active" : ""}`}
+                              onClick={() => {
+                                setPreviewFlashcardSubroomId(subroom.id);
+                                setFlashcardIndex(0);
+                              }}
+                            >
+                              {subroom.name} ({subroom.flashcards.length})
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : null}
+
+                    {!previewFlashcardSubroom ? (
+                      <div className="flashcard-placeholder">Choose a sub-room to preview its saved flashcards.</div>
+                    ) : (
+                      <div className="flashcard-list-stack">
+                        {previewFlashcards.map(card => (
+                          <div key={card.id} className="subcard compact-subcard">
+                            <div className="flashcard-meta">
+                              {card.roomName} / {card.subroomName} · {formatSavedAt(card.savedAt)}
+                            </div>
+                            <div className="subcard-title">{card.questionText}</div>
+                            <p className="plain-paragraph">{card.summary}</p>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
           </div>
@@ -2272,6 +2629,7 @@ async function handleSaveWrongQuestion() {
         onClose={() => setIsSavedNotesModalOpen(false)}
         notes={filteredSavedNotes}
         onLoadNote={handleLoadSavedNote}
+        onDeleteNote={deleteSavedNoteFromCloud}
         currentPathLabel={currentPathLabel}
       />
 
