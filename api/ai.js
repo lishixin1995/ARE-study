@@ -518,7 +518,10 @@ D. logicForest
   - Tools / Devices
   - Key Metrics / Ratios
   - Cautions / Exceptions
-- Use "concept" for major branches.
+- Use "concept" for major branches or subtopic names.
+- Concept nodes must be short branch titles or subtopic names, not full explanatory sentences.
+- Good concept labels: "Planning Goals", "Orientation Rules", "Sidelighting", "Toplighting", "Control Devices".
+- Bad concept labels: "Site Planning focuses on", "To optimize daylight", "The U.S", "Considering both climate and microclimate".
 - Use "rule" for principles, comparisons, or decision logic under each branch.
 - Use "point" for concrete supporting ideas, examples, or sub-points.
 - Every label must be a complete thought, not a fragment.
@@ -543,6 +546,7 @@ Bad behavior:
 - generic labels
 - incomplete phrases
 - tiny fragments pretending to be logic
+- filler nodes such as "to", "the U.S", or "optimize daylight"
 - giving equal visual weight to major principles and minor details
 
 Every node must answer one of these roles:
@@ -670,8 +674,8 @@ export default async function handler(request, response) {
 
     const prompt =
       type === "wrong_question"
-        ? `${WRONG_QUESTION_PROMPT}\n${text}`
-        : `${CAPTURE_PROMPT}\n${text}`;
+        ? \`\${WRONG_QUESTION_PROMPT}\\n\${text}\`
+        : \`\${CAPTURE_PROMPT}\\n\${text}\`;
 
     const result = await model.generateContent(prompt);
     const rawText = result?.response?.text?.() || "";
@@ -682,7 +686,7 @@ export default async function handler(request, response) {
       parsed = JSON.parse(jsonText);
     } catch {
       return response.status(500).json({
-        error: `Model returned invalid JSON: ${jsonText.slice(0, 800)}`
+        error: \`Model returned invalid JSON: \${jsonText.slice(0, 800)}\`
       });
     }
 
