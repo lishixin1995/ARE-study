@@ -39,6 +39,76 @@ const EMPTY_CAPTURE_ANALYSIS = {
   logicLinks: []
 };
 
+function cloneCaptureAnalysis(analysis = EMPTY_CAPTURE_ANALYSIS) {
+  return {
+    summary: typeof analysis?.summary === "string" ? analysis.summary : "",
+    bulletPoints: Array.isArray(analysis?.bulletPoints) ? [...analysis.bulletPoints] : [],
+    logicLinks: Array.isArray(analysis?.logicLinks) ? [...analysis.logicLinks] : []
+  };
+}
+
+function buildEmptyCaptureWorkspace(status = "Ready.") {
+  return {
+    draft: "",
+    localAnalysis: cloneCaptureAnalysis(EMPTY_CAPTURE_ANALYSIS),
+    aiResult: null,
+    analysisSourceText: "",
+    analysisCleared: true,
+    status
+  };
+}
+
+function buildCaptureWorkspaceFromState({
+  draft = "",
+  localAnalysis = EMPTY_CAPTURE_ANALYSIS,
+  aiResult = null,
+  analysisSourceText = "",
+  analysisCleared = true,
+  status = "Ready."
+} = {}) {
+  return {
+    draft: String(draft || ""),
+    localAnalysis: cloneCaptureAnalysis(localAnalysis),
+    aiResult: aiResult ? JSON.parse(JSON.stringify(aiResult)) : null,
+    analysisSourceText: String(analysisSourceText || ""),
+    analysisCleared: Boolean(analysisCleared),
+    status: String(status || "Ready.")
+  };
+}
+
+function buildCaptureWorkspaceFromNote(note, statusMessage = "Loaded latest saved note.") {
+  const text = String(note?.text || "").trim();
+  const hasText = Boolean(normalizeWhitespace(text));
+
+  return {
+    draft: text,
+    localAnalysis: hasText ? buildLocalCaptureAnalysis(text) : cloneCaptureAnalysis(EMPTY_CAPTURE_ANALYSIS),
+    aiResult: null,
+    analysisSourceText: hasText ? text : "",
+    analysisCleared: !hasText,
+    status: statusMessage
+  };
+}
+
+function createCaptureWorkspaceKey(division = "", roomId = "", subroomId = "") {
+  if (!division || !roomId || !subroomId) return "";
+  return `${division}::${roomId}::${subroomId}`;
+}
+
+function areCaptureWorkspacesEqual(a, b) {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+
+  return (
+    String(a.draft || "") === String(b.draft || "") &&
+    String(a.analysisSourceText || "") === String(b.analysisSourceText || "") &&
+    Boolean(a.analysisCleared) === Boolean(b.analysisCleared) &&
+    String(a.status || "") === String(b.status || "") &&
+    JSON.stringify(cloneCaptureAnalysis(a.localAnalysis)) === JSON.stringify(cloneCaptureAnalysis(b.localAnalysis)) &&
+    JSON.stringify(a.aiResult || null) === JSON.stringify(b.aiResult || null)
+  );
+}
+
 function slugify(text = "") {
   return String(text)
     .toLowerCase()
@@ -406,7 +476,28 @@ function normalizeAiCaptureAnalysis(analysis) {
     };
   }
 
-  const logicForest = normalizeLogicTreeNode(analysis.logicForest || analysis.root || null);
+  function normalizeForestInput(value) {
+    if (!value) return null;
+
+    if (Array.isArray(value)) {
+      const nodes = value
+        .map(item => normalizeLogicTreeNode(item))
+        .filter(Boolean);
+
+      if (!nodes.length) return null;
+      if (nodes.length === 1) return nodes[0];
+
+      return {
+        label: normalizeWhitespace(analysis.summary || "Study Notes") || "Study Notes",
+        type: "topic",
+        children: nodes
+      };
+    }
+
+    return normalizeLogicTreeNode(value);
+  }
+
+  const logicForest = normalizeForestInput(analysis.logicForest || analysis.root || null);
 
   return {
     summary: typeof analysis.summary === "string" ? analysis.summary.trim() : "",
@@ -914,6 +1005,9 @@ export default function App() {
 
   const liveLogicPrintRef = useRef(null);
   const wrongQuestionFileInputRef = useRef(null);
+  const lastHydratedCaptureWorkspaceKeyRef = useRef("");
+
+  const [captureWorkspaceByKey, setCaptureWorkspaceByKey] = useState({});
 
   const divisionRooms = useMemo(() => getRoomsForDivision(roomTree, selectedDivision), [roomTree, selectedDivision]);
   const selectedRoom = useMemo(
@@ -929,6 +1023,21 @@ export default function App() {
     () => getCurrentPathLabel(roomTree, selectedDivision, selectedRoomId, selectedSubroomId),
     [roomTree, selectedDivision, selectedRoomId, selectedSubroomId]
   );
+
+  const captureWorkspaceKey = useMemo(
+    () => createCaptureWorkspaceKey(selectedDivision, selectedRoomId, selectedSubroomId),
+    [selectedDivision, selectedRoomId, selectedSubroomId]
+  );
+
+  function applyCaptureWorkspace(workspace) {
+    const nextWorkspace = workspace || buildEmptyCaptureWorkspace();
+    setCaptureDraft(nextWorkspace.draft || "");
+    setCaptureLocalAnalysis(cloneCaptureAnalysis(nextWorkspace.localAnalysis));
+    setCaptureAiResult(nextWorkspace.aiResult || null);
+    setCaptureAnalysisSourceText(nextWorkspace.analysisSourceText || "");
+    setCaptureAnalysisCleared(Boolean(nextWorkspace.analysisCleared));
+    setCaptureStatus(nextWorkspace.status || "Ready.");
+  }
 
   useEffect(() => {
   fetchRoomsFromCloud(selectedDivision);
@@ -962,6 +1071,86 @@ export default function App() {
   useEffect(() => {
     fetchSavedNotesFromCloud(selectedDivision);
   }, [selectedDivision]);
+
+  useEffect(() => {
+    if (!captureWorkspaceKey) return;
+
+    const nextWorkspace = buildCaptureWorkspaceFromState({
+      draft: captureDraft,
+      localAnalysis: captureLocalAnalysis,
+      aiResult: captureAiResult,
+      analysisSourceText: captureAnalysisSourceText,
+      analysisCleared: captureAnalysisCleared,
+      status: captureStatus
+    });
+
+    setCaptureWorkspaceByKey(prev => {
+      const currentWorkspace = prev[captureWorkspaceKey];
+      if (areCaptureWorkspacesEqual(currentWorkspace, nextWorkspace)) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        [captureWorkspaceKey]: nextWorkspace
+      };
+    });
+  }, [
+    captureWorkspaceKey,
+    captureDraft,
+    captureLocalAnalysis,
+    captureAiResult,
+    captureAnalysisSourceText,
+    captureAnalysisCleared,
+    captureStatus
+  ]);
+
+  useEffect(() => {
+    if (!captureWorkspaceKey) return;
+
+    if (lastHydratedCaptureWorkspaceKeyRef.current === captureWorkspaceKey && captureWorkspaceByKey[captureWorkspaceKey]) {
+      return;
+    }
+
+    const existingWorkspace = captureWorkspaceByKey[captureWorkspaceKey];
+    if (existingWorkspace) {
+      applyCaptureWorkspace(existingWorkspace);
+      lastHydratedCaptureWorkspaceKeyRef.current = captureWorkspaceKey;
+      return;
+    }
+
+    const latestSavedNote = [...savedCaptureNotes]
+      .filter(note => {
+        return (
+          note.division === selectedDivision &&
+          note.roomId === selectedRoomId &&
+          (note.subroomId || "") === (selectedSubroomId || "")
+        );
+      })
+      .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime())[0];
+
+    const hydratedWorkspace = latestSavedNote
+      ? buildCaptureWorkspaceFromNote(
+          latestSavedNote,
+          `Loaded latest saved note from ${formatSavedAt(latestSavedNote.savedAt)}.`
+        )
+      : buildEmptyCaptureWorkspace("Ready.");
+
+    setCaptureWorkspaceByKey(prev => ({
+      ...prev,
+      [captureWorkspaceKey]: hydratedWorkspace
+    }));
+
+    applyCaptureWorkspace(hydratedWorkspace);
+    lastHydratedCaptureWorkspaceKeyRef.current = captureWorkspaceKey;
+  }, [
+    captureWorkspaceKey,
+    captureWorkspaceByKey,
+    savedCaptureNotes,
+    selectedDivision,
+    selectedRoomId,
+    selectedSubroomId
+  ]);
 
   useEffect(() => {
     fetchWrongQuestionFlashcardsFromCloud();
@@ -1904,6 +2093,7 @@ async function handleAddSubroom() {
       })
     }));
 
+    lastHydratedCaptureWorkspaceKeyRef.current = "";
     setSelectedSubroomId(newSubroom.id);
   } catch (error) {
     console.error(error);
@@ -2207,6 +2397,7 @@ async function handleDeleteSelectedRoomOrSubroom() {
                   setSelectedDivision(division);
                   setSelectedRoomId("");
                   setSelectedSubroomId("");
+                  lastHydratedCaptureWorkspaceKeyRef.current = "";
                   setCaptureDraft("");
                   setCaptureLocalAnalysis(EMPTY_CAPTURE_ANALYSIS);
                   setCaptureAiResult(null);
@@ -2246,6 +2437,7 @@ async function handleDeleteSelectedRoomOrSubroom() {
                     onClick={() => {
                       setSelectedRoomId(room.id);
                       setSelectedSubroomId("");
+                      lastHydratedCaptureWorkspaceKeyRef.current = "";
                       setPreviewFlashcardSubroomId("");
                       setFlashcardIndex(0);
                     }}
@@ -2262,6 +2454,7 @@ async function handleDeleteSelectedRoomOrSubroom() {
                         className={`subroom-pill ${selectedSubroomId === subroom.id ? "active" : ""}`}
                         onClick={() => {
                           setSelectedRoomId(room.id);
+                          lastHydratedCaptureWorkspaceKeyRef.current = "";
                           setSelectedSubroomId(subroom.id);
                           setFlashcardIndex(0);
                         }}
