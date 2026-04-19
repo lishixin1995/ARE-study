@@ -36,7 +36,8 @@ Punch list review compares completed work against contract expectations.`
 const EMPTY_CAPTURE_ANALYSIS = {
   summary: "",
   bulletPoints: [],
-  logicLinks: []
+  logicLinks: [],
+  logicForest: null
 };
 
 function slugify(text = "") {
@@ -49,6 +50,11 @@ function slugify(text = "") {
 
 function createId(prefix = "id") {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function makeCaptureScopeKey(division = "", roomId = "", subroomId = "") {
+  if (!division || !roomId || !subroomId) return "";
+  return `${division}::${roomId}::${subroomId}`;
 }
 
 function normalizeWhitespace(text = "") {
@@ -76,6 +82,18 @@ function titleCase(text = "") {
 function sentenceCase(text = "") {
   const clean = normalizeWhitespace(text).replace(/[.;]+$/g, "").trim();
   if (!clean) return "";
+  return clean.charAt(0).toUpperCase() + clean.slice(1);
+}
+
+function smartNodeLabel(text = "") {
+  const clean = normalizeWhitespace(String(text || "").replace(/[.;]+$/g, "").trim());
+  if (!clean) return "";
+  if (/[A-Z]{2,}|[.]/.test(clean)) {
+    return clean.charAt(0).toUpperCase() + clean.slice(1);
+  }
+  if (!/[A-Z]/.test(clean)) {
+    return sentenceCase(clean);
+  }
   return clean.charAt(0).toUpperCase() + clean.slice(1);
 }
 
@@ -181,142 +199,112 @@ function uniqueByLabel(items = []) {
   });
 }
 
-function buildMindMapFromText(text = "") {
-  const lines = splitEditorLines(text);
+function buildMindMapFromText(text = "", rootHint = "Study Notes") {
+  const lines = splitEditorLines(text)
+    .map(line => line.replace(/^[•\-–—]+\s*/g, "").trim())
+    .filter(Boolean);
+
   if (!lines.length) return null;
 
-  let rootLabel = "Study Notes";
-  const firstColon = lines[0].match(/^([^:：]{1,40})[:：]\s*(.+)$/);
-
-  if (firstColon) {
-    rootLabel = titleCase(firstColon[1]);
-  } else {
-    rootLabel = titleCase(lines[0].split(" ").slice(0, 4).join(" ")) || "Study Notes";
-  }
-
-  const root = {
-    label: rootLabel,
-    children: []
-  };
-
-  function addTopNode(node) {
-    if (!node?.label) return;
-    root.children.push(node);
-  }
+  const headingPattern = /^(?:\d+|[A-Z]|[IVXLC]+)[.)]\s+(.+)$/i;
+  const colonPattern = /^([^:：]{1,60})[:：]\s*(.+)$/;
+  const actionPattern =
+    /^(.*?)\s+(relies on|uses|use|controls|control|reduces|reduce|gain|gains|optimizes|optimize|stabilizes|stabilize|helps|help|takes|take)\s+(.+)$/i;
 
   function buildLeaf(label) {
-    return { label: sentenceCase(label), children: [] };
-  }
-
-  function buildBranch(subject, childLabels = []) {
     return {
-      label: titleCase(subject),
-      children: childLabels.map(item => buildLeaf(item))
+      label: smartNodeLabel(label),
+      children: []
     };
   }
 
-  function parseActionRemainder(relation, remainder) {
-    const clean = remainder.replace(/[.;]+$/g, "").trim();
-
-    if (!clean) return [];
-
-    const lowerRelation = relation.toLowerCase();
-
-    if (/^mechanical equipment and uses more energy$/i.test(clean)) {
-      return ["Mechanical equipment", "Uses more energy"];
-    }
-
-    if (/^sun,\s*air,\s*and wind flow$/i.test(clean)) {
-      return ["Sun", "Air", "Wind flow"];
-    }
-
-    if (lowerRelation === "reduce" && /^heat loss and gain solar heat$/i.test(clean)) {
-      return ["Reduce heat loss", "Gain solar heat"];
-    }
-
-    if (lowerRelation === "control" && /^heat gain and optimize natural ventilation$/i.test(clean)) {
-      return ["Control heat gain", "Optimize natural ventilation"];
-    }
-
-    if ((lowerRelation === "helps" || lowerRelation === "stabilizes") && /^temperature but takes more space$/i.test(clean)) {
-      return ["Stabilizes temperature", "Takes more space"];
-    }
-
-    if (/^(.+?)\s+and uses\s+(.+)$/i.test(clean)) {
-      const match = clean.match(/^(.+?)\s+and uses\s+(.+)$/i);
-      return [sentenceCase(match[1]), sentenceCase(`Uses ${match[2]}`)];
-    }
-
-    if (/^(.+?)\s+and gain\s+(.+)$/i.test(clean)) {
-      const match = clean.match(/^(.+?)\s+and gain\s+(.+)$/i);
-      return [sentenceCase(`Reduce ${match[1]}`), sentenceCase(`Gain ${match[2]}`)];
-    }
-
-    if (/^(.+?)\s+and optimize\s+(.+)$/i.test(clean)) {
-      const match = clean.match(/^(.+?)\s+and optimize\s+(.+)$/i);
-      return [sentenceCase(`Control ${match[1]}`), sentenceCase(`Optimize ${match[2]}`)];
-    }
-
-    if (/^(.+?)\s+but takes\s+(.+)$/i.test(clean)) {
-      const match = clean.match(/^(.+?)\s+but takes\s+(.+)$/i);
-      return [sentenceCase(`Stabilizes ${match[1]}`), sentenceCase(`Takes ${match[2]}`)];
-    }
-
-    if (lowerRelation === "relies on") {
-      const items = parseListItems(clean);
-      if (items.length > 1) return items;
-      return [sentenceCase(`Relies on ${clean}`)];
-    }
-
-    if (["reduce", "gain", "control", "optimize", "uses", "stabilizes", "helps", "takes"].includes(lowerRelation)) {
-      return [sentenceCase(`${titleCase(lowerRelation)} ${clean}`)];
-    }
-
-    return [sentenceCase(clean)];
+  function buildBranch(label, children = []) {
+    return {
+      label: smartNodeLabel(label),
+      children: uniqueByLabel(children)
+    };
   }
 
-  lines.forEach((line, index) => {
-    const clean = line.replace(/[•\-–—]\s*/g, "").trim();
-    if (!clean) return;
+  function buildNodeFromLine(line) {
+    const clean = normalizeWhitespace(line).replace(/[.;]+$/g, "").trim();
+    if (!clean) return null;
 
-    const colonMatch = clean.match(/^([^:：]{1,40})[:：]\s*(.+)$/);
+    const colonMatch = clean.match(colonPattern);
     if (colonMatch) {
-      const left = titleCase(colonMatch[1]);
-      const right = colonMatch[2].trim();
+      const rightItems = parseListItems(colonMatch[2]);
+      return buildBranch(
+        colonMatch[1],
+        rightItems.length ? rightItems.map(item => buildLeaf(item)) : [buildLeaf(colonMatch[2])]
+      );
+    }
 
-      if (index === 0 && left === rootLabel) {
-        const actionMatch = right.match(/^(.*?)\s+(relies on|uses|use|controls|control|reduces|reduce|gain|gains|optimizes|optimize|stabilizes|stabilize|helps|help|takes|take)\s+(.+)$/i);
-        if (actionMatch) {
-          addTopNode(buildBranch(actionMatch[1], parseActionRemainder(actionMatch[2], actionMatch[3])));
-        } else {
-          addTopNode(buildBranch(left, parseListItems(right)));
-        }
-      } else {
-        addTopNode(buildBranch(left, parseListItems(right)));
+    const climateMatch = clean.match(/^In\s+([^,]+),\s*(.+)$/i);
+    if (climateMatch) {
+      const actionItems = parseActionRemainder("control", climateMatch[2]);
+      return buildBranch(
+        climateMatch[1],
+        (actionItems.length ? actionItems : parseListItems(climateMatch[2])).map(item => buildLeaf(item))
+      );
+    }
+
+    const actionMatch = clean.match(actionPattern);
+    if (actionMatch) {
+      return buildBranch(
+        actionMatch[1],
+        parseActionRemainder(actionMatch[2], actionMatch[3]).map(item => buildLeaf(item))
+      );
+    }
+
+    return buildLeaf(clean);
+  }
+
+  const hasMajorHeadings = lines.some(line => headingPattern.test(line));
+  const root = {
+    label: smartNodeLabel(rootHint || "Study Notes"),
+    children: []
+  };
+
+  if (hasMajorHeadings) {
+    let currentBranch = null;
+
+    lines.forEach(line => {
+      const headingMatch = line.match(headingPattern);
+
+      if (headingMatch) {
+        currentBranch = buildBranch(headingMatch[1], []);
+        root.children.push(currentBranch);
+        return;
       }
-      return;
-    }
 
-    const inClimateMatch = clean.match(/^In\s+([^,]+),\s*(.+)$/i);
-    if (inClimateMatch) {
-      addTopNode(buildBranch(inClimateMatch[1], parseActionRemainder("control", inClimateMatch[2]).length ? parseActionRemainder("control", inClimateMatch[2]) : parseListItems(inClimateMatch[2])));
-      return;
-    }
+      const node = buildNodeFromLine(line);
+      if (!node) return;
 
-    const generalMatch = clean.match(
-      /^(.*?)\s+(relies on|uses|use|controls|control|reduces|reduce|gain|gains|optimizes|optimize|stabilizes|stabilize|helps|help|takes|take)\s+(.+)$/i
+      if (currentBranch) {
+        currentBranch.children = uniqueByLabel([...(currentBranch.children || []), node]);
+      } else {
+        root.children.push(node);
+      }
+    });
+
+    root.children = uniqueByLabel(
+      root.children
+        .filter(Boolean)
+        .map(node => ({
+          ...node,
+          children: uniqueByLabel(node.children || [])
+        }))
     );
 
-    if (generalMatch) {
-      addTopNode(buildBranch(generalMatch[1], parseActionRemainder(generalMatch[2], generalMatch[3])));
-      return;
-    }
+    return root.children.length ? root : null;
+  }
 
-    addTopNode(buildBranch(clean, []));
+  lines.forEach(line => {
+    const node = buildNodeFromLine(line);
+    if (node) root.children.push(node);
   });
 
   root.children = uniqueByLabel(root.children);
-  return root;
+  return root.children.length ? root : null;
 }
 
 function buildLocalCaptureAnalysis(text = "") {
@@ -406,7 +394,29 @@ function normalizeAiCaptureAnalysis(analysis) {
     };
   }
 
-  const logicForest = normalizeLogicTreeNode(analysis.logicForest || analysis.root || null);
+  function normalizeForestInput(value) {
+    if (!value) return null;
+
+    if (Array.isArray(value)) {
+      const nodes = value
+        .map(item => normalizeLogicTreeNode(item))
+        .filter(Boolean);
+
+      if (!nodes.length) return null;
+
+      if (nodes.length === 1) return nodes[0];
+
+      return {
+        label: normalizeWhitespace(analysis.summary || "Study Notes") || "Study Notes",
+        type: "topic",
+        children: nodes
+      };
+    }
+
+    return normalizeLogicTreeNode(value);
+  }
+
+  const logicForest = normalizeForestInput(analysis.logicForest || analysis.root || null);
 
   return {
     summary: typeof analysis.summary === "string" ? analysis.summary.trim() : "",
@@ -914,6 +924,9 @@ export default function App() {
 
   const liveLogicPrintRef = useRef(null);
   const wrongQuestionFileInputRef = useRef(null);
+  const captureWorkspaceStoreRef = useRef({});
+  const isHydratingCaptureWorkspaceRef = useRef(false);
+  const previousCaptureScopeKeyRef = useRef("");
 
   const divisionRooms = useMemo(() => getRoomsForDivision(roomTree, selectedDivision), [roomTree, selectedDivision]);
   const selectedRoom = useMemo(
@@ -928,6 +941,11 @@ export default function App() {
   const currentPathLabel = useMemo(
     () => getCurrentPathLabel(roomTree, selectedDivision, selectedRoomId, selectedSubroomId),
     [roomTree, selectedDivision, selectedRoomId, selectedSubroomId]
+  );
+
+  const currentCaptureScopeKey = useMemo(
+    () => makeCaptureScopeKey(selectedDivision, selectedRoomId, selectedSubroomId),
+    [selectedDivision, selectedRoomId, selectedSubroomId]
   );
 
   useEffect(() => {
@@ -1157,6 +1175,114 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
   const isRoomPreview = Boolean(selectedRoomId) && !selectedSubroomId;
   const isDivisionPreview = !selectedRoomId && !selectedSubroomId;
 
+  const captureRootHint = useMemo(
+    () => selectedSubroom?.name || selectedRoom?.name || selectedDivision || "Study Notes",
+    [selectedSubroom, selectedRoom, selectedDivision]
+  );
+
+  const previewRootHint = useMemo(
+    () => (isRoomPreview ? selectedRoom?.name || "Room Preview" : selectedDivision || "Topic Preview"),
+    [isRoomPreview, selectedRoom, selectedDivision]
+  );
+
+  useEffect(() => {
+    if (!canEditCapture || !currentCaptureScopeKey || isHydratingCaptureWorkspaceRef.current) return;
+
+    captureWorkspaceStoreRef.current[currentCaptureScopeKey] = {
+      draft: captureDraft,
+      localAnalysis: captureLocalAnalysis,
+      aiResult: captureAiResult,
+      sourceText: captureAnalysisSourceText,
+      isCleared: captureAnalysisCleared,
+      status: captureStatus
+    };
+  }, [
+    canEditCapture,
+    currentCaptureScopeKey,
+    captureDraft,
+    captureLocalAnalysis,
+    captureAiResult,
+    captureAnalysisSourceText,
+    captureAnalysisCleared,
+    captureStatus
+  ]);
+
+  useEffect(() => {
+    if (!canEditCapture) {
+      previousCaptureScopeKeyRef.current = "";
+      setCaptureDraft("");
+      setCaptureLocalAnalysis(EMPTY_CAPTURE_ANALYSIS);
+      setCaptureAiResult(null);
+      setCaptureAnalysisSourceText("");
+      setCaptureAnalysisCleared(true);
+      setCaptureStatus("Ready.");
+      return;
+    }
+
+    if (!currentCaptureScopeKey || previousCaptureScopeKeyRef.current === currentCaptureScopeKey) {
+      return;
+    }
+
+    previousCaptureScopeKeyRef.current = currentCaptureScopeKey;
+    isHydratingCaptureWorkspaceRef.current = true;
+
+    const finishHydration = () => {
+      Promise.resolve().then(() => {
+        isHydratingCaptureWorkspaceRef.current = false;
+      });
+    };
+
+    const storedWorkspace = captureWorkspaceStoreRef.current[currentCaptureScopeKey];
+
+    if (storedWorkspace) {
+      setCaptureDraft(storedWorkspace.draft || "");
+      setCaptureLocalAnalysis(storedWorkspace.localAnalysis || EMPTY_CAPTURE_ANALYSIS);
+      setCaptureAiResult(storedWorkspace.aiResult || null);
+      setCaptureAnalysisSourceText(storedWorkspace.sourceText || "");
+      setCaptureAnalysisCleared(Boolean(storedWorkspace.isCleared));
+      setCaptureStatus(storedWorkspace.status || "Ready.");
+      finishHydration();
+      return;
+    }
+
+    const latestSavedNote = [...savedCaptureNotes]
+      .filter(note => {
+        if ((note.division || "") !== selectedDivision) return false;
+        if ((note.roomId || "") !== (selectedRoomId || "")) return false;
+        return (note.subroomId || "") === (selectedSubroomId || "");
+      })
+      .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime())[0];
+
+    if (latestSavedNote?.text) {
+      const restoredText = String(latestSavedNote.text || "").trim();
+      const restoredLocalAnalysis = buildLocalCaptureAnalysis(restoredText);
+
+      setCaptureDraft(restoredText);
+      setCaptureLocalAnalysis(restoredLocalAnalysis);
+      setCaptureAiResult(null);
+      setCaptureAnalysisSourceText(restoredText);
+      setCaptureAnalysisCleared(false);
+      setCaptureStatus(`Loaded latest saved note from ${formatSavedAt(latestSavedNote.savedAt)}.`);
+      finishHydration();
+      return;
+    }
+
+    setCaptureDraft("");
+    setCaptureLocalAnalysis(EMPTY_CAPTURE_ANALYSIS);
+    setCaptureAiResult(null);
+    setCaptureAnalysisSourceText("");
+    setCaptureAnalysisCleared(true);
+    setCaptureStatus("Ready for a new note in this sub-room.");
+    finishHydration();
+  }, [
+    canEditCapture,
+    currentCaptureScopeKey,
+    savedCaptureNotes,
+    selectedDivision,
+    selectedRoomId,
+    selectedSubroomId
+  ]);
+
   const previewNotes = useMemo(() => {
     if (isRoomPreview) return roomPreviewSavedNotes;
     if (isDivisionPreview) return divisionSavedNotes;
@@ -1172,8 +1298,8 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
 
   const previewMindMap = useMemo(() => {
     if (!normalizeWhitespace(previewSourceText)) return null;
-    return buildMindMapFromText(previewSourceText);
-  }, [previewSourceText]);
+    return buildMindMapFromText(previewSourceText, previewRootHint);
+  }, [previewSourceText, previewRootHint]);
 
   const activeCaptureAnalysis = useMemo(() => {
     if (captureAnalysisCleared || !normalizeWhitespace(captureAnalysisSourceText)) {
@@ -1205,8 +1331,8 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       if (normalized.logicForest) return normalized.logicForest;
     }
 
-    return buildMindMapFromText(captureAnalysisSourceText);
-  }, [captureAiResult, captureAnalysisCleared, captureAnalysisSourceText]);
+    return buildMindMapFromText(captureAnalysisSourceText, captureRootHint);
+  }, [captureAiResult, captureAnalysisCleared, captureAnalysisSourceText, captureRootHint]);
 
   const activeDisplayAnalysis = useMemo(
     () => (canEditCapture ? activeCaptureAnalysis : previewAnalysis),
