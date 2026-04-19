@@ -674,8 +674,8 @@ export default async function handler(request, response) {
 
     const prompt =
       type === "wrong_question"
-        ? \`\${WRONG_QUESTION_PROMPT}\\n\${text}\`
-        : \`\${CAPTURE_PROMPT}\\n\${text}\`;
+        ? `${WRONG_QUESTION_PROMPT}\n${text}`
+        : `${CAPTURE_PROMPT}\n${text}`;
 
     const result = await model.generateContent(prompt);
     const rawText = result?.response?.text?.() || "";
@@ -686,7 +686,7 @@ export default async function handler(request, response) {
       parsed = JSON.parse(jsonText);
     } catch {
       return response.status(500).json({
-        error: \`Model returned invalid JSON: \${jsonText.slice(0, 800)}\`
+        error: `Model returned invalid JSON: ${jsonText.slice(0, 800)}`
       });
     }
 
