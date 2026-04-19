@@ -2,12 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Tesseract from "tesseract.js";
 import "./App.css";
 
-const EMPTY_CAPTURE_ANALYSIS = {
-  summary: "",
-  bulletPoints: [],
-  logicLinks: []
-};
-
 const DIVISIONS = ["PA", "PPD", "PDD", "PCM", "PJM", "CE"];
 
 const DEFAULT_ROOM_NAMES = {
