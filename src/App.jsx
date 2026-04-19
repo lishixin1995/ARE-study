@@ -404,7 +404,9 @@ function normalizeAiCaptureAnalysis(analysis) {
 
       if (!nodes.length) return null;
 
-      if (nodes.length === 1) return nodes[0];
+      if (nodes.length === 1) {
+        return nodes[0];
+      }
 
       return {
         label: normalizeWhitespace(analysis.summary || "Study Notes") || "Study Notes",
@@ -412,6 +414,23 @@ function normalizeAiCaptureAnalysis(analysis) {
         children: nodes
       };
     }
+
+    return normalizeLogicTreeNode(value);
+  }
+
+  const logicForest = normalizeForestInput(analysis.logicForest || analysis.root || null);
+
+  return {
+    summary: typeof analysis.summary === "string" ? analysis.summary.trim() : "",
+    bulletPoints: Array.isArray(analysis.bulletPoints)
+      ? analysis.bulletPoints.map(item => String(item).trim()).filter(Boolean)
+      : [],
+    logicLinks: Array.isArray(analysis.logicLinks)
+      ? analysis.logicLinks.map(item => String(item).trim()).filter(Boolean)
+      : [],
+    logicForest
+  };
+}
 
     return normalizeLogicTreeNode(value);
   }
