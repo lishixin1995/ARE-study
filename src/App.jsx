@@ -39,6 +39,8 @@ const EMPTY_CAPTURE_ANALYSIS = {
   logicLinks: []
 };
 
+const CAPTURE_NOTE_META_MARKER = "\n\n[[STUDY_CAPTURE_META_V1]]";
+
 function cloneCaptureAnalysis(analysis = EMPTY_CAPTURE_ANALYSIS) {
   return {
     summary: typeof analysis?.summary === "string" ? analysis.summary : "",
@@ -76,16 +78,198 @@ function buildCaptureWorkspaceFromState({
   };
 }
 
-function buildCaptureWorkspaceFromNote(note, statusMessage = "Loaded latest saved note.") {
-  const text = String(note?.text || "").trim();
-  const hasText = Boolean(normalizeWhitespace(text));
+function parseCaptureNoteStorage(rawText = "") {
+  const raw = String(rawText || "");
+  const markerIndex = raw.lastIndexOf(CAPTURE_NOTE_META_MARKER);
+
+  if (markerIndex === -1) {
+    return {
+      visibleText: raw.trim(),
+      meta: null
+    };
+  }
+
+  const visibleText = raw.slice(0, markerIndex).trim();
+  const metaRaw = raw.slice(markerIndex + CAPTURE_NOTE_META_MARKER.length).trim();
+
+  try {
+    return {
+      visibleText,
+      meta: metaRaw ? JSON.parse(metaRaw) : null
+    };
+  } catch {
+    return {
+      visibleText: raw.trim(),
+      meta: null
+    };
+  }
+}
+
+function getCaptureNoteVisibleText(noteOrText = "") {
+  const rawText = typeof noteOrText === "string" ? noteOrText : noteOrText?.text || "";
+  return parseCaptureNoteStorage(rawText).visibleText;
+}
+
+function normalizeStoredCaptureNoteMeta(meta, fallbackText = "") {
+  const visibleText = String(fallbackText || "").trim();
+  const hasVisibleText = Boolean(normalizeWhitespace(visibleText));
+  const fallbackLocalAnalysis = hasVisibleText
+    ? buildLocalCaptureAnalysis(visibleText)
+    : cloneCaptureAnalysis(EMPTY_CAPTURE_ANALYSIS);
+
+  if (!meta || typeof meta !== "object") {
+    return {
+      localAnalysis: fallbackLocalAnalysis,
+      aiResult: null,
+      analysisSourceText: hasVisibleText ? visibleText : "",
+      analysisCleared: !hasVisibleText
+    };
+  }
+
+  const normalizedSourceText = String(meta.analysisSourceText || "").trim();
+  const normalizedCleared =
+    typeof meta.analysisCleared === "boolean"
+      ? meta.analysisCleared
+      : !normalizeWhitespace(normalizedSourceText || visibleText);
 
   return {
-    draft: text,
-    localAnalysis: hasText ? buildLocalCaptureAnalysis(text) : cloneCaptureAnalysis(EMPTY_CAPTURE_ANALYSIS),
-    aiResult: null,
-    analysisSourceText: hasText ? text : "",
-    analysisCleared: !hasText,
+    localAnalysis: cloneCaptureAnalysis(meta.localAnalysis || fallbackLocalAnalysis),
+    aiResult: meta.aiResult ? JSON.parse(JSON.stringify(meta.aiResult)) : null,
+    analysisSourceText: normalizedCleared ? "" : normalizedSourceText || visibleText,
+    analysisCleared: normalizedCleared
+  };
+}
+
+function buildStoredCaptureNoteText(visibleText = "", workspace = {}) {
+  const cleanText = String(visibleText || "").trim();
+  const meta = {
+    version: 1,
+    localAnalysis: cloneCaptureAnalysis(workspace.localAnalysis),
+    aiResult: workspace.aiResult ? JSON.parse(JSON.stringify(workspace.aiResult)) : null,
+    analysisSourceText: String(workspace.analysisSourceText || ""),
+    analysisCleared: Boolean(workspace.analysisCleared)
+  };
+
+  return `${cleanText}${CAPTURE_NOTE_META_MARKER}${JSON.stringify(meta)}`;
+}
+
+function resolveCaptureAnalysisState({
+  localAnalysis = EMPTY_CAPTURE_ANALYSIS,
+  aiResult = null,
+  analysisSourceText = "",
+  analysisCleared = true
+} = {}) {
+  if (analysisCleared || !normalizeWhitespace(analysisSourceText)) {
+    return EMPTY_CAPTURE_ANALYSIS;
+  }
+
+  if (aiResult) {
+    const normalized = normalizeAiCaptureAnalysis(aiResult);
+    return {
+      summary: normalized.summary || localAnalysis.summary,
+      bulletPoints: normalized.bulletPoints.length ? normalized.bulletPoints : localAnalysis.bulletPoints,
+      logicLinks: normalized.logicLinks.length ? normalized.logicLinks : localAnalysis.logicLinks
+    };
+  }
+
+  return cloneCaptureAnalysis(localAnalysis);
+}
+
+function resolveCaptureMindMapState({ aiResult = null, analysisSourceText = "", analysisCleared = true } = {}) {
+  if (analysisCleared || !normalizeWhitespace(analysisSourceText)) return null;
+
+  if (aiResult) {
+    const normalized = normalizeAiCaptureAnalysis(aiResult);
+    if (normalized.logicForest) return normalized.logicForest;
+  }
+
+  return buildMindMapFromText(analysisSourceText);
+}
+
+function getCaptureNoteSnapshot(note) {
+  const visibleText = getCaptureNoteVisibleText(note);
+  const { meta } = parseCaptureNoteStorage(note?.text || "");
+  const normalizedMeta = normalizeStoredCaptureNoteMeta(meta, visibleText);
+  const workspace = {
+    draft: visibleText,
+    localAnalysis: cloneCaptureAnalysis(normalizedMeta.localAnalysis),
+    aiResult: normalizedMeta.aiResult ? JSON.parse(JSON.stringify(normalizedMeta.aiResult)) : null,
+    analysisSourceText: normalizedMeta.analysisSourceText,
+    analysisCleared: normalizedMeta.analysisCleared,
+    status: ""
+  };
+
+  return {
+    visibleText,
+    sourceText: workspace.analysisCleared ? "" : workspace.analysisSourceText,
+    analysis: resolveCaptureAnalysisState(workspace),
+    mindMap: resolveCaptureMindMapState(workspace),
+    workspace
+  };
+}
+
+function combineCaptureAnalysisSnapshots(snapshots = []) {
+  const validSnapshots = snapshots.filter(snapshot => {
+    const analysis = snapshot?.analysis || EMPTY_CAPTURE_ANALYSIS;
+    return Boolean(
+      analysis.summary ||
+        (Array.isArray(analysis.bulletPoints) && analysis.bulletPoints.length) ||
+        (Array.isArray(analysis.logicLinks) && analysis.logicLinks.length)
+    );
+  });
+
+  if (!validSnapshots.length) return EMPTY_CAPTURE_ANALYSIS;
+
+  const summary = validSnapshots
+    .map(snapshot => String(snapshot.analysis.summary || "").trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
+  const bulletPoints = Array.from(
+    new Set(
+      validSnapshots.flatMap(snapshot =>
+        (snapshot.analysis.bulletPoints || []).map(item => String(item || "").trim()).filter(Boolean)
+      )
+    )
+  );
+
+  const logicLinks = Array.from(
+    new Set(
+      validSnapshots.flatMap(snapshot =>
+        (snapshot.analysis.logicLinks || []).map(item => String(item || "").trim()).filter(Boolean)
+      )
+    )
+  );
+
+  return {
+    summary,
+    bulletPoints,
+    logicLinks
+  };
+}
+
+function combineCaptureMindMapSnapshots(label = "Study Notes", snapshots = []) {
+  const nodes = snapshots.map(snapshot => snapshot?.mindMap).filter(Boolean);
+  if (!nodes.length) return null;
+  if (nodes.length === 1) return nodes[0];
+
+  return {
+    label: normalizeWhitespace(label) || "Study Notes",
+    type: "topic",
+    children: nodes
+  };
+}
+
+function buildCaptureWorkspaceFromNote(note, statusMessage = "Loaded latest saved note.") {
+  const snapshot = getCaptureNoteSnapshot(note);
+
+  return {
+    draft: snapshot.visibleText,
+    localAnalysis: cloneCaptureAnalysis(snapshot.workspace.localAnalysis),
+    aiResult: snapshot.workspace.aiResult ? JSON.parse(JSON.stringify(snapshot.workspace.aiResult)) : null,
+    analysisSourceText: snapshot.workspace.analysisSourceText,
+    analysisCleared: snapshot.workspace.analysisCleared,
     status: statusMessage
   };
 }
@@ -736,8 +920,8 @@ function SavedNotesModal({
                     </span>
                   </div>
                   <div className="note-list-preview">
-                    {note.text.slice(0, 160)}
-                    {note.text.length > 160 ? "..." : ""}
+                    {getCaptureNoteVisibleText(note).slice(0, 160)}
+                    {getCaptureNoteVisibleText(note).length > 160 ? "..." : ""}
                   </div>
                 </button>
 
@@ -786,7 +970,7 @@ function getDocumentStyles() {
 function mergeNoteTextsForAnalysis(notes = []) {
   return notes
     .map(note => {
-      const body = String(note?.text || "").trim();
+      const body = getCaptureNoteVisibleText(note);
       if (!body) return "";
       const pathLabel = [note.roomName, note.subroomName].filter(Boolean).join(" / ");
       return pathLabel ? `${pathLabel}\n${body}` : body;
@@ -816,7 +1000,7 @@ function formatNotesCollectionForPdf(title, notes = []) {
               <div class="pdf-note-card">
                 <div class="pdf-note-title">${escapeHtml(label)}</div>
                 ${meta ? `<div class="pdf-note-meta">${escapeHtml(meta)}</div>` : ""}
-                <p class="pdf-paragraph">${escapeHtml(note.text || "")}</p>
+                <p class="pdf-paragraph">${escapeHtml(getCaptureNoteVisibleText(note))}</p>
               </div>
             `;
           })
@@ -1352,33 +1536,31 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     return [];
   }, [isRoomPreview, isDivisionPreview, roomPreviewSavedNotes, divisionSavedNotes]);
 
-  const previewSourceText = useMemo(() => mergeNoteTextsForAnalysis(previewNotes), [previewNotes]);
+  const previewNoteSnapshots = useMemo(() => previewNotes.map(note => getCaptureNoteSnapshot(note)), [previewNotes]);
+
+  const previewSourceText = useMemo(() => {
+    return previewNoteSnapshots
+      .map(snapshot => snapshot.sourceText || snapshot.visibleText)
+      .filter(text => normalizeWhitespace(text))
+      .join("\n\n");
+  }, [previewNoteSnapshots]);
 
   const previewAnalysis = useMemo(() => {
-    if (!normalizeWhitespace(previewSourceText)) return EMPTY_CAPTURE_ANALYSIS;
-    return buildLocalCaptureAnalysis(previewSourceText);
-  }, [previewSourceText]);
+    return combineCaptureAnalysisSnapshots(previewNoteSnapshots);
+  }, [previewNoteSnapshots]);
 
   const previewMindMap = useMemo(() => {
-    if (!normalizeWhitespace(previewSourceText)) return null;
-    return buildMindMapFromText(previewSourceText);
-  }, [previewSourceText]);
+    const previewLabel = isRoomPreview ? selectedRoom?.name || "Room Preview" : `${selectedDivision} Topic Preview`;
+    return combineCaptureMindMapSnapshots(previewLabel, previewNoteSnapshots);
+  }, [previewNoteSnapshots, isRoomPreview, selectedRoom, selectedDivision]);
 
   const activeCaptureAnalysis = useMemo(() => {
-    if (captureAnalysisCleared || !normalizeWhitespace(captureAnalysisSourceText)) {
-      return EMPTY_CAPTURE_ANALYSIS;
-    }
-
-    if (captureAiResult) {
-      const normalized = normalizeAiCaptureAnalysis(captureAiResult);
-      return {
-        summary: normalized.summary || captureLocalAnalysis.summary,
-        bulletPoints: normalized.bulletPoints.length ? normalized.bulletPoints : captureLocalAnalysis.bulletPoints,
-        logicLinks: normalized.logicLinks.length ? normalized.logicLinks : captureLocalAnalysis.logicLinks
-      };
-    }
-
-    return captureLocalAnalysis;
+    return resolveCaptureAnalysisState({
+      localAnalysis: captureLocalAnalysis,
+      aiResult: captureAiResult,
+      analysisSourceText: captureAnalysisSourceText,
+      analysisCleared: captureAnalysisCleared
+    });
   }, [captureAnalysisCleared, captureAnalysisSourceText, captureAiResult, captureLocalAnalysis]);
 
   const activeCaptureSourceText = useMemo(() => {
@@ -1387,14 +1569,11 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
   }, [captureAnalysisCleared, captureAnalysisSourceText]);
 
   const activeCaptureMindMap = useMemo(() => {
-    if (captureAnalysisCleared || !normalizeWhitespace(captureAnalysisSourceText)) return null;
-
-    if (captureAiResult) {
-      const normalized = normalizeAiCaptureAnalysis(captureAiResult);
-      if (normalized.logicForest) return normalized.logicForest;
-    }
-
-    return buildMindMapFromText(captureAnalysisSourceText);
+    return resolveCaptureMindMapState({
+      aiResult: captureAiResult,
+      analysisSourceText: captureAnalysisSourceText,
+      analysisCleared: captureAnalysisCleared
+    });
   }, [captureAiResult, captureAnalysisCleared, captureAnalysisSourceText]);
 
   const activeDisplayAnalysis = useMemo(
@@ -1905,6 +2084,13 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       return;
     }
 
+    const storedText = buildStoredCaptureNoteText(captureDraft.trim(), {
+      localAnalysis: captureLocalAnalysis,
+      aiResult: captureAiResult,
+      analysisSourceText: captureAnalysisSourceText,
+      analysisCleared: captureAnalysisCleared
+    });
+
     const newNote = {
       id: createId("note"),
       division: selectedDivision,
@@ -1912,7 +2098,7 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       roomName: selectedRoom?.name || "",
       subroomId: selectedSubroomId || "",
       subroomName: selectedSubroom?.name || "",
-      text: captureDraft.trim(),
+      text: storedText,
       savedAt: new Date().toISOString()
     };
 
@@ -1947,25 +2133,23 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       return;
     }
 
-    const mergedText = [captureDraft.trim(), String(note.text || "").trim()].filter(Boolean).join("\n\n");
-
-    if (!normalizeWhitespace(mergedText)) {
+    const visibleText = getCaptureNoteVisibleText(note);
+    if (!normalizeWhitespace(visibleText)) {
       setCaptureStatus("Saved note is empty.");
       return;
     }
 
-    const local = buildLocalCaptureAnalysis(mergedText);
-
-    setCaptureDraft(mergedText);
-    setCaptureLocalAnalysis(local);
-    setCaptureAiResult(null);
-    setCaptureAnalysisSourceText(mergedText);
-    setCaptureAnalysisCleared(false);
-    setCaptureStatus(
-      normalizeWhitespace(captureDraft)
-        ? `Merged saved note from ${formatSavedAt(note.savedAt)} into the editor and refreshed analysis.`
-        : `Loaded saved note from ${formatSavedAt(note.savedAt)} and refreshed analysis.`
+    const workspace = buildCaptureWorkspaceFromNote(
+      note,
+      `Loaded saved note from ${formatSavedAt(note.savedAt)} with its original analysis.`
     );
+
+    applyCaptureWorkspace(workspace);
+    setCaptureWorkspaceByKey(prev => ({
+      ...prev,
+      [captureWorkspaceKey]: buildCaptureWorkspaceFromState(workspace)
+    }));
+    lastHydratedCaptureWorkspaceKeyRef.current = captureWorkspaceKey;
   }
 
   function handleLoadTopicSample() {
