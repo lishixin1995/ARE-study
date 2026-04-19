@@ -2139,15 +2139,45 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       return;
     }
 
-    const workspace = buildCaptureWorkspaceFromNote(
-      note,
-      `Loaded saved note from ${formatSavedAt(note.savedAt)} with its original analysis.`
-    );
+    const currentDraftText = String(captureDraft || "").trim();
+    const shouldMergeWithEditor = Boolean(normalizeWhitespace(currentDraftText));
 
-    applyCaptureWorkspace(workspace);
+    if (!shouldMergeWithEditor) {
+      const workspace = buildCaptureWorkspaceFromNote(
+        note,
+        `Loaded saved note from ${formatSavedAt(note.savedAt)} with its original analysis.`
+      );
+
+      applyCaptureWorkspace(workspace);
+      setCaptureWorkspaceByKey(prev => ({
+        ...prev,
+        [captureWorkspaceKey]: buildCaptureWorkspaceFromState(workspace)
+      }));
+      lastHydratedCaptureWorkspaceKeyRef.current = captureWorkspaceKey;
+      return;
+    }
+
+    const normalizedCurrent = normalizeWhitespace(currentDraftText);
+    const normalizedLoaded = normalizeWhitespace(visibleText);
+    const mergedDraft = normalizedCurrent === normalizedLoaded
+      ? currentDraftText
+      : `${currentDraftText}
+
+${visibleText}`;
+
+    const mergedWorkspace = buildCaptureWorkspaceFromState({
+      draft: mergedDraft,
+      localAnalysis: EMPTY_CAPTURE_ANALYSIS,
+      aiResult: null,
+      analysisSourceText: "",
+      analysisCleared: true,
+      status: `Merged saved note from ${formatSavedAt(note.savedAt)} into the editor. Run Analyze or Ask AI to re-analyze everything.`
+    });
+
+    applyCaptureWorkspace(mergedWorkspace);
     setCaptureWorkspaceByKey(prev => ({
       ...prev,
-      [captureWorkspaceKey]: buildCaptureWorkspaceFromState(workspace)
+      [captureWorkspaceKey]: buildCaptureWorkspaceFromState(mergedWorkspace)
     }));
     lastHydratedCaptureWorkspaceKeyRef.current = captureWorkspaceKey;
   }
