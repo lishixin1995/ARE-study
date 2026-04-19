@@ -148,10 +148,6 @@ function getCurrentPathLabel(roomTree, division, roomId, subroomId) {
   return division;
 }
 
-function makeCaptureWorkspaceKey(division = "", roomId = "", subroomId = "") {
-  return [division || "", roomId || "", subroomId || ""].join("::");
-}
-
 function parseListItems(text = "") {
   const clean = text.replace(/[.;]+$/g, "").trim();
   if (!clean) return [];
@@ -410,31 +406,7 @@ function normalizeAiCaptureAnalysis(analysis) {
     };
   }
 
-  function normalizeForestInput(value) {
-    if (!value) return null;
-
-    if (Array.isArray(value)) {
-      const nodes = value
-        .map(item => normalizeLogicTreeNode(item))
-        .filter(Boolean);
-
-      if (!nodes.length) return null;
-
-      if (nodes.length === 1) {
-        return nodes[0];
-      }
-
-      return {
-        label: normalizeWhitespace(analysis.summary || "Study Notes") || "Study Notes",
-        type: "topic",
-        children: nodes
-      };
-    }
-
-    return normalizeLogicTreeNode(value);
-  }
-
-  const logicForest = normalizeForestInput(analysis.logicForest || analysis.root || null);
+  const logicForest = normalizeLogicTreeNode(analysis.logicForest || analysis.root || null);
 
   return {
     summary: typeof analysis.summary === "string" ? analysis.summary.trim() : "",
@@ -447,6 +419,7 @@ function normalizeAiCaptureAnalysis(analysis) {
     logicForest
   };
 }
+
 function inferWrongQuestionTopic(text = "") {
   const lower = text.toLowerCase();
 
@@ -918,7 +891,6 @@ export default function App() {
   const [isCaptureAnalyzing, setIsCaptureAnalyzing] = useState(false);
 
   const [savedCaptureNotes, setSavedCaptureNotes] = useState([]);
-  const [captureWorkspaceByPath, setCaptureWorkspaceByPath] = useState({});
   const [isSavedNotesModalOpen, setIsSavedNotesModalOpen] = useState(false);
 
   const [wrongQuestionImageFile, setWrongQuestionImageFile] = useState(null);
@@ -942,15 +914,6 @@ export default function App() {
 
   const liveLogicPrintRef = useRef(null);
   const wrongQuestionFileInputRef = useRef(null);
-  const previousCaptureWorkspaceKeyRef = useRef("");
-  const captureWorkspaceSnapshotRef = useRef({
-    draft: "",
-    localAnalysis: EMPTY_CAPTURE_ANALYSIS,
-    aiResult: null,
-    analysisSourceText: "",
-    analysisCleared: true,
-    status: "Ready."
-  });
 
   const divisionRooms = useMemo(() => getRoomsForDivision(roomTree, selectedDivision), [roomTree, selectedDivision]);
   const selectedRoom = useMemo(
@@ -966,85 +929,6 @@ export default function App() {
     () => getCurrentPathLabel(roomTree, selectedDivision, selectedRoomId, selectedSubroomId),
     [roomTree, selectedDivision, selectedRoomId, selectedSubroomId]
   );
-
-  const currentCaptureWorkspaceKey = useMemo(
-    () => makeCaptureWorkspaceKey(selectedDivision, selectedRoomId, selectedSubroomId),
-    [selectedDivision, selectedRoomId, selectedSubroomId]
-  );
-
-  function buildCaptureWorkspaceStateFromText(text = "", status = "Ready.") {
-    const cleanText = String(text || "").trim();
-
-    if (!normalizeWhitespace(cleanText)) {
-      return {
-        draft: "",
-        localAnalysis: EMPTY_CAPTURE_ANALYSIS,
-        aiResult: null,
-        analysisSourceText: "",
-        analysisCleared: true,
-        status
-      };
-    }
-
-    return {
-      draft: cleanText,
-      localAnalysis: buildLocalCaptureAnalysis(cleanText),
-      aiResult: null,
-      analysisSourceText: cleanText,
-      analysisCleared: false,
-      status
-    };
-  }
-
-  function applyCaptureWorkspaceState(workspace) {
-    const next = workspace || {
-      draft: "",
-      localAnalysis: EMPTY_CAPTURE_ANALYSIS,
-      aiResult: null,
-      analysisSourceText: "",
-      analysisCleared: true,
-      status: "Ready."
-    };
-
-    setCaptureDraft(next.draft || "");
-    setCaptureLocalAnalysis(next.localAnalysis || EMPTY_CAPTURE_ANALYSIS);
-    setCaptureAiResult(next.aiResult || null);
-    setCaptureAnalysisSourceText(next.analysisSourceText || "");
-    setCaptureAnalysisCleared(Boolean(next.analysisCleared));
-    setCaptureStatus(next.status || "Ready.");
-  }
-
-  function persistCurrentCaptureWorkspace(keyOverride = "") {
-    const key = keyOverride || previousCaptureWorkspaceKeyRef.current || currentCaptureWorkspaceKey;
-    if (!key) return;
-
-    const [division, roomId, subroomId] = key.split("::");
-    if (!division || !roomId || !subroomId) return;
-
-    const snapshot = captureWorkspaceSnapshotRef.current || {
-      draft: "",
-      localAnalysis: EMPTY_CAPTURE_ANALYSIS,
-      aiResult: null,
-      analysisSourceText: "",
-      analysisCleared: true,
-      status: "Ready."
-    };
-
-    setCaptureWorkspaceByPath(prev => ({
-      ...prev,
-      [key]: {
-        draft: snapshot.draft || "",
-        localAnalysis: snapshot.localAnalysis || EMPTY_CAPTURE_ANALYSIS,
-        aiResult: snapshot.aiResult || null,
-        analysisSourceText: snapshot.analysisSourceText || "",
-        analysisCleared: Boolean(snapshot.analysisCleared),
-        status: snapshot.status || "Ready.",
-        division,
-        roomId,
-        subroomId
-      }
-    }));
-  }
 
   useEffect(() => {
   fetchRoomsFromCloud(selectedDivision);
@@ -1074,78 +958,6 @@ export default function App() {
     }
   }, [divisionRooms, selectedRoomId, selectedSubroomId, selectedRoom]);
 
-
-  useEffect(() => {
-    captureWorkspaceSnapshotRef.current = {
-      draft: captureDraft,
-      localAnalysis: captureLocalAnalysis,
-      aiResult: captureAiResult,
-      analysisSourceText: captureAnalysisSourceText,
-      analysisCleared: captureAnalysisCleared,
-      status: captureStatus
-    };
-  }, [
-    captureDraft,
-    captureLocalAnalysis,
-    captureAiResult,
-    captureAnalysisSourceText,
-    captureAnalysisCleared,
-    captureStatus
-  ]);
-
-  useEffect(() => {
-    const previousKey = previousCaptureWorkspaceKeyRef.current;
-    const currentKey = currentCaptureWorkspaceKey;
-
-    if (previousKey && previousKey !== currentKey) {
-      persistCurrentCaptureWorkspace(previousKey);
-    }
-
-    previousCaptureWorkspaceKeyRef.current = currentKey;
-
-    if (!canEditCapture) {
-      return;
-    }
-
-    const cachedWorkspace = captureWorkspaceByPath[currentKey];
-    if (cachedWorkspace) {
-      applyCaptureWorkspaceState(cachedWorkspace);
-      return;
-    }
-
-    const latestSavedNote = [...savedCaptureNotes]
-      .filter(note => note.division === selectedDivision && note.roomId === selectedRoomId && (note.subroomId || "") === (selectedSubroomId || ""))
-      .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime())[0];
-
-    if (latestSavedNote?.text) {
-      const restored = buildCaptureWorkspaceStateFromText(
-        latestSavedNote.text,
-        `Loaded saved note from ${formatSavedAt(latestSavedNote.savedAt)} and refreshed analysis.`
-      );
-      setCaptureWorkspaceByPath(prev => ({ ...prev, [currentKey]: restored }));
-      applyCaptureWorkspaceState(restored);
-      return;
-    }
-
-    const emptyWorkspace = {
-      draft: "",
-      localAnalysis: EMPTY_CAPTURE_ANALYSIS,
-      aiResult: null,
-      analysisSourceText: "",
-      analysisCleared: true,
-      status: "Ready."
-    };
-    setCaptureWorkspaceByPath(prev => ({ ...prev, [currentKey]: emptyWorkspace }));
-    applyCaptureWorkspaceState(emptyWorkspace);
-  }, [
-    canEditCapture,
-    currentCaptureWorkspaceKey,
-    captureWorkspaceByPath,
-    savedCaptureNotes,
-    selectedDivision,
-    selectedRoomId,
-    selectedSubroomId
-  ]);
 
   useEffect(() => {
     fetchSavedNotesFromCloud(selectedDivision);
@@ -1946,25 +1758,26 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       return;
     }
 
-    const text = String(note.text || "").trim();
+    const mergedText = [captureDraft.trim(), String(note.text || "").trim()].filter(Boolean).join("\n\n");
 
-    if (!normalizeWhitespace(text)) {
+    if (!normalizeWhitespace(mergedText)) {
       setCaptureStatus("Saved note is empty.");
       return;
     }
 
-    const restored = buildCaptureWorkspaceStateFromText(
-      text,
-      `Loaded saved note from ${formatSavedAt(note.savedAt)} and refreshed analysis.`
+    const local = buildLocalCaptureAnalysis(mergedText);
+
+    setCaptureDraft(mergedText);
+    setCaptureLocalAnalysis(local);
+    setCaptureAiResult(null);
+    setCaptureAnalysisSourceText(mergedText);
+    setCaptureAnalysisCleared(false);
+    setCaptureStatus(
+      normalizeWhitespace(captureDraft)
+        ? `Merged saved note from ${formatSavedAt(note.savedAt)} into the editor and refreshed analysis.`
+        : `Loaded saved note from ${formatSavedAt(note.savedAt)} and refreshed analysis.`
     );
-
-    setCaptureWorkspaceByPath(prev => ({
-      ...prev,
-      [currentCaptureWorkspaceKey]: restored
-    }));
-    applyCaptureWorkspaceState(restored);
   }
-
 
   function handleLoadTopicSample() {
     if (!canEditCapture) {
@@ -2091,19 +1904,6 @@ async function handleAddSubroom() {
       })
     }));
 
-    const newWorkspaceKey = makeCaptureWorkspaceKey(selectedDivision, selectedRoomId, newSubroom.id);
-    setCaptureWorkspaceByPath(prev => ({
-      ...prev,
-      [newWorkspaceKey]: {
-        draft: "",
-        localAnalysis: EMPTY_CAPTURE_ANALYSIS,
-        aiResult: null,
-        analysisSourceText: "",
-        analysisCleared: true,
-        status: "Ready."
-      }
-    }));
-
     setSelectedSubroomId(newSubroom.id);
   } catch (error) {
     console.error(error);
@@ -2129,11 +1929,6 @@ async function handleDeleteSelectedRoomOrSubroom() {
         })
       }));
 
-      setCaptureWorkspaceByPath(prev => {
-        const next = { ...prev };
-        delete next[makeCaptureWorkspaceKey(selectedDivision, selectedRoomId, selectedSubroomId)];
-        return next;
-      });
       setSelectedSubroomId("");
     } catch (error) {
       console.error(error);
@@ -2154,15 +1949,6 @@ async function handleDeleteSelectedRoomOrSubroom() {
       [selectedDivision]: getRoomsForDivision(prev, selectedDivision).filter(room => room.id !== selectedRoomId)
     }));
 
-    setCaptureWorkspaceByPath(prev => {
-      const next = { ...prev };
-      Object.keys(next).forEach(key => {
-        if (key.startsWith(`${selectedDivision}::${selectedRoomId}::`)) {
-          delete next[key];
-        }
-      });
-      return next;
-    });
     setSelectedRoomId("");
     setSelectedSubroomId("");
   } catch (error) {
@@ -2418,7 +2204,6 @@ async function handleDeleteSelectedRoomOrSubroom() {
                 key={division}
                 className={`nav-pill ${selectedDivision === division ? "active" : ""}`}
                 onClick={() => {
-                  persistCurrentCaptureWorkspace();
                   setSelectedDivision(division);
                   setSelectedRoomId("");
                   setSelectedSubroomId("");
@@ -2459,7 +2244,6 @@ async function handleDeleteSelectedRoomOrSubroom() {
                   <button
                     className={`room-pill ${selectedRoomId === room.id && !selectedSubroomId ? "active" : ""}`}
                     onClick={() => {
-                      persistCurrentCaptureWorkspace();
                       setSelectedRoomId(room.id);
                       setSelectedSubroomId("");
                       setPreviewFlashcardSubroomId("");
@@ -2477,7 +2261,6 @@ async function handleDeleteSelectedRoomOrSubroom() {
                         key={subroom.id}
                         className={`subroom-pill ${selectedSubroomId === subroom.id ? "active" : ""}`}
                         onClick={() => {
-                          persistCurrentCaptureWorkspace();
                           setSelectedRoomId(room.id);
                           setSelectedSubroomId(subroom.id);
                           setFlashcardIndex(0);
