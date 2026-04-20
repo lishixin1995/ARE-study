@@ -39,6 +39,8 @@ const EMPTY_CAPTURE_ANALYSIS = {
   logicLinks: []
 };
 
+const CAPTURE_NOTE_META_MARKER = "\n\n[[STUDY_CAPTURE_META_V1]]";
+
 function cloneCaptureAnalysis(analysis = EMPTY_CAPTURE_ANALYSIS) {
   return {
     summary: typeof analysis?.summary === "string" ? analysis.summary : "",
@@ -76,16 +78,237 @@ function buildCaptureWorkspaceFromState({
   };
 }
 
-function buildCaptureWorkspaceFromNote(note, statusMessage = "Loaded latest saved note.") {
-  const text = String(note?.text || "").trim();
-  const hasText = Boolean(normalizeWhitespace(text));
+function buildStoredCaptureNoteMeta(workspace = {}) {
+  return {
+    version: 1,
+    localAnalysis: cloneCaptureAnalysis(workspace.localAnalysis),
+    aiResult: workspace.aiResult ? JSON.parse(JSON.stringify(workspace.aiResult)) : null,
+    analysisSourceText: String(workspace.analysisSourceText || ""),
+    analysisCleared: Boolean(workspace.analysisCleared)
+  };
+}
+
+function parseCaptureNoteStorage(rawText = "") {
+  let remaining = String(rawText || "");
+  const parsedMetaCandidates = [];
+
+  while (remaining.includes(CAPTURE_NOTE_META_MARKER)) {
+    const markerIndex = remaining.lastIndexOf(CAPTURE_NOTE_META_MARKER);
+    const beforeMarker = remaining.slice(0, markerIndex);
+    const afterMarker = remaining.slice(markerIndex + CAPTURE_NOTE_META_MARKER.length).trim();
+
+    try {
+      const parsedMeta = afterMarker ? JSON.parse(afterMarker) : null;
+      if (parsedMeta && typeof parsedMeta === "object") {
+        parsedMetaCandidates.push(parsedMeta);
+      }
+    } catch {
+      // Ignore invalid trailing metadata and keep stripping older markers if present.
+    }
+
+    remaining = beforeMarker;
+  }
+
+  const visibleText = remaining.trim();
+  const meaningfulMeta = parsedMetaCandidates.find(candidate => {
+    if (!candidate || typeof candidate !== "object") return false;
+    if (candidate.aiResult) return true;
+    if (candidate.analysisCleared === false && normalizeWhitespace(candidate.analysisSourceText || visibleText)) {
+      return true;
+    }
+
+    const localAnalysis = candidate.localAnalysis || {};
+    return Boolean(
+      normalizeWhitespace(localAnalysis.summary) ||
+        (Array.isArray(localAnalysis.bulletPoints) && localAnalysis.bulletPoints.length) ||
+        (Array.isArray(localAnalysis.logicLinks) && localAnalysis.logicLinks.length)
+    );
+  });
 
   return {
-    draft: text,
-    localAnalysis: hasText ? buildLocalCaptureAnalysis(text) : cloneCaptureAnalysis(EMPTY_CAPTURE_ANALYSIS),
-    aiResult: null,
-    analysisSourceText: hasText ? text : "",
-    analysisCleared: !hasText,
+    visibleText,
+    meta: meaningfulMeta || parsedMetaCandidates[0] || null
+  };
+}
+
+function getCaptureNoteVisibleText(noteOrText = "") {
+  const preferredText =
+    typeof noteOrText === "string"
+      ? noteOrText
+      : typeof noteOrText?.plainText === "string"
+        ? noteOrText.plainText
+        : noteOrText?.text || "";
+
+  return parseCaptureNoteStorage(preferredText).visibleText;
+}
+
+function getCaptureNoteStoredMeta(note = null, fallbackText = "") {
+  if (note?.captureMeta && typeof note.captureMeta === "object") {
+    return note.captureMeta;
+  }
+
+  return parseCaptureNoteStorage(note?.text || "").meta;
+}
+
+function normalizeStoredCaptureNoteMeta(meta, fallbackText = "") {
+  const visibleText = String(fallbackText || "").trim();
+  const hasVisibleText = Boolean(normalizeWhitespace(visibleText));
+  const fallbackLocalAnalysis = hasVisibleText
+    ? buildLocalCaptureAnalysis(visibleText)
+    : cloneCaptureAnalysis(EMPTY_CAPTURE_ANALYSIS);
+
+  if (!meta || typeof meta !== "object") {
+    return {
+      localAnalysis: fallbackLocalAnalysis,
+      aiResult: null,
+      analysisSourceText: hasVisibleText ? visibleText : "",
+      analysisCleared: !hasVisibleText
+    };
+  }
+
+  const normalizedSourceText = String(meta.analysisSourceText || "").trim();
+  const normalizedLocalAnalysis = cloneCaptureAnalysis(meta.localAnalysis || fallbackLocalAnalysis);
+  const hasLocalAnalysis =
+    Boolean(normalizeWhitespace(normalizedLocalAnalysis.summary)) ||
+    normalizedLocalAnalysis.bulletPoints.length > 0 ||
+    normalizedLocalAnalysis.logicLinks.length > 0;
+
+  const normalizedCleared =
+    typeof meta.analysisCleared === "boolean"
+      ? meta.analysisCleared
+      : !(meta.aiResult || hasLocalAnalysis || normalizeWhitespace(normalizedSourceText || visibleText));
+
+  return {
+    localAnalysis: normalizedLocalAnalysis,
+    aiResult: meta.aiResult ? JSON.parse(JSON.stringify(meta.aiResult)) : null,
+    analysisSourceText: normalizedCleared ? "" : normalizedSourceText || visibleText,
+    analysisCleared: normalizedCleared
+  };
+}
+
+function buildStoredCaptureNoteText(visibleText = "", workspace = {}) {
+  const cleanText = getCaptureNoteVisibleText(String(visibleText || ""));
+  const meta = buildStoredCaptureNoteMeta(workspace);
+
+  return `${cleanText}${CAPTURE_NOTE_META_MARKER}${JSON.stringify(meta)}`;
+}
+
+function resolveCaptureAnalysisState({
+  localAnalysis = EMPTY_CAPTURE_ANALYSIS,
+  aiResult = null,
+  analysisSourceText = "",
+  analysisCleared = true
+} = {}) {
+  if (analysisCleared || !normalizeWhitespace(analysisSourceText)) {
+    return EMPTY_CAPTURE_ANALYSIS;
+  }
+
+  if (aiResult) {
+    const normalized = normalizeAiCaptureAnalysis(aiResult);
+    return {
+      summary: normalized.summary || localAnalysis.summary,
+      bulletPoints: normalized.bulletPoints.length ? normalized.bulletPoints : localAnalysis.bulletPoints,
+      logicLinks: normalized.logicLinks.length ? normalized.logicLinks : localAnalysis.logicLinks
+    };
+  }
+
+  return cloneCaptureAnalysis(localAnalysis);
+}
+
+function resolveCaptureMindMapState({ aiResult = null, analysisSourceText = "", analysisCleared = true } = {}) {
+  if (analysisCleared || !normalizeWhitespace(analysisSourceText)) return null;
+
+  if (aiResult) {
+    const normalized = normalizeAiCaptureAnalysis(aiResult);
+    if (normalized.logicForest) return normalized.logicForest;
+  }
+
+  return buildMindMapFromText(analysisSourceText);
+}
+
+function getCaptureNoteSnapshot(note) {
+  const visibleText = getCaptureNoteVisibleText(note);
+  const normalizedMeta = normalizeStoredCaptureNoteMeta(getCaptureNoteStoredMeta(note, visibleText), visibleText);
+  const workspace = {
+    draft: visibleText,
+    localAnalysis: cloneCaptureAnalysis(normalizedMeta.localAnalysis),
+    aiResult: normalizedMeta.aiResult ? JSON.parse(JSON.stringify(normalizedMeta.aiResult)) : null,
+    analysisSourceText: normalizedMeta.analysisSourceText,
+    analysisCleared: normalizedMeta.analysisCleared,
+    status: ""
+  };
+
+  return {
+    visibleText,
+    sourceText: workspace.analysisCleared ? "" : workspace.analysisSourceText,
+    analysis: resolveCaptureAnalysisState(workspace),
+    mindMap: resolveCaptureMindMapState(workspace),
+    workspace
+  };
+}
+
+function combineCaptureAnalysisSnapshots(snapshots = []) {
+  const validSnapshots = snapshots.filter(snapshot => {
+    const analysis = snapshot?.analysis || EMPTY_CAPTURE_ANALYSIS;
+    return Boolean(
+      analysis.summary ||
+        (Array.isArray(analysis.bulletPoints) && analysis.bulletPoints.length) ||
+        (Array.isArray(analysis.logicLinks) && analysis.logicLinks.length)
+    );
+  });
+
+  if (!validSnapshots.length) return EMPTY_CAPTURE_ANALYSIS;
+
+  const summary = validSnapshots
+    .map(snapshot => String(snapshot.analysis.summary || "").trim())
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
+  const bulletPoints = Array.from(
+    new Set(
+      validSnapshots.flatMap(snapshot =>
+        (snapshot.analysis.bulletPoints || []).map(item => String(item || "").trim()).filter(Boolean)
+      )
+    )
+  );
+
+  const logicLinks = Array.from(
+    new Set(
+      validSnapshots.flatMap(snapshot =>
+        (snapshot.analysis.logicLinks || []).map(item => String(item || "").trim()).filter(Boolean)
+      )
+    )
+  );
+
+  return {
+    summary,
+    bulletPoints,
+    logicLinks
+  };
+}
+
+function combineCaptureMindMapSnapshots(label = "Study Notes", snapshots = []) {
+  const nodes = snapshots.map(snapshot => snapshot?.mindMap).filter(Boolean);
+  if (!nodes.length) return null;
+  if (nodes.length === 1) return nodes[0];
+
+  return {
+    label: normalizeWhitespace(label) || "Study Notes",
+    type: "topic",
+    children: nodes
+  };
+}
+
+function buildCaptureWorkspaceFromNote(note, statusMessage = "Loaded latest saved note.") {
+  const snapshot = getCaptureNoteSnapshot(note);
+
+  return {
+    draft: snapshot.visibleText,
+    localAnalysis: cloneCaptureAnalysis(snapshot.workspace.localAnalysis),
+    aiResult: snapshot.workspace.aiResult ? JSON.parse(JSON.stringify(snapshot.workspace.aiResult)) : null,
+    analysisSourceText: snapshot.workspace.analysisSourceText,
+    analysisCleared: snapshot.workspace.analysisCleared,
     status: statusMessage
   };
 }
@@ -736,8 +959,8 @@ function SavedNotesModal({
                     </span>
                   </div>
                   <div className="note-list-preview">
-                    {note.text.slice(0, 160)}
-                    {note.text.length > 160 ? "..." : ""}
+                    {getCaptureNoteVisibleText(note).slice(0, 160)}
+                    {getCaptureNoteVisibleText(note).length > 160 ? "..." : ""}
                   </div>
                 </button>
 
@@ -783,49 +1006,10 @@ function getDocumentStyles() {
     .join("\n");
 }
 
-const PDF_PAGE_DIMENSIONS_MM = {
-  A4: { width: 210, height: 297 },
-  A3: { width: 297, height: 420 }
-};
-
-function readPdfExportPreferences() {
-  try {
-    const raw = localStorage.getItem("capturePdfExportPreferences");
-    const parsed = raw ? JSON.parse(raw) : {};
-
-    return {
-      orientation: parsed?.orientation === "portrait" ? "portrait" : "landscape",
-      pageSize: parsed?.pageSize === "A3" ? "A3" : "A4",
-      layoutMode: parsed?.layoutMode === "multi" ? "multi" : "fit"
-    };
-  } catch {
-    return {
-      orientation: "landscape",
-      pageSize: "A4",
-      layoutMode: "fit"
-    };
-  }
-}
-
-function getPdfPageMetrics(pageSize = "A4", orientation = "landscape", marginMm = 12) {
-  const base = PDF_PAGE_DIMENSIONS_MM[pageSize] || PDF_PAGE_DIMENSIONS_MM.A4;
-  const isLandscape = orientation === "landscape";
-  const pageWidthMm = isLandscape ? base.height : base.width;
-  const pageHeightMm = isLandscape ? base.width : base.height;
-  const pxPerMm = 96 / 25.4;
-
-  return {
-    pageWidthMm,
-    pageHeightMm,
-    contentWidthPx: Math.max(320, (pageWidthMm - marginMm * 2) * pxPerMm),
-    contentHeightPx: Math.max(320, (pageHeightMm - marginMm * 2) * pxPerMm)
-  };
-}
-
 function mergeNoteTextsForAnalysis(notes = []) {
   return notes
     .map(note => {
-      const body = String(note?.text || "").trim();
+      const body = getCaptureNoteVisibleText(note);
       if (!body) return "";
       const pathLabel = [note.roomName, note.subroomName].filter(Boolean).join(" / ");
       return pathLabel ? `${pathLabel}\n${body}` : body;
@@ -855,7 +1039,7 @@ function formatNotesCollectionForPdf(title, notes = []) {
               <div class="pdf-note-card">
                 <div class="pdf-note-title">${escapeHtml(label)}</div>
                 ${meta ? `<div class="pdf-note-meta">${escapeHtml(meta)}</div>` : ""}
-                <p class="pdf-paragraph">${escapeHtml(note.text || "")}</p>
+                <p class="pdf-paragraph">${escapeHtml(getCaptureNoteVisibleText(note))}</p>
               </div>
             `;
           })
@@ -1047,7 +1231,6 @@ export default function App() {
   const lastHydratedCaptureWorkspaceKeyRef = useRef("");
 
   const [captureWorkspaceByKey, setCaptureWorkspaceByKey] = useState({});
-  const [pdfExportPreferences, setPdfExportPreferences] = useState(readPdfExportPreferences);
 
   const divisionRooms = useMemo(() => getRoomsForDivision(roomTree, selectedDivision), [roomTree, selectedDivision]);
   const selectedRoom = useMemo(
@@ -1069,17 +1252,6 @@ export default function App() {
     [selectedDivision, selectedRoomId, selectedSubroomId]
   );
 
-  const pdfExportOrientation = pdfExportPreferences.orientation || "landscape";
-  const pdfExportPageSize = pdfExportPreferences.pageSize || "A4";
-  const pdfExportLayoutMode = pdfExportPreferences.layoutMode || "fit";
-
-  function updatePdfExportPreferences(partial = {}) {
-    setPdfExportPreferences(prev => ({
-      ...prev,
-      ...partial
-    }));
-  }
-
   function applyCaptureWorkspace(workspace) {
     const nextWorkspace = workspace || buildEmptyCaptureWorkspace();
     setCaptureDraft(nextWorkspace.draft || "");
@@ -1089,14 +1261,6 @@ export default function App() {
     setCaptureAnalysisCleared(Boolean(nextWorkspace.analysisCleared));
     setCaptureStatus(nextWorkspace.status || "Ready.");
   }
-
-  useEffect(() => {
-    try {
-      localStorage.setItem("capturePdfExportPreferences", JSON.stringify(pdfExportPreferences));
-    } catch {
-      // ignore storage write errors
-    }
-  }, [pdfExportPreferences]);
 
   useEffect(() => {
   fetchRoomsFromCloud(selectedDivision);
@@ -1300,7 +1464,24 @@ async function deleteRoomFromCloud(id) {
       return;
     }
 
-    setSavedCaptureNotes(Array.isArray(data.notes) ? data.notes : []);
+    const normalizedNotes = Array.isArray(data.notes)
+      ? data.notes.map(note => {
+          const visibleText = getCaptureNoteVisibleText(note);
+          const captureMeta = getCaptureNoteStoredMeta(note, visibleText);
+          const storedText =
+            typeof note?.text === "string" && note.text.includes(CAPTURE_NOTE_META_MARKER)
+              ? note.text
+              : buildStoredCaptureNoteText(visibleText, captureMeta || {});
+          return {
+            ...note,
+            text: storedText,
+            plainText: visibleText,
+            captureMeta: captureMeta || null
+          };
+        })
+      : [];
+
+    setSavedCaptureNotes(normalizedNotes);
   } catch (error) {
     console.error(error);
     setSavedCaptureNotes([]);
@@ -1411,33 +1592,31 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     return [];
   }, [isRoomPreview, isDivisionPreview, roomPreviewSavedNotes, divisionSavedNotes]);
 
-  const previewSourceText = useMemo(() => mergeNoteTextsForAnalysis(previewNotes), [previewNotes]);
+  const previewNoteSnapshots = useMemo(() => previewNotes.map(note => getCaptureNoteSnapshot(note)), [previewNotes]);
+
+  const previewSourceText = useMemo(() => {
+    return previewNoteSnapshots
+      .map(snapshot => snapshot.sourceText || snapshot.visibleText)
+      .filter(text => normalizeWhitespace(text))
+      .join("\n\n");
+  }, [previewNoteSnapshots]);
 
   const previewAnalysis = useMemo(() => {
-    if (!normalizeWhitespace(previewSourceText)) return EMPTY_CAPTURE_ANALYSIS;
-    return buildLocalCaptureAnalysis(previewSourceText);
-  }, [previewSourceText]);
+    return combineCaptureAnalysisSnapshots(previewNoteSnapshots);
+  }, [previewNoteSnapshots]);
 
   const previewMindMap = useMemo(() => {
-    if (!normalizeWhitespace(previewSourceText)) return null;
-    return buildMindMapFromText(previewSourceText);
-  }, [previewSourceText]);
+    const previewLabel = isRoomPreview ? selectedRoom?.name || "Room Preview" : `${selectedDivision} Topic Preview`;
+    return combineCaptureMindMapSnapshots(previewLabel, previewNoteSnapshots);
+  }, [previewNoteSnapshots, isRoomPreview, selectedRoom, selectedDivision]);
 
   const activeCaptureAnalysis = useMemo(() => {
-    if (captureAnalysisCleared || !normalizeWhitespace(captureAnalysisSourceText)) {
-      return EMPTY_CAPTURE_ANALYSIS;
-    }
-
-    if (captureAiResult) {
-      const normalized = normalizeAiCaptureAnalysis(captureAiResult);
-      return {
-        summary: normalized.summary || captureLocalAnalysis.summary,
-        bulletPoints: normalized.bulletPoints.length ? normalized.bulletPoints : captureLocalAnalysis.bulletPoints,
-        logicLinks: normalized.logicLinks.length ? normalized.logicLinks : captureLocalAnalysis.logicLinks
-      };
-    }
-
-    return captureLocalAnalysis;
+    return resolveCaptureAnalysisState({
+      localAnalysis: captureLocalAnalysis,
+      aiResult: captureAiResult,
+      analysisSourceText: captureAnalysisSourceText,
+      analysisCleared: captureAnalysisCleared
+    });
   }, [captureAnalysisCleared, captureAnalysisSourceText, captureAiResult, captureLocalAnalysis]);
 
   const activeCaptureSourceText = useMemo(() => {
@@ -1446,14 +1625,11 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
   }, [captureAnalysisCleared, captureAnalysisSourceText]);
 
   const activeCaptureMindMap = useMemo(() => {
-    if (captureAnalysisCleared || !normalizeWhitespace(captureAnalysisSourceText)) return null;
-
-    if (captureAiResult) {
-      const normalized = normalizeAiCaptureAnalysis(captureAiResult);
-      if (normalized.logicForest) return normalized.logicForest;
-    }
-
-    return buildMindMapFromText(captureAnalysisSourceText);
+    return resolveCaptureMindMapState({
+      aiResult: captureAiResult,
+      analysisSourceText: captureAnalysisSourceText,
+      analysisCleared: captureAnalysisCleared
+    });
   }, [captureAiResult, captureAnalysisCleared, captureAnalysisSourceText]);
 
   const activeDisplayAnalysis = useMemo(
@@ -1686,27 +1862,6 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     }
 
     const exportTime = formatSavedAt(new Date().toISOString());
-    const marginMm = 12;
-    const pageMetrics = getPdfPageMetrics(pdfExportPageSize, pdfExportOrientation, marginMm);
-    const liveLogicHtml = liveLogicPrintRef.current ? liveLogicPrintRef.current.outerHTML : "";
-    const liveLogicWidth = liveLogicPrintRef.current?.offsetWidth || 0;
-    const liveLogicHeight = liveLogicPrintRef.current?.offsetHeight || 0;
-    const styles = getDocumentStyles();
-
-    const logicAvailableWidthPx = Math.max(320, pageMetrics.contentWidthPx - 24);
-    const logicAvailableHeightPx = Math.max(320, pageMetrics.contentHeightPx - 130);
-    const widthScale = liveLogicWidth ? logicAvailableWidthPx / liveLogicWidth : 1;
-    const fitHeightScale = liveLogicHeight ? logicAvailableHeightPx / liveLogicHeight : 1;
-    const fitScale = liveLogicHtml ? Math.min(1, widthScale, fitHeightScale) : 1;
-    const multiScale = liveLogicHtml ? Math.min(1, widthScale) : 1;
-    const activeLogicScale = pdfExportLayoutMode === "fit" ? fitScale : multiScale;
-    const logicScaledHeight = liveLogicHeight ? Math.max(240, Math.ceil(liveLogicHeight * activeLogicScale) + 8) : 320;
-    const logicScaleCss = Number.isFinite(activeLogicScale) ? activeLogicScale.toFixed(4) : "1";
-    const logicSectionClass = pdfExportLayoutMode === "fit" ? "logic-page fit-page" : "logic-page multi-page";
-    const logicStageClass = pdfExportLayoutMode === "fit" ? "logic-export-stage fit" : "logic-export-stage multi";
-    const pdfModeLabel = pdfExportLayoutMode === "fit" ? "One Page" : "Multi-page";
-    const pdfOrientationLabel = pdfExportOrientation === "portrait" ? "Portrait" : "Landscape";
-
     const metadata = [
       `Division: ${selectedDivision}`,
       `View: ${currentViewModeLabel}`,
@@ -1714,9 +1869,12 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       `Sub Room: ${selectedSubroom?.name || (canEditCapture ? "Selected Sub-room" : "All Sub-rooms")}`,
       `Path: ${currentPathLabel}`,
       `Notes Included: ${activeDisplayNotesForExport.length}`,
-      `PDF: ${pdfExportPageSize} ${pdfOrientationLabel} · ${pdfModeLabel}`,
       `Exported: ${exportTime}`
     ];
+
+    const liveLogicHtml = liveLogicPrintRef.current ? liveLogicPrintRef.current.outerHTML : "";
+    const liveLogicWidth = liveLogicPrintRef.current?.offsetWidth || 0;
+    const styles = getDocumentStyles();
 
     const html = `
       <!doctype html>
@@ -1728,8 +1886,8 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
           ${styles}
           <style>
             @page {
-              size: ${pdfExportPageSize} ${pdfExportOrientation};
-              margin: ${marginMm}mm;
+              size: A4;
+              margin: 16mm;
             }
 
             * {
@@ -1835,33 +1993,18 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
               page-break-before: always;
             }
 
-            .logic-page.multi-page {
-              page-break-inside: auto;
-            }
-
             .logic-export-stage {
               border: 1px solid #d1d5db;
               border-radius: 12px;
-              padding: 12px;
-              background: #ffffff;
-            }
-
-            .logic-export-stage.fit {
+              padding: 14px;
               overflow: hidden;
-              min-height: ${logicScaledHeight}px;
-            }
-
-            .logic-export-stage.multi {
-              overflow: visible;
-              min-height: ${logicScaledHeight}px;
+              background: #ffffff;
             }
 
             .logic-export-inner {
               width: ${liveLogicWidth ? `${liveLogicWidth}px` : "100%"};
-              max-width: none;
-              margin: 0;
-              transform-origin: top left;
-              transform: scale(${logicScaleCss});
+              max-width: 100%;
+              margin: 0 auto;
             }
 
             .logic-export-inner .mindmap-shell {
@@ -1912,9 +2055,9 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
             ${
               liveLogicHtml
                 ? `
-                  <section class="pdf-section ${logicSectionClass}">
+                  <section class="pdf-section logic-page">
                     <div class="pdf-section-title">Logic Image</div>
-                    <div class="${logicStageClass}">
+                    <div class="logic-export-stage">
                       <div class="logic-export-inner">
                         ${liveLogicHtml}
                       </div>
@@ -1942,7 +2085,7 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     exportWindow.document.open();
     exportWindow.document.write(html);
     exportWindow.document.close();
-    setCaptureStatus(`PDF export opened (${pdfExportPageSize} ${pdfOrientationLabel} · ${pdfModeLabel}).`);
+    setCaptureStatus("PDF export opened.");
   }
 
   function handleAnalyzeCapture() {
@@ -1997,6 +2140,15 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       return;
     }
 
+    const plainText = getCaptureNoteVisibleText(String(captureDraft || "").trim());
+    const captureMeta = buildStoredCaptureNoteMeta({
+      localAnalysis: captureLocalAnalysis,
+      aiResult: captureAiResult,
+      analysisSourceText: captureAnalysisSourceText,
+      analysisCleared: captureAnalysisCleared
+    });
+    const storedText = buildStoredCaptureNoteText(plainText, captureMeta);
+
     const newNote = {
       id: createId("note"),
       division: selectedDivision,
@@ -2004,7 +2156,9 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       roomName: selectedRoom?.name || "",
       subroomId: selectedSubroomId || "",
       subroomName: selectedSubroom?.name || "",
-      text: captureDraft.trim(),
+      text: storedText,
+      plainText,
+      captureMeta,
       savedAt: new Date().toISOString()
     };
 
@@ -2023,7 +2177,28 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
         return;
       }
 
-      const savedNote = data.note || data.savedNote || newNote;
+      const returnedNote = data.note || data.savedNote || {};
+      const mergedPlainText =
+        typeof returnedNote.plainText === "string"
+          ? getCaptureNoteVisibleText(returnedNote.plainText)
+          : plainText;
+      const mergedCaptureMeta =
+        returnedNote.captureMeta && typeof returnedNote.captureMeta === "object"
+          ? returnedNote.captureMeta
+          : captureMeta;
+      const mergedText =
+        typeof returnedNote.text === "string" && returnedNote.text.includes(CAPTURE_NOTE_META_MARKER)
+          ? returnedNote.text
+          : buildStoredCaptureNoteText(mergedPlainText, mergedCaptureMeta);
+
+      const savedNote = {
+        ...newNote,
+        ...returnedNote,
+        text: mergedText,
+        plainText: mergedPlainText,
+        captureMeta: mergedCaptureMeta
+      };
+
       setSavedCaptureNotes(prev => [savedNote, ...prev.filter(item => item.id !== savedNote.id && item.id !== newNote.id)]);
       setCaptureStatus(`Saved note at ${formatSavedAt(savedNote.savedAt || newNote.savedAt)}. Your editor and analysis were kept.`);
     } catch (error) {
@@ -2039,25 +2214,53 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       return;
     }
 
-    const mergedText = [captureDraft.trim(), String(note.text || "").trim()].filter(Boolean).join("\n\n");
-
-    if (!normalizeWhitespace(mergedText)) {
+    const visibleText = getCaptureNoteVisibleText(note);
+    if (!normalizeWhitespace(visibleText)) {
       setCaptureStatus("Saved note is empty.");
       return;
     }
 
-    const local = buildLocalCaptureAnalysis(mergedText);
+    const currentDraftText = String(captureDraft || "").trim();
+    const shouldMergeWithEditor = Boolean(normalizeWhitespace(currentDraftText));
 
-    setCaptureDraft(mergedText);
-    setCaptureLocalAnalysis(local);
-    setCaptureAiResult(null);
-    setCaptureAnalysisSourceText(mergedText);
-    setCaptureAnalysisCleared(false);
-    setCaptureStatus(
-      normalizeWhitespace(captureDraft)
-        ? `Merged saved note from ${formatSavedAt(note.savedAt)} into the editor and refreshed analysis.`
-        : `Loaded saved note from ${formatSavedAt(note.savedAt)} and refreshed analysis.`
-    );
+    if (!shouldMergeWithEditor) {
+      const workspace = buildCaptureWorkspaceFromNote(
+        note,
+        `Loaded saved note from ${formatSavedAt(note.savedAt)} with its original analysis.`
+      );
+
+      applyCaptureWorkspace(workspace);
+      setCaptureWorkspaceByKey(prev => ({
+        ...prev,
+        [captureWorkspaceKey]: buildCaptureWorkspaceFromState(workspace)
+      }));
+      lastHydratedCaptureWorkspaceKeyRef.current = captureWorkspaceKey;
+      return;
+    }
+
+    const normalizedCurrent = normalizeWhitespace(currentDraftText);
+    const normalizedLoaded = normalizeWhitespace(visibleText);
+    const mergedDraft = normalizedCurrent === normalizedLoaded
+      ? currentDraftText
+      : `${currentDraftText}
+
+${visibleText}`;
+
+    const mergedWorkspace = buildCaptureWorkspaceFromState({
+      draft: mergedDraft,
+      localAnalysis: EMPTY_CAPTURE_ANALYSIS,
+      aiResult: null,
+      analysisSourceText: "",
+      analysisCleared: true,
+      status: `Merged saved note from ${formatSavedAt(note.savedAt)} into the editor. Run Analyze or Ask AI to re-analyze everything.`
+    });
+
+    applyCaptureWorkspace(mergedWorkspace);
+    setCaptureWorkspaceByKey(prev => ({
+      ...prev,
+      [captureWorkspaceKey]: buildCaptureWorkspaceFromState(mergedWorkspace)
+    }));
+    lastHydratedCaptureWorkspaceKeyRef.current = captureWorkspaceKey;
   }
 
   function handleLoadTopicSample() {
@@ -2629,34 +2832,7 @@ async function handleDeleteSelectedRoomOrSubroom() {
                     {canEditCapture && captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
                   </span>
                 </h3>
-                <div className="button-row" style={{ flexWrap: "wrap", justifyContent: "flex-end", gap: "8px" }}>
-                  <select
-                    value={pdfExportLayoutMode}
-                    onChange={event => updatePdfExportPreferences({ layoutMode: event.target.value })}
-                    title="PDF layout mode"
-                    style={{ minHeight: "36px", padding: "0 10px", borderRadius: "10px", border: "1px solid #d1d5db" }}
-                  >
-                    <option value="fit">One Page</option>
-                    <option value="multi">Multi-page</option>
-                  </select>
-                  <select
-                    value={pdfExportOrientation}
-                    onChange={event => updatePdfExportPreferences({ orientation: event.target.value })}
-                    title="PDF orientation"
-                    style={{ minHeight: "36px", padding: "0 10px", borderRadius: "10px", border: "1px solid #d1d5db" }}
-                  >
-                    <option value="portrait">Portrait</option>
-                    <option value="landscape">Landscape</option>
-                  </select>
-                  <select
-                    value={pdfExportPageSize}
-                    onChange={event => updatePdfExportPreferences({ pageSize: event.target.value })}
-                    title="PDF page size"
-                    style={{ minHeight: "36px", padding: "0 10px", borderRadius: "10px", border: "1px solid #d1d5db" }}
-                  >
-                    <option value="A4">A4</option>
-                    <option value="A3">A3</option>
-                  </select>
+                <div className="button-row">
                   <button
                     onClick={handleExportAnalysisPdf}
                     disabled={!hasActiveDisplayAnalysisContent && !activeDisplayNotesForExport.length}
