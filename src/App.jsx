@@ -978,6 +978,45 @@ function SavedNotesModal({
   );
 }
 
+const PDF_PAGE_DIMENSIONS_MM = {
+  A4: { width: 210, height: 297 },
+  A3: { width: 297, height: 420 }
+};
+
+function readPdfExportPreferences() {
+  try {
+    const raw = localStorage.getItem("capturePdfExportPreferences");
+    const parsed = raw ? JSON.parse(raw) : {};
+
+    return {
+      orientation: parsed?.orientation === "portrait" ? "portrait" : "landscape",
+      pageSize: parsed?.pageSize === "A3" ? "A3" : "A4",
+      layoutMode: parsed?.layoutMode === "multi" ? "multi" : "fit"
+    };
+  } catch {
+    return {
+      orientation: "landscape",
+      pageSize: "A4",
+      layoutMode: "fit"
+    };
+  }
+}
+
+function getPdfPageMetrics(pageSize = "A4", orientation = "landscape", marginMm = 12) {
+  const base = PDF_PAGE_DIMENSIONS_MM[pageSize] || PDF_PAGE_DIMENSIONS_MM.A4;
+  const isLandscape = orientation === "landscape";
+  const pageWidthMm = isLandscape ? base.height : base.width;
+  const pageHeightMm = isLandscape ? base.width : base.height;
+  const pxPerMm = 96 / 25.4;
+
+  return {
+    pageWidthMm,
+    pageHeightMm,
+    contentWidthPx: Math.max(320, (pageWidthMm - marginMm * 2) * pxPerMm),
+    contentHeightPx: Math.max(320, (pageHeightMm - marginMm * 2) * pxPerMm)
+  };
+}
+
 function escapeHtml(text = "") {
   return String(text)
     .replace(/&/g, "&amp;")
@@ -1231,6 +1270,7 @@ export default function App() {
   const lastHydratedCaptureWorkspaceKeyRef = useRef("");
 
   const [captureWorkspaceByKey, setCaptureWorkspaceByKey] = useState({});
+  const [pdfExportPreferences, setPdfExportPreferences] = useState(readPdfExportPreferences);
 
   const divisionRooms = useMemo(() => getRoomsForDivision(roomTree, selectedDivision), [roomTree, selectedDivision]);
   const selectedRoom = useMemo(
@@ -1252,6 +1292,17 @@ export default function App() {
     [selectedDivision, selectedRoomId, selectedSubroomId]
   );
 
+  const pdfExportOrientation = pdfExportPreferences.orientation || "landscape";
+  const pdfExportPageSize = pdfExportPreferences.pageSize || "A4";
+  const pdfExportLayoutMode = pdfExportPreferences.layoutMode || "fit";
+
+  function updatePdfExportPreferences(partial = {}) {
+    setPdfExportPreferences(prev => ({
+      ...prev,
+      ...partial
+    }));
+  }
+
   function applyCaptureWorkspace(workspace) {
     const nextWorkspace = workspace || buildEmptyCaptureWorkspace();
     setCaptureDraft(nextWorkspace.draft || "");
@@ -1261,6 +1312,14 @@ export default function App() {
     setCaptureAnalysisCleared(Boolean(nextWorkspace.analysisCleared));
     setCaptureStatus(nextWorkspace.status || "Ready.");
   }
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("capturePdfExportPreferences", JSON.stringify(pdfExportPreferences));
+    } catch {
+      // ignore storage write errors
+    }
+  }, [pdfExportPreferences]);
 
   useEffect(() => {
   fetchRoomsFromCloud(selectedDivision);
@@ -1862,6 +1921,27 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     }
 
     const exportTime = formatSavedAt(new Date().toISOString());
+    const marginMm = 12;
+    const pageMetrics = getPdfPageMetrics(pdfExportPageSize, pdfExportOrientation, marginMm);
+    const liveLogicHtml = liveLogicPrintRef.current ? liveLogicPrintRef.current.outerHTML : "";
+    const liveLogicWidth = liveLogicPrintRef.current?.offsetWidth || 0;
+    const liveLogicHeight = liveLogicPrintRef.current?.offsetHeight || 0;
+    const styles = getDocumentStyles();
+
+    const logicAvailableWidthPx = Math.max(320, pageMetrics.contentWidthPx - 24);
+    const logicAvailableHeightPx = Math.max(320, pageMetrics.contentHeightPx - 130);
+    const widthScale = liveLogicWidth ? logicAvailableWidthPx / liveLogicWidth : 1;
+    const fitHeightScale = liveLogicHeight ? logicAvailableHeightPx / liveLogicHeight : 1;
+    const fitScale = liveLogicHtml ? Math.min(1, widthScale, fitHeightScale) : 1;
+    const multiScale = liveLogicHtml ? Math.min(1, widthScale) : 1;
+    const activeLogicScale = pdfExportLayoutMode === "fit" ? fitScale : multiScale;
+    const logicScaledHeight = liveLogicHeight ? Math.max(240, Math.ceil(liveLogicHeight * activeLogicScale) + 8) : 320;
+    const logicScaleCss = Number.isFinite(activeLogicScale) ? activeLogicScale.toFixed(4) : "1";
+    const logicSectionClass = pdfExportLayoutMode === "fit" ? "logic-page fit-page" : "logic-page multi-page";
+    const logicStageClass = pdfExportLayoutMode === "fit" ? "logic-export-stage fit" : "logic-export-stage multi";
+    const pdfModeLabel = pdfExportLayoutMode === "fit" ? "One Page" : "Multi-page";
+    const pdfOrientationLabel = pdfExportOrientation === "portrait" ? "Portrait" : "Landscape";
+
     const metadata = [
       `Division: ${selectedDivision}`,
       `View: ${currentViewModeLabel}`,
@@ -1869,12 +1949,9 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       `Sub Room: ${selectedSubroom?.name || (canEditCapture ? "Selected Sub-room" : "All Sub-rooms")}`,
       `Path: ${currentPathLabel}`,
       `Notes Included: ${activeDisplayNotesForExport.length}`,
+      `PDF: ${pdfExportPageSize} ${pdfOrientationLabel} · ${pdfModeLabel}`,
       `Exported: ${exportTime}`
     ];
-
-    const liveLogicHtml = liveLogicPrintRef.current ? liveLogicPrintRef.current.outerHTML : "";
-    const liveLogicWidth = liveLogicPrintRef.current?.offsetWidth || 0;
-    const styles = getDocumentStyles();
 
     const html = `
       <!doctype html>
@@ -1886,8 +1963,8 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
           ${styles}
           <style>
             @page {
-              size: A4;
-              margin: 16mm;
+              size: ${pdfExportPageSize} ${pdfExportOrientation};
+              margin: ${marginMm}mm;
             }
 
             * {
@@ -1993,18 +2070,33 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
               page-break-before: always;
             }
 
+            .logic-page.multi-page {
+              page-break-inside: auto;
+            }
+
             .logic-export-stage {
               border: 1px solid #d1d5db;
               border-radius: 12px;
-              padding: 14px;
-              overflow: hidden;
+              padding: 12px;
               background: #ffffff;
+            }
+
+            .logic-export-stage.fit {
+              overflow: hidden;
+              min-height: ${logicScaledHeight}px;
+            }
+
+            .logic-export-stage.multi {
+              overflow: visible;
+              min-height: ${logicScaledHeight}px;
             }
 
             .logic-export-inner {
               width: ${liveLogicWidth ? `${liveLogicWidth}px` : "100%"};
-              max-width: 100%;
-              margin: 0 auto;
+              max-width: none;
+              margin: 0;
+              transform-origin: top left;
+              transform: scale(${logicScaleCss});
             }
 
             .logic-export-inner .mindmap-shell {
@@ -2055,9 +2147,9 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
             ${
               liveLogicHtml
                 ? `
-                  <section class="pdf-section logic-page">
+                  <section class="pdf-section ${logicSectionClass}">
                     <div class="pdf-section-title">Logic Image</div>
-                    <div class="logic-export-stage">
+                    <div class="${logicStageClass}">
                       <div class="logic-export-inner">
                         ${liveLogicHtml}
                       </div>
@@ -2085,7 +2177,7 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
     exportWindow.document.open();
     exportWindow.document.write(html);
     exportWindow.document.close();
-    setCaptureStatus("PDF export opened.");
+    setCaptureStatus(`PDF export opened (${pdfExportPageSize} ${pdfOrientationLabel} · ${pdfModeLabel}).`);
   }
 
   function handleAnalyzeCapture() {
@@ -2832,7 +2924,34 @@ async function handleDeleteSelectedRoomOrSubroom() {
                     {canEditCapture && captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
                   </span>
                 </h3>
-                <div className="button-row">
+                <div className="button-row" style={{ flexWrap: "wrap", justifyContent: "flex-end", gap: "8px" }}>
+                  <select
+                    value={pdfExportLayoutMode}
+                    onChange={event => updatePdfExportPreferences({ layoutMode: event.target.value })}
+                    title="PDF layout mode"
+                    style={{ minHeight: "36px", padding: "0 10px", borderRadius: "10px", border: "1px solid #d1d5db" }}
+                  >
+                    <option value="fit">One Page</option>
+                    <option value="multi">Multi-page</option>
+                  </select>
+                  <select
+                    value={pdfExportOrientation}
+                    onChange={event => updatePdfExportPreferences({ orientation: event.target.value })}
+                    title="PDF orientation"
+                    style={{ minHeight: "36px", padding: "0 10px", borderRadius: "10px", border: "1px solid #d1d5db" }}
+                  >
+                    <option value="portrait">Portrait</option>
+                    <option value="landscape">Landscape</option>
+                  </select>
+                  <select
+                    value={pdfExportPageSize}
+                    onChange={event => updatePdfExportPreferences({ pageSize: event.target.value })}
+                    title="PDF page size"
+                    style={{ minHeight: "36px", padding: "0 10px", borderRadius: "10px", border: "1px solid #d1d5db" }}
+                  >
+                    <option value="A4">A4</option>
+                    <option value="A3">A3</option>
+                  </select>
                   <button
                     onClick={handleExportAnalysisPdf}
                     disabled={!hasActiveDisplayAnalysisContent && !activeDisplayNotesForExport.length}
