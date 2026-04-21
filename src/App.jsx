@@ -1437,40 +1437,16 @@ export default function App() {
         scale: 2
       });
 
-      if (pngDataUrl) {
+      if (pngDataUrl && pngDataUrl.startsWith("data:image/png")) {
         openExpandedImage(pngDataUrl);
+        setCaptureStatus("PNG preview ready.");
         return;
       }
 
-      const svgPreviewUrl = buildNodeSvgPreviewUrl(liveLogicPrintRef.current, {
-        background: "#f8fafc",
-        padding: 28
-      });
-
-      if (svgPreviewUrl) {
-        openExpandedImage(svgPreviewUrl);
-        return;
-      }
-
-      setCaptureStatus("Unable to open logic image right now.");
+      setCaptureStatus("PNG preview could not be generated in this browser right now.");
     } catch (error) {
       console.error(error);
-
-      try {
-        const svgPreviewUrl = buildNodeSvgPreviewUrl(liveLogicPrintRef.current, {
-          background: "#f8fafc",
-          padding: 28
-        });
-
-        if (svgPreviewUrl) {
-          openExpandedImage(svgPreviewUrl);
-          return;
-        }
-      } catch (fallbackError) {
-        console.error(fallbackError);
-      }
-
-      setCaptureStatus("Unable to open logic image right now.");
+      setCaptureStatus("PNG preview could not be generated in this browser right now.");
     } finally {
       setIsOpeningLiveLogicImage(false);
     }
