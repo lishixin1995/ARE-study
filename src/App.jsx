@@ -1055,6 +1055,116 @@ async function rasterizeMindMapToObjectUrl(mindMap, { background = "#f8fafc", pa
 }
 
 
+function inlineComputedStylesIntoClone(sourceNode, targetNode) {
+  if (!sourceNode || !targetNode || typeof window === "undefined") return;
+
+  const sourceElements = [sourceNode, ...sourceNode.querySelectorAll("*")];
+  const targetElements = [targetNode, ...targetNode.querySelectorAll("*")];
+
+  sourceElements.forEach((sourceElement, index) => {
+    const targetElement = targetElements[index];
+    if (!(sourceElement instanceof Element) || !(targetElement instanceof Element)) return;
+
+    const computed = window.getComputedStyle(sourceElement);
+    const cssText = Array.from(computed)
+      .map(property => `${property}: ${computed.getPropertyValue(property)};`)
+      .join(" ");
+
+    targetElement.setAttribute("style", cssText);
+
+    if (sourceElement instanceof HTMLImageElement && targetElement instanceof HTMLImageElement) {
+      targetElement.src = sourceElement.currentSrc || sourceElement.src || "";
+    }
+  });
+}
+
+async function rasterizeElementToObjectUrl(element, { background = "#f8fafc", padding = 24, scale = 2, mimeType = "image/png", quality = 0.92, maxDimension = 4096 } = {}) {
+  if (!element || typeof window === "undefined" || typeof document === "undefined") return "";
+
+  const sourceWidth = Math.max(
+    1,
+    Math.ceil(element.scrollWidth || 0),
+    Math.ceil(element.offsetWidth || 0),
+    Math.ceil(element.getBoundingClientRect?.().width || 0)
+  );
+
+  const sourceHeight = Math.max(
+    1,
+    Math.ceil(element.scrollHeight || 0),
+    Math.ceil(element.offsetHeight || 0),
+    Math.ceil(element.getBoundingClientRect?.().height || 0)
+  );
+
+  const totalWidth = sourceWidth + padding * 2;
+  const totalHeight = sourceHeight + padding * 2;
+  if (!totalWidth || !totalHeight) return "";
+
+  const clonedElement = element.cloneNode(true);
+  inlineComputedStylesIntoClone(element, clonedElement);
+
+  const wrapper = document.createElement("div");
+  wrapper.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+  wrapper.setAttribute(
+    "style",
+    [
+      `width:${totalWidth}px`,
+      `height:${totalHeight}px`,
+      `box-sizing:border-box`,
+      `padding:${padding}px`,
+      `background:${background}`,
+      `display:flex`,
+      `align-items:flex-start`,
+      `justify-content:flex-start`,
+      `overflow:hidden`
+    ].join(";")
+  );
+  wrapper.appendChild(clonedElement);
+
+  const serializedXhtml = new XMLSerializer().serializeToString(wrapper);
+  const svgMarkup = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${totalHeight}" viewBox="0 0 ${totalWidth} ${totalHeight}">
+      <foreignObject width="100%" height="100%">${serializedXhtml}</foreignObject>
+    </svg>
+  `.trim();
+
+  const svgUrl = svgMarkupToBlobUrl(svgMarkup);
+  if (!svgUrl) return "";
+
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const nextImage = new Image();
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.onerror = error => reject(error);
+      nextImage.src = svgUrl;
+    });
+
+    const maxBaseDimension = Math.max(totalWidth, totalHeight);
+    const outputScale = Math.max(1, Math.min(scale, maxDimension / Math.max(1, maxBaseDimension)));
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(totalWidth * outputScale));
+    canvas.height = Math.max(1, Math.round(totalHeight * outputScale));
+
+    const context = canvas.getContext("2d");
+    if (!context) return "";
+
+    context.scale(outputScale, outputScale);
+    context.fillStyle = background;
+    context.fillRect(0, 0, totalWidth, totalHeight);
+    context.drawImage(image, 0, 0, totalWidth, totalHeight);
+
+    const blob = await new Promise(resolve => {
+      canvas.toBlob(nextBlob => resolve(nextBlob), mimeType, quality);
+    });
+
+    if (!blob) return "";
+    return URL.createObjectURL(blob);
+  } finally {
+    URL.revokeObjectURL(svgUrl);
+  }
+}
+
+
 function MindMapNode({ node, isRoot = false }) {
   if (!node) return null;
 
@@ -1520,44 +1630,77 @@ export default function App() {
   }
 
   async function handleOpenLiveLogicImage() {
-    if (!currentMindMap || isOpeningLiveLogicImage) return;
+    if ((!currentMindMap && !liveLogicPrintRef.current) || isOpeningLiveLogicImage) return;
 
     try {
       setIsOpeningLiveLogicImage(true);
 
-      const [pngUrl, jpgUrl] = await Promise.all([
-        rasterizeMindMapToObjectUrl(currentMindMap, {
-          background: "#f8fafc",
-          padding: 28,
-          scale: 2,
-          mimeType: "image/png"
-        }),
-        rasterizeMindMapToObjectUrl(currentMindMap, {
-          background: "#f8fafc",
-          padding: 28,
-          scale: 2,
-          mimeType: "image/jpeg",
-          quality: 0.94
-        })
-      ]);
+      const liveLogicElement = liveLogicPrintRef.current;
 
-      if (pngUrl) {
-        openExpandedImage({
-          src: pngUrl,
-          pngUrl,
-          jpgUrl: jpgUrl || ""
-        });
-        setCaptureStatus(jpgUrl ? "Image preview ready. You can save PNG or JPG." : "PNG preview ready.");
-        return;
+      let pngUrl = "";
+      let jpgUrl = "";
+
+      if (liveLogicElement) {
+        try {
+          pngUrl = await rasterizeElementToObjectUrl(liveLogicElement, {
+            background: "#f8fafc",
+            padding: 24,
+            scale: 2,
+            mimeType: "image/png"
+          });
+        } catch (error) {
+          console.error(error);
+        }
+
+        try {
+          jpgUrl = await rasterizeElementToObjectUrl(liveLogicElement, {
+            background: "#f8fafc",
+            padding: 24,
+            scale: 2,
+            mimeType: "image/jpeg",
+            quality: 0.94
+          });
+        } catch (error) {
+          console.error(error);
+        }
       }
 
-      if (jpgUrl) {
+      if (!pngUrl && currentMindMap) {
+        try {
+          pngUrl = await rasterizeMindMapToObjectUrl(currentMindMap, {
+            background: "#f8fafc",
+            padding: 28,
+            scale: 2,
+            mimeType: "image/png"
+          });
+        } catch (error) {
+          console.error(error);
+        }
+      }
+
+      if (!jpgUrl && currentMindMap) {
+        try {
+          jpgUrl = await rasterizeMindMapToObjectUrl(currentMindMap, {
+            background: "#f8fafc",
+            padding: 28,
+            scale: 2,
+            mimeType: "image/jpeg",
+            quality: 0.94
+          });
+        } catch (error) {
+          console.error(error);
+        }
+      }
+
+      const previewSrc = pngUrl || jpgUrl;
+
+      if (previewSrc) {
         openExpandedImage({
-          src: jpgUrl,
-          pngUrl: "",
-          jpgUrl
+          src: previewSrc,
+          pngUrl: pngUrl || "",
+          jpgUrl: jpgUrl || ""
         });
-        setCaptureStatus("JPG preview ready.");
+        setCaptureStatus(pngUrl || jpgUrl ? "Image preview ready. You can save PNG or JPG." : "Image preview ready.");
         return;
       }
 
