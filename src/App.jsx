@@ -896,7 +896,7 @@ function copyNodeStylesRecursively(sourceNode, targetNode) {
   });
 }
 
-async function buildNodePngDataUrl(node, { background = "#f8fafc", padding = 24, scale = 2 } = {}) {
+function buildNodeSvgPreviewUrl(node, { background = "#f8fafc", padding = 24 } = {}) {
   if (!node) return "";
 
   const rect = node.getBoundingClientRect();
@@ -925,7 +925,12 @@ async function buildNodePngDataUrl(node, { background = "#f8fafc", padding = 24,
   `.trim();
 
   const svgBlob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
-  const blobUrl = URL.createObjectURL(svgBlob);
+  return URL.createObjectURL(svgBlob);
+}
+
+async function buildNodePngDataUrl(node, { background = "#f8fafc", padding = 24, scale = 2 } = {}) {
+  const blobUrl = buildNodeSvgPreviewUrl(node, { background, padding });
+  if (!blobUrl) return "";
 
   try {
     const image = await new Promise((resolve, reject) => {
@@ -934,6 +939,9 @@ async function buildNodePngDataUrl(node, { background = "#f8fafc", padding = 24,
       nextImage.onerror = error => reject(error);
       nextImage.src = blobUrl;
     });
+
+    const exportWidth = Math.max(1, image.width || Math.ceil(node?.getBoundingClientRect?.().width || 1));
+    const exportHeight = Math.max(1, image.height || Math.ceil(node?.getBoundingClientRect?.().height || 1));
 
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(exportWidth * scale));
@@ -1388,6 +1396,36 @@ export default function App() {
     setLiveLogicZoom(Math.min(2.25, Math.max(0.55, Number(nextZoom) || 1)));
   }
 
+  function openExpandedImage(nextImageUrl = "") {
+    if (!nextImageUrl) return;
+
+    setExpandedImage(previousImageUrl => {
+      if (previousImageUrl && previousImageUrl.startsWith("blob:")) {
+        try {
+          URL.revokeObjectURL(previousImageUrl);
+        } catch {
+          // Ignore blob cleanup errors.
+        }
+      }
+
+      return nextImageUrl;
+    });
+  }
+
+  function closeExpandedImage() {
+    setExpandedImage(previousImageUrl => {
+      if (previousImageUrl && previousImageUrl.startsWith("blob:")) {
+        try {
+          URL.revokeObjectURL(previousImageUrl);
+        } catch {
+          // Ignore blob cleanup errors.
+        }
+      }
+
+      return "";
+    });
+  }
+
   async function handleOpenLiveLogicImage() {
     if (!currentMindMap || !liveLogicPrintRef.current || isOpeningLiveLogicImage) return;
 
@@ -1399,14 +1437,39 @@ export default function App() {
         scale: 2
       });
 
-      if (!pngDataUrl) {
-        setCaptureStatus("Unable to open logic image right now.");
+      if (pngDataUrl) {
+        openExpandedImage(pngDataUrl);
         return;
       }
 
-      setExpandedImage(pngDataUrl);
+      const svgPreviewUrl = buildNodeSvgPreviewUrl(liveLogicPrintRef.current, {
+        background: "#f8fafc",
+        padding: 28
+      });
+
+      if (svgPreviewUrl) {
+        openExpandedImage(svgPreviewUrl);
+        return;
+      }
+
+      setCaptureStatus("Unable to open logic image right now.");
     } catch (error) {
       console.error(error);
+
+      try {
+        const svgPreviewUrl = buildNodeSvgPreviewUrl(liveLogicPrintRef.current, {
+          background: "#f8fafc",
+          padding: 28
+        });
+
+        if (svgPreviewUrl) {
+          openExpandedImage(svgPreviewUrl);
+          return;
+        }
+      } catch (fallbackError) {
+        console.error(fallbackError);
+      }
+
       setCaptureStatus("Unable to open logic image right now.");
     } finally {
       setIsOpeningLiveLogicImage(false);
@@ -3566,9 +3629,9 @@ async function handleDeleteSelectedRoomOrSubroom() {
       />
 
       {expandedImage ? (
-        <div className="overlay-backdrop" onClick={() => setExpandedImage("")}>
+        <div className="overlay-backdrop" onClick={closeExpandedImage}>
           <div className="overlay-card image-modal" onClick={event => event.stopPropagation()}>
-            <button className="icon-close-btn image-close" onClick={() => setExpandedImage("")}>
+            <button className="icon-close-btn image-close" onClick={closeExpandedImage}>
               ×
             </button>
             <img src={expandedImage} alt="Expanded" className="image-modal-img" />
