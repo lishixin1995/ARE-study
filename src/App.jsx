@@ -1016,12 +1016,11 @@ function svgMarkupToBlobUrl(svgMarkup = "") {
   return URL.createObjectURL(svgBlob);
 }
 
-async function rasterizeMindMapToObjectUrl(mindMap, { background = "#f8fafc", padding = 28, scale = 2, mimeType = "image/png", quality = 0.92 } = {}) {
-  const { svgMarkup, width, height } = buildMindMapSvgMarkup(mindMap, { background, padding });
-  if (!svgMarkup || !width || !height) return "";
+async function rasterizeSvgMarkupToBlob(svgMarkup = "", { width = 0, height = 0, background = "#f8fafc", scale = 2, mimeType = "image/png", quality = 0.92 } = {}) {
+  if (!svgMarkup || !width || !height || typeof document === "undefined") return null;
 
   const svgUrl = svgMarkupToBlobUrl(svgMarkup);
-  if (!svgUrl) return "";
+  if (!svgUrl) return null;
 
   try {
     const image = await new Promise((resolve, reject) => {
@@ -1036,7 +1035,7 @@ async function rasterizeMindMapToObjectUrl(mindMap, { background = "#f8fafc", pa
     canvas.height = Math.max(1, Math.round(height * scale));
 
     const context = canvas.getContext("2d");
-    if (!context) return "";
+    if (!context) return null;
 
     context.scale(scale, scale);
     context.fillStyle = background;
@@ -1047,11 +1046,26 @@ async function rasterizeMindMapToObjectUrl(mindMap, { background = "#f8fafc", pa
       canvas.toBlob(nextBlob => resolve(nextBlob), mimeType, quality);
     });
 
-    if (!blob) return "";
-    return URL.createObjectURL(blob);
+    return blob || null;
   } finally {
     URL.revokeObjectURL(svgUrl);
   }
+}
+
+async function rasterizeMindMapToObjectUrl(mindMap, { background = "#f8fafc", padding = 28, scale = 2, mimeType = "image/png", quality = 0.92 } = {}) {
+  const { svgMarkup, width, height } = buildMindMapSvgMarkup(mindMap, { background, padding });
+  if (!svgMarkup || !width || !height) return "";
+
+  const blob = await rasterizeSvgMarkupToBlob(svgMarkup, {
+    width,
+    height,
+    background,
+    scale,
+    mimeType,
+    quality
+  });
+
+  return blob ? URL.createObjectURL(blob) : "";
 }
 
 
@@ -1602,7 +1616,7 @@ export default function App() {
   function revokeExpandedImageResources(imageResource = null) {
     if (!imageResource || typeof imageResource !== "object") return;
 
-    [imageResource.src, imageResource.pngUrl, imageResource.jpgUrl].forEach(url => {
+    [imageResource.src, imageResource.pngUrl, imageResource.jpgUrl, imageResource.previewUrl].forEach(url => {
       if (typeof url === "string" && url.startsWith("blob:")) {
         try {
           URL.revokeObjectURL(url);
@@ -1629,82 +1643,72 @@ export default function App() {
     });
   }
 
+  async function downloadExpandedLogicImage(format = "png") {
+    if (!expandedImage || typeof expandedImage !== "object" || !expandedImage.svgMarkup) return;
+
+    try {
+      const isJpg = String(format).toLowerCase() === "jpg" || String(format).toLowerCase() === "jpeg";
+      const blob = await rasterizeSvgMarkupToBlob(expandedImage.svgMarkup, {
+        width: expandedImage.width,
+        height: expandedImage.height,
+        background: "#f8fafc",
+        scale: 2,
+        mimeType: isJpg ? "image/jpeg" : "image/png",
+        quality: isJpg ? 0.94 : 0.92
+      });
+
+      if (!blob) {
+        setCaptureStatus("This browser could not save the logic image right now.");
+        return;
+      }
+
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = `live-logic-image.${isJpg ? "jpg" : "png"}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+      setCaptureStatus(isJpg ? "JPG saved." : "PNG saved.");
+    } catch (error) {
+      console.error(error);
+      setCaptureStatus("This browser could not save the logic image right now.");
+    }
+  }
+
   async function handleOpenLiveLogicImage() {
-    if ((!currentMindMap && !liveLogicPrintRef.current) || isOpeningLiveLogicImage) return;
+    if (!currentMindMap || isOpeningLiveLogicImage) return;
 
     try {
       setIsOpeningLiveLogicImage(true);
 
-      const liveLogicElement = liveLogicPrintRef.current;
+      const { svgMarkup, width, height } = buildMindMapSvgMarkup(currentMindMap, {
+        background: "#f8fafc",
+        padding: 28
+      });
 
-      let pngUrl = "";
-      let jpgUrl = "";
-
-      if (liveLogicElement) {
-        try {
-          pngUrl = await rasterizeElementToObjectUrl(liveLogicElement, {
-            background: "#f8fafc",
-            padding: 24,
-            scale: 2,
-            mimeType: "image/png"
-          });
-        } catch (error) {
-          console.error(error);
-        }
-
-        try {
-          jpgUrl = await rasterizeElementToObjectUrl(liveLogicElement, {
-            background: "#f8fafc",
-            padding: 24,
-            scale: 2,
-            mimeType: "image/jpeg",
-            quality: 0.94
-          });
-        } catch (error) {
-          console.error(error);
-        }
-      }
-
-      if (!pngUrl && currentMindMap) {
-        try {
-          pngUrl = await rasterizeMindMapToObjectUrl(currentMindMap, {
-            background: "#f8fafc",
-            padding: 28,
-            scale: 2,
-            mimeType: "image/png"
-          });
-        } catch (error) {
-          console.error(error);
-        }
-      }
-
-      if (!jpgUrl && currentMindMap) {
-        try {
-          jpgUrl = await rasterizeMindMapToObjectUrl(currentMindMap, {
-            background: "#f8fafc",
-            padding: 28,
-            scale: 2,
-            mimeType: "image/jpeg",
-            quality: 0.94
-          });
-        } catch (error) {
-          console.error(error);
-        }
-      }
-
-      const previewSrc = pngUrl || jpgUrl;
-
-      if (previewSrc) {
-        openExpandedImage({
-          src: previewSrc,
-          pngUrl: pngUrl || "",
-          jpgUrl: jpgUrl || ""
-        });
-        setCaptureStatus(pngUrl || jpgUrl ? "Image preview ready. You can save PNG or JPG." : "Image preview ready.");
+      if (!svgMarkup || !width || !height) {
+        setCaptureStatus("Image preview could not be generated in this browser right now.");
         return;
       }
 
-      setCaptureStatus("Image preview could not be generated in this browser right now.");
+      const previewUrl = svgMarkupToBlobUrl(svgMarkup);
+      if (!previewUrl) {
+        setCaptureStatus("Image preview could not be generated in this browser right now.");
+        return;
+      }
+
+      openExpandedImage({
+        src: previewUrl,
+        previewUrl,
+        svgMarkup,
+        width,
+        height,
+        pngUrl: "",
+        jpgUrl: ""
+      });
+      setCaptureStatus("Image preview ready. Use Save PNG or Save JPG in the popup.");
     } catch (error) {
       console.error(error);
       setCaptureStatus("Image preview could not be generated in this browser right now.");
@@ -3872,50 +3876,57 @@ async function handleDeleteSelectedRoomOrSubroom() {
               ×
             </button>
             <div className="button-row" style={{ justifyContent: "center", gap: "10px", marginBottom: "12px", flexWrap: "wrap" }}>
-              {expandedImage.pngUrl ? (
-                <a
-                  href={expandedImage.pngUrl}
-                  download="live-logic-image.png"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    minHeight: "38px",
-                    padding: "0 16px",
-                    borderRadius: "12px",
-                    border: "1px solid #cbd5e1",
-                    background: "#ffffff",
-                    color: "#0f172a",
-                    textDecoration: "none",
-                    fontWeight: 600
-                  }}
-                >
-                  Save PNG
-                </a>
-              ) : null}
-              {expandedImage.jpgUrl ? (
-                <a
-                  href={expandedImage.jpgUrl}
-                  download="live-logic-image.jpg"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    minHeight: "38px",
-                    padding: "0 16px",
-                    borderRadius: "12px",
-                    border: "1px solid #cbd5e1",
-                    background: "#ffffff",
-                    color: "#0f172a",
-                    textDecoration: "none",
-                    fontWeight: 600
-                  }}
-                >
-                  Save JPG
-                </a>
+              {typeof expandedImage === "object" && expandedImage?.svgMarkup ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => downloadExpandedLogicImage("png")}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      minHeight: "38px",
+                      padding: "0 16px",
+                      borderRadius: "12px",
+                      border: "1px solid #cbd5e1",
+                      background: "#ffffff",
+                      color: "#0f172a",
+                      textDecoration: "none",
+                      fontWeight: 600,
+                      cursor: "pointer"
+                    }}
+                  >
+                    Save PNG
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadExpandedLogicImage("jpg")}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      minHeight: "38px",
+                      padding: "0 16px",
+                      borderRadius: "12px",
+                      border: "1px solid #cbd5e1",
+                      background: "#ffffff",
+                      color: "#0f172a",
+                      textDecoration: "none",
+                      fontWeight: 600,
+                      cursor: "pointer"
+                    }}
+                  >
+                    Save JPG
+                  </button>
+                </>
               ) : null}
             </div>
-            <img src={expandedImage.src} alt="Expanded" className="image-modal-img" />
+            {typeof expandedImage === "object" && expandedImage?.svgMarkup ? (
+              <div style={{ marginBottom: "10px", textAlign: "center", color: "#475569", fontSize: "13px" }}>
+                Preview is SVG for sharp display. Use the buttons above to save PNG or JPG.
+              </div>
+            ) : null}
+            <img src={typeof expandedImage === "string" ? expandedImage : expandedImage?.src} alt="Expanded" className="image-modal-img" />
           </div>
         </div>
       ) : null}
