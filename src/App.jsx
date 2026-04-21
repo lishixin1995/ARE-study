@@ -876,88 +876,181 @@ function CapturePanelSection({ title, empty = false, children }) {
   );
 }
 
-function copyNodeStylesRecursively(sourceNode, targetNode) {
-  if (!sourceNode || !targetNode || sourceNode.nodeType !== 1 || targetNode.nodeType !== 1) return;
-
-  const computedStyle = window.getComputedStyle(sourceNode);
-  const styleText = Array.from(computedStyle)
-    .map(propertyName => `${propertyName}: ${computedStyle.getPropertyValue(propertyName)};`)
-    .join(" ");
-
-  targetNode.setAttribute("style", styleText);
-
-  const sourceChildren = Array.from(sourceNode.childNodes || []);
-  const targetChildren = Array.from(targetNode.childNodes || []);
-
-  sourceChildren.forEach((child, index) => {
-    if (child.nodeType === 1 && targetChildren[index]) {
-      copyNodeStylesRecursively(child, targetChildren[index]);
-    }
-  });
+function escapeXml(value = "") {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
-function buildNodeSvgPreviewUrl(node, { background = "#f8fafc", padding = 24 } = {}) {
-  if (!node) return "";
+function measureMindMapLabelWidth(label = "", font = "600 14px Inter, system-ui, sans-serif") {
+  if (typeof document === "undefined") {
+    return Math.max(96, String(label || "").length * 8);
+  }
 
-  const rect = node.getBoundingClientRect();
-  const nodeWidth = Math.max(node.scrollWidth || 0, Math.ceil(rect.width || 0), 1);
-  const nodeHeight = Math.max(node.scrollHeight || 0, Math.ceil(rect.height || 0), 1);
-  const exportWidth = nodeWidth + padding * 2;
-  const exportHeight = nodeHeight + padding * 2;
+  const canvas = measureMindMapLabelWidth.canvas || (measureMindMapLabelWidth.canvas = document.createElement("canvas"));
+  const context = canvas.getContext("2d");
+  if (!context) return Math.max(96, String(label || "").length * 8);
 
-  const clonedNode = node.cloneNode(true);
-  copyNodeStylesRecursively(node, clonedNode);
+  context.font = font;
+  return Math.ceil(context.measureText(String(label || "")).width);
+}
 
-  clonedNode.setAttribute(
-    "style",
-    `${clonedNode.getAttribute("style") || ""}; box-sizing: border-box; margin: 0;`
-  );
+function layoutMindMapTree(node, depth = 0, config = {}) {
+  const nodeHeight = config.nodeHeight || 48;
+  const horizontalGap = config.horizontalGap || 24;
+  const verticalGap = config.verticalGap || 26;
+  const paddingX = config.paddingX || 18;
+  const minNodeWidth = config.minNodeWidth || 140;
+  const maxNodeWidth = config.maxNodeWidth || 360;
 
-  const serializedNode = new XMLSerializer().serializeToString(clonedNode);
+  const label = String(node?.label || "");
+  const measuredWidth = measureMindMapLabelWidth(label);
+  const nodeWidth = Math.min(maxNodeWidth, Math.max(minNodeWidth, measuredWidth + paddingX * 2));
+  const childLayouts = Array.isArray(node?.children)
+    ? node.children.map(child => layoutMindMapTree(child, depth + 1, config))
+    : [];
+
+  const childrenRowWidth = childLayouts.length
+    ? childLayouts.reduce((sum, child, index) => sum + child.subtreeWidth + (index ? horizontalGap : 0), 0)
+    : 0;
+
+  const subtreeWidth = Math.max(nodeWidth, childrenRowWidth || 0);
+  const offsetX = (subtreeWidth - nodeWidth) / 2;
+
+  let runningX = 0;
+  let maxSubtreeHeight = nodeHeight;
+  const positionedChildren = childLayouts.map((child, index) => {
+    const childX = runningX;
+    runningX += child.subtreeWidth + (index < childLayouts.length - 1 ? horizontalGap : 0);
+    maxSubtreeHeight = Math.max(maxSubtreeHeight, nodeHeight + verticalGap + child.subtreeHeight);
+    return {
+      ...child,
+      x: childX,
+      y: nodeHeight + verticalGap
+    };
+  });
+
+  return {
+    label,
+    depth,
+    x: 0,
+    y: 0,
+    width: nodeWidth,
+    height: nodeHeight,
+    nodeX: offsetX,
+    nodeY: 0,
+    subtreeWidth,
+    subtreeHeight: maxSubtreeHeight,
+    children: positionedChildren
+  };
+}
+
+function renderMindMapSvgNodes(layout, originX = 0, originY = 0) {
+  if (!layout) return "";
+
+  const nodeX = originX + layout.nodeX;
+  const nodeY = originY + layout.nodeY;
+  const centerX = nodeX + layout.width / 2;
+  const bottomY = nodeY + layout.height;
+  const radius = layout.depth === 0 ? 18 : 16;
+  const fill = layout.depth === 0 ? "#111827" : "#ffffff";
+  const stroke = layout.depth === 0 ? "#111827" : "#cbd5e1";
+  const textFill = layout.depth === 0 ? "#ffffff" : "#0f172a";
+
+  const connectors = layout.children
+    .map(child => {
+      const childCenterX = originX + child.x + child.nodeX + child.width / 2;
+      const childTopY = originY + child.y + child.nodeY;
+      const midY = bottomY + 12;
+      return `
+        <path d="M ${centerX} ${bottomY} L ${centerX} ${midY} L ${childCenterX} ${midY} L ${childCenterX} ${childTopY}" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        <circle cx="${childCenterX}" cy="${childTopY}" r="4" fill="#94a3b8" />
+      `;
+    })
+    .join("");
+
+  const childrenMarkup = layout.children
+    .map(child => renderMindMapSvgNodes(child, originX + child.x, originY + child.y))
+    .join("");
+
+  return `
+    ${connectors}
+    <rect x="${nodeX}" y="${nodeY}" width="${layout.width}" height="${layout.height}" rx="${radius}" ry="${radius}" fill="${fill}" stroke="${stroke}" stroke-width="${layout.depth === 0 ? 0 : 1.5}" />
+    <text x="${centerX}" y="${nodeY + layout.height / 2}" text-anchor="middle" dominant-baseline="middle" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="${layout.depth === 0 ? 700 : 600}" fill="${textFill}">${escapeXml(layout.label)}</text>
+    ${childrenMarkup}
+  `;
+}
+
+function buildMindMapSvgMarkup(mindMap, { background = "#f8fafc", padding = 28 } = {}) {
+  if (!mindMap) return { svgMarkup: "", width: 0, height: 0 };
+
+  const layout = layoutMindMapTree(mindMap, 0, {
+    nodeHeight: 48,
+    horizontalGap: 26,
+    verticalGap: 30,
+    paddingX: 18,
+    minNodeWidth: 148,
+    maxNodeWidth: 360
+  });
+
+  const width = Math.max(1, Math.ceil(layout.subtreeWidth + padding * 2));
+  const height = Math.max(1, Math.ceil(layout.subtreeHeight + padding * 2));
+  const content = renderMindMapSvgNodes(layout, padding, padding);
+
   const svgMarkup = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="${exportWidth}" height="${exportHeight}" viewBox="0 0 ${exportWidth} ${exportHeight}">
-      <foreignObject width="100%" height="100%">
-        <div xmlns="http://www.w3.org/1999/xhtml" style="width:${exportWidth}px;height:${exportHeight}px;padding:${padding}px;box-sizing:border-box;background:${background};overflow:visible;">
-          ${serializedNode}
-        </div>
-      </foreignObject>
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <rect width="100%" height="100%" fill="${background}" />
+      ${content}
     </svg>
   `.trim();
 
+  return { svgMarkup, width, height };
+}
+
+function svgMarkupToBlobUrl(svgMarkup = "") {
+  if (!svgMarkup) return "";
   const svgBlob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
   return URL.createObjectURL(svgBlob);
 }
 
-async function buildNodePngDataUrl(node, { background = "#f8fafc", padding = 24, scale = 2 } = {}) {
-  const blobUrl = buildNodeSvgPreviewUrl(node, { background, padding });
-  if (!blobUrl) return "";
+async function rasterizeMindMapToObjectUrl(mindMap, { background = "#f8fafc", padding = 28, scale = 2, mimeType = "image/png", quality = 0.92 } = {}) {
+  const { svgMarkup, width, height } = buildMindMapSvgMarkup(mindMap, { background, padding });
+  if (!svgMarkup || !width || !height) return "";
+
+  const svgUrl = svgMarkupToBlobUrl(svgMarkup);
+  if (!svgUrl) return "";
 
   try {
     const image = await new Promise((resolve, reject) => {
       const nextImage = new Image();
       nextImage.onload = () => resolve(nextImage);
       nextImage.onerror = error => reject(error);
-      nextImage.src = blobUrl;
+      nextImage.src = svgUrl;
     });
 
-    const exportWidth = Math.max(1, image.width || Math.ceil(node?.getBoundingClientRect?.().width || 1));
-    const exportHeight = Math.max(1, image.height || Math.ceil(node?.getBoundingClientRect?.().height || 1));
-
     const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(exportWidth * scale));
-    canvas.height = Math.max(1, Math.round(exportHeight * scale));
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
 
     const context = canvas.getContext("2d");
     if (!context) return "";
 
     context.scale(scale, scale);
     context.fillStyle = background;
-    context.fillRect(0, 0, exportWidth, exportHeight);
-    context.drawImage(image, 0, 0, exportWidth, exportHeight);
+    context.fillRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
 
-    return canvas.toDataURL("image/png");
+    const blob = await new Promise(resolve => {
+      canvas.toBlob(nextBlob => resolve(nextBlob), mimeType, quality);
+    });
+
+    if (!blob) return "";
+    return URL.createObjectURL(blob);
   } finally {
-    URL.revokeObjectURL(blobUrl);
+    URL.revokeObjectURL(svgUrl);
   }
 }
 
@@ -1342,7 +1435,7 @@ export default function App() {
 
   const [wrongQuestionFlashcards, setWrongQuestionFlashcards] = useState([]);
   const [flashcardIndex, setFlashcardIndex] = useState(0);
-  const [expandedImage, setExpandedImage] = useState("");
+  const [expandedImage, setExpandedImage] = useState(null);
   const [liveLogicZoom, setLiveLogicZoom] = useState(1);
   const [isOpeningLiveLogicImage, setIsOpeningLiveLogicImage] = useState(false);
   const [wrongQuestionAiResult, setWrongQuestionAiResult] = useState(null);
@@ -1396,57 +1489,82 @@ export default function App() {
     setLiveLogicZoom(Math.min(2.25, Math.max(0.55, Number(nextZoom) || 1)));
   }
 
-  function openExpandedImage(nextImageUrl = "") {
-    if (!nextImageUrl) return;
+  function revokeExpandedImageResources(imageResource = null) {
+    if (!imageResource || typeof imageResource !== "object") return;
 
-    setExpandedImage(previousImageUrl => {
-      if (previousImageUrl && previousImageUrl.startsWith("blob:")) {
+    [imageResource.src, imageResource.pngUrl, imageResource.jpgUrl].forEach(url => {
+      if (typeof url === "string" && url.startsWith("blob:")) {
         try {
-          URL.revokeObjectURL(previousImageUrl);
+          URL.revokeObjectURL(url);
         } catch {
           // Ignore blob cleanup errors.
         }
       }
+    });
+  }
 
-      return nextImageUrl;
+  function openExpandedImage(nextImage = null) {
+    if (!nextImage?.src) return;
+
+    setExpandedImage(previousImage => {
+      revokeExpandedImageResources(previousImage);
+      return nextImage;
     });
   }
 
   function closeExpandedImage() {
-    setExpandedImage(previousImageUrl => {
-      if (previousImageUrl && previousImageUrl.startsWith("blob:")) {
-        try {
-          URL.revokeObjectURL(previousImageUrl);
-        } catch {
-          // Ignore blob cleanup errors.
-        }
-      }
-
-      return "";
+    setExpandedImage(previousImage => {
+      revokeExpandedImageResources(previousImage);
+      return null;
     });
   }
 
   async function handleOpenLiveLogicImage() {
-    if (!currentMindMap || !liveLogicPrintRef.current || isOpeningLiveLogicImage) return;
+    if (!currentMindMap || isOpeningLiveLogicImage) return;
 
     try {
       setIsOpeningLiveLogicImage(true);
-      const pngDataUrl = await buildNodePngDataUrl(liveLogicPrintRef.current, {
-        background: "#f8fafc",
-        padding: 28,
-        scale: 2
-      });
 
-      if (pngDataUrl && pngDataUrl.startsWith("data:image/png")) {
-        openExpandedImage(pngDataUrl);
-        setCaptureStatus("PNG preview ready.");
+      const [pngUrl, jpgUrl] = await Promise.all([
+        rasterizeMindMapToObjectUrl(currentMindMap, {
+          background: "#f8fafc",
+          padding: 28,
+          scale: 2,
+          mimeType: "image/png"
+        }),
+        rasterizeMindMapToObjectUrl(currentMindMap, {
+          background: "#f8fafc",
+          padding: 28,
+          scale: 2,
+          mimeType: "image/jpeg",
+          quality: 0.94
+        })
+      ]);
+
+      if (pngUrl) {
+        openExpandedImage({
+          src: pngUrl,
+          pngUrl,
+          jpgUrl: jpgUrl || ""
+        });
+        setCaptureStatus(jpgUrl ? "Image preview ready. You can save PNG or JPG." : "PNG preview ready.");
         return;
       }
 
-      setCaptureStatus("PNG preview could not be generated in this browser right now.");
+      if (jpgUrl) {
+        openExpandedImage({
+          src: jpgUrl,
+          pngUrl: "",
+          jpgUrl
+        });
+        setCaptureStatus("JPG preview ready.");
+        return;
+      }
+
+      setCaptureStatus("Image preview could not be generated in this browser right now.");
     } catch (error) {
       console.error(error);
-      setCaptureStatus("PNG preview could not be generated in this browser right now.");
+      setCaptureStatus("Image preview could not be generated in this browser right now.");
     } finally {
       setIsOpeningLiveLogicImage(false);
     }
@@ -3163,7 +3281,7 @@ async function handleDeleteSelectedRoomOrSubroom() {
                     +
                   </button>
                   <button onClick={handleOpenLiveLogicImage} disabled={!currentMindMap || isOpeningLiveLogicImage}>
-                    {isOpeningLiveLogicImage ? "Opening PNG..." : "Open PNG"}
+                    {isOpeningLiveLogicImage ? "Opening Image..." : "Open Image"}
                   </button>
                 </div>
               </div>
@@ -3187,7 +3305,7 @@ async function handleDeleteSelectedRoomOrSubroom() {
                         flexWrap: "wrap"
                       }}
                     >
-                      <span>Click the logic image to open a complete PNG preview.</span>
+                      <span>Click the logic image to open a full image preview.</span>
                       <span>Zoom: {liveLogicZoomPercent}</span>
                     </div>
 
@@ -3206,7 +3324,7 @@ async function handleDeleteSelectedRoomOrSubroom() {
                           ref={liveLogicPrintRef}
                           onClick={handleOpenLiveLogicImage}
                           style={{ cursor: isOpeningLiveLogicImage ? "progress" : "zoom-in" }}
-                          title="Open full PNG preview"
+                          title="Open full image preview"
                         >
                           <MindMapNode node={currentMindMap} isRoot />
                         </div>
@@ -3610,7 +3728,51 @@ async function handleDeleteSelectedRoomOrSubroom() {
             <button className="icon-close-btn image-close" onClick={closeExpandedImage}>
               ×
             </button>
-            <img src={expandedImage} alt="Expanded" className="image-modal-img" />
+            <div className="button-row" style={{ justifyContent: "center", gap: "10px", marginBottom: "12px", flexWrap: "wrap" }}>
+              {expandedImage.pngUrl ? (
+                <a
+                  href={expandedImage.pngUrl}
+                  download="live-logic-image.png"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minHeight: "38px",
+                    padding: "0 16px",
+                    borderRadius: "12px",
+                    border: "1px solid #cbd5e1",
+                    background: "#ffffff",
+                    color: "#0f172a",
+                    textDecoration: "none",
+                    fontWeight: 600
+                  }}
+                >
+                  Save PNG
+                </a>
+              ) : null}
+              {expandedImage.jpgUrl ? (
+                <a
+                  href={expandedImage.jpgUrl}
+                  download="live-logic-image.jpg"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    minHeight: "38px",
+                    padding: "0 16px",
+                    borderRadius: "12px",
+                    border: "1px solid #cbd5e1",
+                    background: "#ffffff",
+                    color: "#0f172a",
+                    textDecoration: "none",
+                    fontWeight: 600
+                  }}
+                >
+                  Save JPG
+                </a>
+              ) : null}
+            </div>
+            <img src={expandedImage.src} alt="Expanded" className="image-modal-img" />
           </div>
         </div>
       ) : null}
