@@ -876,6 +876,84 @@ function CapturePanelSection({ title, empty = false, children }) {
   );
 }
 
+function copyNodeStylesRecursively(sourceNode, targetNode) {
+  if (!sourceNode || !targetNode || sourceNode.nodeType !== 1 || targetNode.nodeType !== 1) return;
+
+  const computedStyle = window.getComputedStyle(sourceNode);
+  const styleText = Array.from(computedStyle)
+    .map(propertyName => `${propertyName}: ${computedStyle.getPropertyValue(propertyName)};`)
+    .join(" ");
+
+  targetNode.setAttribute("style", styleText);
+
+  const sourceChildren = Array.from(sourceNode.childNodes || []);
+  const targetChildren = Array.from(targetNode.childNodes || []);
+
+  sourceChildren.forEach((child, index) => {
+    if (child.nodeType === 1 && targetChildren[index]) {
+      copyNodeStylesRecursively(child, targetChildren[index]);
+    }
+  });
+}
+
+async function buildNodePngDataUrl(node, { background = "#f8fafc", padding = 24, scale = 2 } = {}) {
+  if (!node) return "";
+
+  const rect = node.getBoundingClientRect();
+  const nodeWidth = Math.max(node.scrollWidth || 0, Math.ceil(rect.width || 0), 1);
+  const nodeHeight = Math.max(node.scrollHeight || 0, Math.ceil(rect.height || 0), 1);
+  const exportWidth = nodeWidth + padding * 2;
+  const exportHeight = nodeHeight + padding * 2;
+
+  const clonedNode = node.cloneNode(true);
+  copyNodeStylesRecursively(node, clonedNode);
+
+  clonedNode.setAttribute(
+    "style",
+    `${clonedNode.getAttribute("style") || ""}; box-sizing: border-box; margin: 0;`
+  );
+
+  const serializedNode = new XMLSerializer().serializeToString(clonedNode);
+  const svgMarkup = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${exportWidth}" height="${exportHeight}" viewBox="0 0 ${exportWidth} ${exportHeight}">
+      <foreignObject width="100%" height="100%">
+        <div xmlns="http://www.w3.org/1999/xhtml" style="width:${exportWidth}px;height:${exportHeight}px;padding:${padding}px;box-sizing:border-box;background:${background};overflow:visible;">
+          ${serializedNode}
+        </div>
+      </foreignObject>
+    </svg>
+  `.trim();
+
+  const svgBlob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
+  const blobUrl = URL.createObjectURL(svgBlob);
+
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const nextImage = new Image();
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.onerror = error => reject(error);
+      nextImage.src = blobUrl;
+    });
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(exportWidth * scale));
+    canvas.height = Math.max(1, Math.round(exportHeight * scale));
+
+    const context = canvas.getContext("2d");
+    if (!context) return "";
+
+    context.scale(scale, scale);
+    context.fillStyle = background;
+    context.fillRect(0, 0, exportWidth, exportHeight);
+    context.drawImage(image, 0, 0, exportWidth, exportHeight);
+
+    return canvas.toDataURL("image/png");
+  } finally {
+    URL.revokeObjectURL(blobUrl);
+  }
+}
+
+
 function MindMapNode({ node, isRoot = false }) {
   if (!node) return null;
 
@@ -1257,6 +1335,8 @@ export default function App() {
   const [wrongQuestionFlashcards, setWrongQuestionFlashcards] = useState([]);
   const [flashcardIndex, setFlashcardIndex] = useState(0);
   const [expandedImage, setExpandedImage] = useState("");
+  const [liveLogicZoom, setLiveLogicZoom] = useState(1);
+  const [isOpeningLiveLogicImage, setIsOpeningLiveLogicImage] = useState(false);
   const [wrongQuestionAiResult, setWrongQuestionAiResult] = useState(null);
   const [wrongQuestionLocalAnalysis, setWrongQuestionLocalAnalysis] = useState(buildLocalWrongQuestionAnalysis(""));
   const [wrongQuestionAnalysisSourceText, setWrongQuestionAnalysisSourceText] = useState("");
@@ -1295,12 +1375,42 @@ export default function App() {
   const pdfExportOrientation = pdfExportPreferences.orientation || "landscape";
   const pdfExportPageSize = pdfExportPreferences.pageSize || "A4";
   const pdfExportLayoutMode = pdfExportPreferences.layoutMode || "fit";
+  const liveLogicZoomPercent = `${Math.round(liveLogicZoom * 100)}%`;
 
   function updatePdfExportPreferences(partial = {}) {
     setPdfExportPreferences(prev => ({
       ...prev,
       ...partial
     }));
+  }
+
+  function adjustLiveLogicZoom(nextZoom) {
+    setLiveLogicZoom(Math.min(2.25, Math.max(0.55, Number(nextZoom) || 1)));
+  }
+
+  async function handleOpenLiveLogicImage() {
+    if (!currentMindMap || !liveLogicPrintRef.current || isOpeningLiveLogicImage) return;
+
+    try {
+      setIsOpeningLiveLogicImage(true);
+      const pngDataUrl = await buildNodePngDataUrl(liveLogicPrintRef.current, {
+        background: "#f8fafc",
+        padding: 28,
+        scale: 2
+      });
+
+      if (!pngDataUrl) {
+        setCaptureStatus("Unable to open logic image right now.");
+        return;
+      }
+
+      setExpandedImage(pngDataUrl);
+    } catch (error) {
+      console.error(error);
+      setCaptureStatus("Unable to open logic image right now.");
+    } finally {
+      setIsOpeningLiveLogicImage(false);
+    }
   }
 
   function applyCaptureWorkspace(workspace) {
@@ -3003,9 +3113,23 @@ async function handleDeleteSelectedRoomOrSubroom() {
                     {canEditCapture && captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
                   </span>
                 </h3>
+                <div className="button-row" style={{ flexWrap: "wrap", justifyContent: "flex-end", gap: "8px" }}>
+                  <button onClick={() => adjustLiveLogicZoom(liveLogicZoom - 0.15)} disabled={!currentMindMap}>
+                    −
+                  </button>
+                  <button onClick={() => adjustLiveLogicZoom(1)} disabled={!currentMindMap}>
+                    Reset {liveLogicZoomPercent}
+                  </button>
+                  <button onClick={() => adjustLiveLogicZoom(liveLogicZoom + 0.15)} disabled={!currentMindMap}>
+                    +
+                  </button>
+                  <button onClick={handleOpenLiveLogicImage} disabled={!currentMindMap || isOpeningLiveLogicImage}>
+                    {isOpeningLiveLogicImage ? "Opening PNG..." : "Open PNG"}
+                  </button>
+                </div>
               </div>
 
-              <div className="mindmap-shell">
+              <div className="mindmap-shell" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                 {!currentMindMap ? (
                   <div className="analysis-box is-empty">
                     {!normalizeWhitespace(activeDisplaySourceText) && !canEditCapture
@@ -3013,9 +3137,43 @@ async function handleDeleteSelectedRoomOrSubroom() {
                       : ""}
                   </div>
                 ) : (
-                  <div className="mindmap-board" ref={liveLogicPrintRef}>
-                    <MindMapNode node={currentMindMap} isRoot />
-                  </div>
+                  <>
+                    <div
+                      style={{
+                        fontSize: "12px",
+                        color: "#64748b",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: "12px",
+                        flexWrap: "wrap"
+                      }}
+                    >
+                      <span>Click the logic image to open a complete PNG preview.</span>
+                      <span>Zoom: {liveLogicZoomPercent}</span>
+                    </div>
+
+                    <div
+                      style={{
+                        overflow: "auto",
+                        borderRadius: "18px",
+                        border: "1px solid rgba(148, 163, 184, 0.22)",
+                        background: "linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(241, 245, 249, 0.92))",
+                        padding: "14px"
+                      }}
+                    >
+                      <div style={{ width: "max-content", minWidth: "100%", zoom: liveLogicZoom }}>
+                        <div
+                          className="mindmap-board"
+                          ref={liveLogicPrintRef}
+                          onClick={handleOpenLiveLogicImage}
+                          style={{ cursor: isOpeningLiveLogicImage ? "progress" : "zoom-in" }}
+                          title="Open full PNG preview"
+                        >
+                          <MindMapNode node={currentMindMap} isRoot />
+                        </div>
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
             </div>
