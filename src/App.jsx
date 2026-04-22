@@ -1272,58 +1272,39 @@ function MindMapNode({ node, isRoot = false }) {
 
   const labelStyle = isRoot
     ? {
-        width: "150px",
-        minWidth: "150px",
-        maxWidth: "150px",
-        minHeight: "46px",
-        padding: "10px 12px",
-        lineHeight: 1.25,
+        width: "190px",
+        minWidth: "190px",
+        maxWidth: "190px",
+        padding: "12px 16px",
+        lineHeight: 1.22,
         fontSize: "12.5px",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
+        whiteSpace: "normal",
         wordBreak: "break-word",
         overflowWrap: "anywhere",
-        whiteSpace: "normal",
-        display: "-webkit-box",
-        WebkitBoxOrient: "vertical",
-        WebkitLineClamp: 2
+        boxSizing: "border-box"
       }
     : {
-        width: "136px",
-        minWidth: "136px",
-        maxWidth: "136px",
-        minHeight: "40px",
-        padding: "8px 10px",
-        lineHeight: 1.28,
+        width: "182px",
+        minWidth: "182px",
+        maxWidth: "182px",
+        padding: "10px 14px",
+        lineHeight: 1.22,
         fontSize: "12px",
-        overflow: "hidden",
-        textOverflow: "ellipsis",
+        whiteSpace: "normal",
         wordBreak: "break-word",
         overflowWrap: "anywhere",
-        whiteSpace: "normal",
-        display: "-webkit-box",
-        WebkitBoxOrient: "vertical",
-        WebkitLineClamp: 2
+        boxSizing: "border-box"
       };
 
   return (
-    <div
-      className={`mindmap-node ${isRoot ? "is-root" : ""}`}
-      style={{ display: "flex", flexDirection: "column", gap: isRoot ? "18px" : "12px", alignItems: "flex-start" }}
-    >
-      <div className={`mindmap-label ${isRoot ? "root" : ""}`} title={node.label} style={labelStyle}>
-        {node.label}
-      </div>
+    <div className={`mindmap-node ${isRoot ? "is-root" : ""}`}>
+      <div className={`mindmap-label ${isRoot ? "root" : ""}`} title={node.label} style={labelStyle}>{node.label}</div>
 
       {node.children?.length ? (
-        <div className="mindmap-children" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+        <div className="mindmap-children">
           {node.children.map((child, index) => (
-            <div
-              key={`${child.label}-${index}`}
-              className="mindmap-child-row"
-              style={{ display: "flex", alignItems: "center", gap: "10px" }}
-            >
-              <div className="mindmap-connector" style={{ flex: "0 0 auto" }}>
+            <div key={`${child.label}-${index}`} className="mindmap-child-row">
+              <div className="mindmap-connector">
                 <span className="mindmap-connector-dot" />
               </div>
               <MindMapNode node={child} />
