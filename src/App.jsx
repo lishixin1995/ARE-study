@@ -876,12 +876,343 @@ function CapturePanelSection({ title, empty = false, children }) {
   );
 }
 
+function escapeXml(value = "") {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function measureMindMapLabelWidth(label = "", font = "600 14px Inter, system-ui, sans-serif") {
+  if (typeof document === "undefined") {
+    return Math.max(96, String(label || "").length * 8);
+  }
+
+  const canvas = measureMindMapLabelWidth.canvas || (measureMindMapLabelWidth.canvas = document.createElement("canvas"));
+  const context = canvas.getContext("2d");
+  if (!context) return Math.max(96, String(label || "").length * 8);
+
+  context.font = font;
+  return Math.ceil(context.measureText(String(label || "")).width);
+}
+
+function layoutMindMapTree(node, depth = 0, config = {}) {
+  const nodeHeight = config.nodeHeight || 48;
+  const horizontalGap = config.horizontalGap || 24;
+  const verticalGap = config.verticalGap || 26;
+  const paddingX = config.paddingX || 18;
+  const minNodeWidth = config.minNodeWidth || 140;
+  const maxNodeWidth = config.maxNodeWidth || 360;
+
+  const label = String(node?.label || "");
+  const measuredWidth = measureMindMapLabelWidth(label);
+  const nodeWidth = Math.min(maxNodeWidth, Math.max(minNodeWidth, measuredWidth + paddingX * 2));
+  const childLayouts = Array.isArray(node?.children)
+    ? node.children.map(child => layoutMindMapTree(child, depth + 1, config))
+    : [];
+
+  const childrenRowWidth = childLayouts.length
+    ? childLayouts.reduce((sum, child, index) => sum + child.subtreeWidth + (index ? horizontalGap : 0), 0)
+    : 0;
+
+  const subtreeWidth = Math.max(nodeWidth, childrenRowWidth || 0);
+  const offsetX = (subtreeWidth - nodeWidth) / 2;
+
+  let runningX = 0;
+  let maxSubtreeHeight = nodeHeight;
+  const positionedChildren = childLayouts.map((child, index) => {
+    const childX = runningX;
+    runningX += child.subtreeWidth + (index < childLayouts.length - 1 ? horizontalGap : 0);
+    maxSubtreeHeight = Math.max(maxSubtreeHeight, nodeHeight + verticalGap + child.subtreeHeight);
+    return {
+      ...child,
+      x: childX,
+      y: nodeHeight + verticalGap
+    };
+  });
+
+  return {
+    label,
+    depth,
+    x: 0,
+    y: 0,
+    width: nodeWidth,
+    height: nodeHeight,
+    nodeX: offsetX,
+    nodeY: 0,
+    subtreeWidth,
+    subtreeHeight: maxSubtreeHeight,
+    children: positionedChildren
+  };
+}
+
+function renderMindMapSvgNodes(layout, originX = 0, originY = 0) {
+  if (!layout) return "";
+
+  const nodeX = originX + layout.nodeX;
+  const nodeY = originY + layout.nodeY;
+  const centerX = nodeX + layout.width / 2;
+  const bottomY = nodeY + layout.height;
+  const radius = layout.depth === 0 ? 18 : 16;
+  const fill = layout.depth === 0 ? "#111827" : "#ffffff";
+  const stroke = layout.depth === 0 ? "#111827" : "#cbd5e1";
+  const textFill = layout.depth === 0 ? "#ffffff" : "#0f172a";
+
+  const connectors = layout.children
+    .map(child => {
+      const childCenterX = originX + child.x + child.nodeX + child.width / 2;
+      const childTopY = originY + child.y + child.nodeY;
+      const midY = bottomY + 12;
+      return `
+        <path d="M ${centerX} ${bottomY} L ${centerX} ${midY} L ${childCenterX} ${midY} L ${childCenterX} ${childTopY}" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        <circle cx="${childCenterX}" cy="${childTopY}" r="4" fill="#94a3b8" />
+      `;
+    })
+    .join("");
+
+  const childrenMarkup = layout.children
+    .map(child => renderMindMapSvgNodes(child, originX + child.x, originY + child.y))
+    .join("");
+
+  return `
+    ${connectors}
+    <rect x="${nodeX}" y="${nodeY}" width="${layout.width}" height="${layout.height}" rx="${radius}" ry="${radius}" fill="${fill}" stroke="${stroke}" stroke-width="${layout.depth === 0 ? 0 : 1.5}" />
+    <text x="${centerX}" y="${nodeY + layout.height / 2}" text-anchor="middle" dominant-baseline="middle" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="${layout.depth === 0 ? 700 : 600}" fill="${textFill}">${escapeXml(layout.label)}</text>
+    ${childrenMarkup}
+  `;
+}
+
+function buildMindMapSvgMarkup(mindMap, { background = "#f8fafc", padding = 28 } = {}) {
+  if (!mindMap) return { svgMarkup: "", width: 0, height: 0 };
+
+  const layout = layoutMindMapTree(mindMap, 0, {
+    nodeHeight: 48,
+    horizontalGap: 26,
+    verticalGap: 30,
+    paddingX: 18,
+    minNodeWidth: 148,
+    maxNodeWidth: 360
+  });
+
+  const width = Math.max(1, Math.ceil(layout.subtreeWidth + padding * 2));
+  const height = Math.max(1, Math.ceil(layout.subtreeHeight + padding * 2));
+  const content = renderMindMapSvgNodes(layout, padding, padding);
+
+  const svgMarkup = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <rect width="100%" height="100%" fill="${background}" />
+      ${content}
+    </svg>
+  `.trim();
+
+  return { svgMarkup, width, height };
+}
+
+function svgMarkupToBlobUrl(svgMarkup = "") {
+  if (!svgMarkup) return "";
+  const svgBlob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
+  return URL.createObjectURL(svgBlob);
+}
+
+async function rasterizeSvgMarkupToBlob(svgMarkup = "", { width = 0, height = 0, background = "#f8fafc", scale = 2, mimeType = "image/png", quality = 0.92 } = {}) {
+  if (!svgMarkup || !width || !height || typeof document === "undefined") return null;
+
+  const svgUrl = svgMarkupToBlobUrl(svgMarkup);
+  if (!svgUrl) return null;
+
+  try {
+    const image = await new Promise((resolve, reject) => {
+      const nextImage = new Image();
+      nextImage.onload = () => resolve(nextImage);
+      nextImage.onerror = error => reject(error);
+      nextImage.src = svgUrl;
+    });
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+
+    context.scale(scale, scale);
+    context.fillStyle = background;
+    context.fillRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+
+    const blob = await new Promise(resolve => {
+      canvas.toBlob(nextBlob => resolve(nextBlob), mimeType, quality);
+    });
+
+    return blob || null;
+  } finally {
+    URL.revokeObjectURL(svgUrl);
+  }
+}
+
+async function rasterizeMindMapToObjectUrl(mindMap, { background = "#f8fafc", padding = 28, scale = 2, mimeType = "image/png", quality = 0.92 } = {}) {
+  const { svgMarkup, width, height } = buildMindMapSvgMarkup(mindMap, { background, padding });
+  if (!svgMarkup || !width || !height) return "";
+
+  const blob = await rasterizeSvgMarkupToBlob(svgMarkup, {
+    width,
+    height,
+    background,
+    scale,
+    mimeType,
+    quality
+  });
+
+  return blob ? URL.createObjectURL(blob) : "";
+}
+
+
+
+function inlineComputedStylesIntoClone(sourceNode, targetNode) {
+  if (!sourceNode || !targetNode || typeof window === "undefined") return;
+
+  const sourceElements = [sourceNode, ...sourceNode.querySelectorAll("*")];
+  const targetElements = [targetNode, ...targetNode.querySelectorAll("*")];
+
+  sourceElements.forEach((sourceElement, index) => {
+    const targetElement = targetElements[index];
+    if (!(sourceElement instanceof Element) || !(targetElement instanceof Element)) return;
+
+    const computed = window.getComputedStyle(sourceElement);
+    const cssText = Array.from(computed)
+      .map(property => `${property}: ${computed.getPropertyValue(property)};`)
+      .join(" ");
+
+    targetElement.setAttribute("style", cssText);
+
+    if (sourceElement instanceof HTMLImageElement && targetElement instanceof HTMLImageElement) {
+      targetElement.src = sourceElement.currentSrc || sourceElement.src || "";
+    }
+  });
+}
+
+function buildElementSvgMarkup(element, { background = "#f8fafc", padding = 24 } = {}) {
+  if (!element || typeof window === "undefined" || typeof document === "undefined") {
+    return { svgMarkup: "", width: 0, height: 0, sourceWidth: 0, sourceHeight: 0 };
+  }
+
+  const rect = element.getBoundingClientRect ? element.getBoundingClientRect() : { width: 0, height: 0 };
+  const sourceWidth = Math.max(
+    1,
+    Math.ceil(element.scrollWidth || 0),
+    Math.ceil(element.offsetWidth || 0),
+    Math.ceil(element.clientWidth || 0),
+    Math.ceil(rect.width || 0)
+  );
+  const sourceHeight = Math.max(
+    1,
+    Math.ceil(element.scrollHeight || 0),
+    Math.ceil(element.offsetHeight || 0),
+    Math.ceil(element.clientHeight || 0),
+    Math.ceil(rect.height || 0)
+  );
+
+  const totalWidth = sourceWidth + padding * 2;
+  const totalHeight = sourceHeight + padding * 2;
+  if (!totalWidth || !totalHeight) {
+    return { svgMarkup: "", width: 0, height: 0, sourceWidth, sourceHeight };
+  }
+
+  const clonedElement = element.cloneNode(true);
+  inlineComputedStylesIntoClone(element, clonedElement);
+
+  if (clonedElement instanceof Element) {
+    clonedElement.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+    clonedElement.style.width = `${sourceWidth}px`;
+    clonedElement.style.minWidth = `${sourceWidth}px`;
+    clonedElement.style.maxWidth = `${sourceWidth}px`;
+    clonedElement.style.height = `${sourceHeight}px`;
+    clonedElement.style.minHeight = `${sourceHeight}px`;
+    clonedElement.style.maxHeight = "none";
+    clonedElement.style.boxSizing = "border-box";
+    clonedElement.style.margin = "0";
+    clonedElement.style.transform = "none";
+    clonedElement.style.transformOrigin = "top left";
+    clonedElement.style.zoom = "1";
+    clonedElement.style.overflow = "visible";
+    clonedElement.style.flex = "0 0 auto";
+  }
+
+  const wrapper = document.createElement("div");
+  wrapper.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+  wrapper.setAttribute(
+    "style",
+    [
+      `width:${totalWidth}px`,
+      `height:${totalHeight}px`,
+      `box-sizing:border-box`,
+      `padding:${padding}px`,
+      `background:${background}`,
+      `display:flex`,
+      `align-items:flex-start`,
+      `justify-content:flex-start`,
+      `overflow:visible`
+    ].join(";")
+  );
+  wrapper.appendChild(clonedElement);
+
+  const serializedXhtml = new XMLSerializer().serializeToString(wrapper);
+  const svgMarkup = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${totalHeight}" viewBox="0 0 ${totalWidth} ${totalHeight}">
+      <foreignObject x="0" y="0" width="${totalWidth}" height="${totalHeight}">${serializedXhtml}</foreignObject>
+    </svg>
+  `.trim();
+
+  return {
+    svgMarkup,
+    width: totalWidth,
+    height: totalHeight,
+    sourceWidth,
+    sourceHeight
+  };
+}
+
+async function rasterizeElementToBlob(
+  element,
+  { background = "#f8fafc", padding = 24, scale = 2, mimeType = "image/png", quality = 0.92, maxDimension = 4096 } = {}
+) {
+  const { svgMarkup, width, height } = buildElementSvgMarkup(element, { background, padding });
+  if (!svgMarkup || !width || !height) return null;
+
+  return rasterizeSvgMarkupToBlob(svgMarkup, {
+    width,
+    height,
+    background,
+    scale,
+    mimeType,
+    quality,
+    maxDimension
+  });
+}
+
+async function rasterizeElementToObjectUrl(
+  element,
+  { background = "#f8fafc", padding = 24, scale = 2, mimeType = "image/png", quality = 0.92, maxDimension = 4096 } = {}
+) {
+  const blob = await rasterizeElementToBlob(element, {
+    background,
+    padding,
+    scale,
+    mimeType,
+    quality,
+    maxDimension
+  });
+
+  return blob ? URL.createObjectURL(blob) : "";
+}
+
+
 function MindMapNode({ node, isRoot = false, depth = 0 }) {
   if (!node) return null;
 
   const hasChildren = Array.isArray(node.children) && node.children.length > 0;
-
-  // Keep the tree structure exactly the same, only improve bubble readability.
   const bubbleWidth = isRoot ? 300 : hasChildren ? 360 : 420;
 
   const labelStyle = {
@@ -1284,7 +1615,10 @@ export default function App() {
 
   const [wrongQuestionFlashcards, setWrongQuestionFlashcards] = useState([]);
   const [flashcardIndex, setFlashcardIndex] = useState(0);
-  const [expandedImage, setExpandedImage] = useState("");
+  const [expandedImage, setExpandedImage] = useState(null);
+  const [liveLogicZoom, setLiveLogicZoom] = useState(1);
+  const [isOpeningLiveLogicImage, setIsOpeningLiveLogicImage] = useState(false);
+  const [expandedImageStatus, setExpandedImageStatus] = useState("");
   const [wrongQuestionAiResult, setWrongQuestionAiResult] = useState(null);
   const [wrongQuestionLocalAnalysis, setWrongQuestionLocalAnalysis] = useState(buildLocalWrongQuestionAnalysis(""));
   const [wrongQuestionAnalysisSourceText, setWrongQuestionAnalysisSourceText] = useState("");
@@ -1323,12 +1657,169 @@ export default function App() {
   const pdfExportOrientation = pdfExportPreferences.orientation || "landscape";
   const pdfExportPageSize = pdfExportPreferences.pageSize || "A4";
   const pdfExportLayoutMode = pdfExportPreferences.layoutMode || "fit";
+  const liveLogicZoomPercent = `${Math.round(liveLogicZoom * 100)}%`;
 
   function updatePdfExportPreferences(partial = {}) {
     setPdfExportPreferences(prev => ({
       ...prev,
       ...partial
     }));
+  }
+
+  function adjustLiveLogicZoom(nextZoom) {
+    setLiveLogicZoom(Math.min(2.25, Math.max(0.55, Number(nextZoom) || 1)));
+  }
+
+  function revokeExpandedImageResources(imageResource = null) {
+    if (!imageResource || typeof imageResource !== "object") return;
+
+    [imageResource.src, imageResource.pngUrl, imageResource.jpgUrl, imageResource.previewUrl].forEach(url => {
+      if (typeof url === "string" && url.startsWith("blob:")) {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {
+          // Ignore blob cleanup errors.
+        }
+      }
+    });
+  }
+
+
+  function openExpandedImage(nextImage = null) {
+    if (!nextImage?.src) return;
+
+    setExpandedImage(previousImage => {
+      revokeExpandedImageResources(previousImage);
+      return nextImage;
+    });
+    setExpandedImageStatus("Preview ready. Use Save PNG or Save JPG.");
+  }
+
+  function closeExpandedImage() {
+    setExpandedImage(previousImage => {
+      revokeExpandedImageResources(previousImage);
+      return null;
+    });
+    setExpandedImageStatus("");
+  }
+
+  async function downloadExpandedLogicImage(format = "png") {
+    if (!expandedImage || typeof expandedImage !== "object") return;
+
+    try {
+      setExpandedImageStatus(`Preparing ${String(format).toUpperCase()}...`);
+
+      const isJpg = String(format).toLowerCase() === "jpg" || String(format).toLowerCase() === "jpeg";
+      let blob = null;
+
+      if (expandedImage.sourceElement instanceof Element) {
+        blob = await rasterizeElementToBlob(expandedImage.sourceElement, {
+          background: "#f8fafc",
+          padding: 24,
+          scale: 2,
+          mimeType: isJpg ? "image/jpeg" : "image/png",
+          quality: isJpg ? 0.94 : 0.92
+        });
+      }
+
+      if (!blob && expandedImage.svgMarkup) {
+        blob = await rasterizeSvgMarkupToBlob(expandedImage.svgMarkup, {
+          width: expandedImage.width,
+          height: expandedImage.height,
+          background: "#f8fafc",
+          scale: 2,
+          mimeType: isJpg ? "image/jpeg" : "image/png",
+          quality: isJpg ? 0.94 : 0.92
+        });
+      }
+
+      if (!blob) {
+        setExpandedImageStatus(`Could not create a ${isJpg ? "JPG" : "PNG"} in this browser.`);
+        setCaptureStatus("This browser could not save the logic image right now.");
+        return;
+      }
+
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = `live-logic-image.${isJpg ? "jpg" : "png"}`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+      setExpandedImageStatus(isJpg ? "JPG saved." : "PNG saved.");
+      setCaptureStatus(isJpg ? "JPG saved." : "PNG saved.");
+    } catch (error) {
+      console.error(error);
+      setExpandedImageStatus(`Could not create a ${String(format).toUpperCase()} in this browser.`);
+      setCaptureStatus("This browser could not save the logic image right now.");
+    }
+  }
+
+  async function handleOpenLiveLogicImage() {
+    if ((!currentMindMap && !liveLogicPrintRef.current) || isOpeningLiveLogicImage) return;
+
+    try {
+      setIsOpeningLiveLogicImage(true);
+      setExpandedImageStatus("");
+
+      const liveLogicElement = liveLogicPrintRef.current;
+
+      if (liveLogicElement) {
+        const elementPreview = buildElementSvgMarkup(liveLogicElement, {
+          background: "#f8fafc",
+          padding: 24
+        });
+
+        if (elementPreview.svgMarkup && elementPreview.width && elementPreview.height) {
+          const previewUrl = svgMarkupToBlobUrl(elementPreview.svgMarkup);
+          if (previewUrl) {
+            openExpandedImage({
+              src: previewUrl,
+              previewUrl,
+              svgMarkup: elementPreview.svgMarkup,
+              width: elementPreview.width,
+              height: elementPreview.height,
+              sourceElement: liveLogicElement
+            });
+            setCaptureStatus("Image preview ready. Use Save PNG or Save JPG in the popup.");
+            return;
+          }
+        }
+      }
+
+      if (currentMindMap) {
+        const { svgMarkup, width, height } = buildMindMapSvgMarkup(currentMindMap, {
+          background: "#f8fafc",
+          padding: 28
+        });
+
+        if (svgMarkup && width && height) {
+          const previewUrl = svgMarkupToBlobUrl(svgMarkup);
+          if (previewUrl) {
+            openExpandedImage({
+              src: previewUrl,
+              previewUrl,
+              svgMarkup,
+              width,
+              height,
+              sourceElement: null
+            });
+            setCaptureStatus("Image preview ready. Use Save PNG or Save JPG in the popup.");
+            return;
+          }
+        }
+      }
+
+      setExpandedImageStatus("Image preview could not be generated in this browser right now.");
+      setCaptureStatus("Image preview could not be generated in this browser right now.");
+    } catch (error) {
+      console.error(error);
+      setExpandedImageStatus("Image preview could not be generated in this browser right now.");
+      setCaptureStatus("Image preview could not be generated in this browser right now.");
+    } finally {
+      setIsOpeningLiveLogicImage(false);
+    }
   }
 
   function applyCaptureWorkspace(workspace) {
@@ -3031,9 +3522,23 @@ async function handleDeleteSelectedRoomOrSubroom() {
                     {canEditCapture && captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
                   </span>
                 </h3>
+                <div className="button-row" style={{ flexWrap: "wrap", justifyContent: "flex-end", gap: "8px" }}>
+                  <button onClick={() => adjustLiveLogicZoom(liveLogicZoom - 0.15)} disabled={!currentMindMap}>
+                    −
+                  </button>
+                  <button onClick={() => adjustLiveLogicZoom(1)} disabled={!currentMindMap}>
+                    Reset {liveLogicZoomPercent}
+                  </button>
+                  <button onClick={() => adjustLiveLogicZoom(liveLogicZoom + 0.15)} disabled={!currentMindMap}>
+                    +
+                  </button>
+                  <button onClick={handleOpenLiveLogicImage} disabled={!currentMindMap || isOpeningLiveLogicImage}>
+                    {isOpeningLiveLogicImage ? "Opening Image..." : "Open Image"}
+                  </button>
+                </div>
               </div>
 
-              <div className="mindmap-shell">
+              <div className="mindmap-shell" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
                 {!currentMindMap ? (
                   <div className="analysis-box is-empty">
                     {!normalizeWhitespace(activeDisplaySourceText) && !canEditCapture
@@ -3041,9 +3546,43 @@ async function handleDeleteSelectedRoomOrSubroom() {
                       : ""}
                   </div>
                 ) : (
-                  <div className="mindmap-board" ref={liveLogicPrintRef}>
-                    <MindMapNode node={currentMindMap} isRoot />
-                  </div>
+                  <>
+                    <div
+                      style={{
+                        fontSize: "12px",
+                        color: "#64748b",
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: "12px",
+                        flexWrap: "wrap"
+                      }}
+                    >
+                      <span>Click the logic image to open a full image preview.</span>
+                      <span>Zoom: {liveLogicZoomPercent}</span>
+                    </div>
+
+                    <div
+                      style={{
+                        overflow: "auto",
+                        borderRadius: "18px",
+                        border: "1px solid rgba(148, 163, 184, 0.22)",
+                        background: "linear-gradient(180deg, rgba(248, 250, 252, 0.96), rgba(241, 245, 249, 0.92))",
+                        padding: "14px"
+                      }}
+                    >
+                      <div style={{ width: "max-content", minWidth: "100%", zoom: liveLogicZoom }}>
+                        <div
+                          className="mindmap-board"
+                          ref={liveLogicPrintRef}
+                          onClick={handleOpenLiveLogicImage}
+                          style={{ cursor: isOpeningLiveLogicImage ? "progress" : "zoom-in" }}
+                          title="Open full image preview"
+                        >
+                          <MindMapNode node={currentMindMap} isRoot />
+                        </div>
+                      </div>
+                    </div>
+                  </>
                 )}
               </div>
             </div>
@@ -3436,12 +3975,66 @@ async function handleDeleteSelectedRoomOrSubroom() {
       />
 
       {expandedImage ? (
-        <div className="overlay-backdrop" onClick={() => setExpandedImage("")}>
+        <div className="overlay-backdrop" onClick={closeExpandedImage}>
           <div className="overlay-card image-modal" onClick={event => event.stopPropagation()}>
-            <button className="icon-close-btn image-close" onClick={() => setExpandedImage("")}>
+            <button className="icon-close-btn image-close" onClick={closeExpandedImage}>
               ×
             </button>
-            <img src={expandedImage} alt="Expanded" className="image-modal-img" />
+            <div className="button-row" style={{ justifyContent: "center", gap: "10px", marginBottom: "12px", flexWrap: "wrap" }}>
+              {typeof expandedImage === "object" && expandedImage?.svgMarkup ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => downloadExpandedLogicImage("png")}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      minHeight: "38px",
+                      padding: "0 16px",
+                      borderRadius: "12px",
+                      border: "1px solid #cbd5e1",
+                      background: "#ffffff",
+                      color: "#0f172a",
+                      textDecoration: "none",
+                      fontWeight: 600,
+                      cursor: "pointer"
+                    }}
+                  >
+                    Save PNG
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => downloadExpandedLogicImage("jpg")}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      minHeight: "38px",
+                      padding: "0 16px",
+                      borderRadius: "12px",
+                      border: "1px solid #cbd5e1",
+                      background: "#ffffff",
+                      color: "#0f172a",
+                      textDecoration: "none",
+                      fontWeight: 600,
+                      cursor: "pointer"
+                    }}
+                  >
+                    Save JPG
+                  </button>
+                </>
+              ) : null}
+            </div>
+            {typeof expandedImage === "object" && expandedImage?.svgMarkup ? (
+              <div style={{ marginBottom: "10px", textAlign: "center", color: "#475569", fontSize: "13px" }}>
+                Preview uses the full live logic board. Use the buttons above to save PNG or JPG.
+              </div>
+            ) : null}
+            {expandedImageStatus ? (
+              <div style={{ marginBottom: "10px", textAlign: "center", color: "#64748b", fontSize: "13px" }}>{expandedImageStatus}</div>
+            ) : null}
+            <img src={typeof expandedImage === "string" ? expandedImage : expandedImage?.src} alt="Expanded" className="image-modal-img" />
           </div>
         </div>
       ) : null}
