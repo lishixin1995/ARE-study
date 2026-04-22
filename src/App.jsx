@@ -1271,25 +1271,29 @@ function MindMapNode({ node, isRoot = false, depth = 0 }) {
   if (!node) return null;
 
   const hasChildren = Array.isArray(node.children) && node.children.length > 0;
-  const bubbleWidth = isRoot ? 220 : hasChildren ? 220 : 248;
+  const bubbleWidth = isRoot ? 250 : hasChildren ? 250 : 300;
+  const lineHeight = isRoot ? 1.24 : 1.26;
+  const fontSize = isRoot ? 12.8 : 12.4;
+  const maxHeightPx = Math.round(fontSize * lineHeight * 2 + (isRoot ? 24 : 20));
+
   const labelStyle = {
     width: `${bubbleWidth}px`,
     minWidth: `${bubbleWidth}px`,
     maxWidth: `${bubbleWidth}px`,
-    minHeight: isRoot ? "48px" : "44px",
+    minHeight: isRoot ? "50px" : "46px",
+    maxHeight: `${maxHeightPx}px`,
     padding: isRoot ? "12px 16px" : "10px 14px",
-    lineHeight: 1.28,
-    fontSize: isRoot ? "12.8px" : "12.4px",
+    lineHeight,
+    fontSize: `${fontSize}px`,
     boxSizing: "border-box",
     whiteSpace: "normal",
-    wordBreak: "normal",
-    overflowWrap: "break-word",
+    wordBreak: "keep-all",
+    overflowWrap: "anywhere",
     overflow: "hidden",
     textOverflow: "ellipsis",
     display: "-webkit-box",
     WebkitBoxOrient: "vertical",
-    WebkitLineClamp: 2,
-    alignItems: "center"
+    WebkitLineClamp: 2
   };
 
   return (
