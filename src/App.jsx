@@ -1267,47 +1267,43 @@ async function rasterizeElementToObjectUrl(
 }
 
 
-function MindMapNode({ node, isRoot = false }) {
+function MindMapNode({ node, isRoot = false, depth = 0 }) {
   if (!node) return null;
 
-  const labelStyle = isRoot
-    ? {
-        width: "190px",
-        minWidth: "190px",
-        maxWidth: "190px",
-        padding: "12px 16px",
-        lineHeight: 1.22,
-        fontSize: "12.5px",
-        whiteSpace: "normal",
-        wordBreak: "break-word",
-        overflowWrap: "anywhere",
-        boxSizing: "border-box"
-      }
-    : {
-        width: "182px",
-        minWidth: "182px",
-        maxWidth: "182px",
-        padding: "10px 14px",
-        lineHeight: 1.22,
-        fontSize: "12px",
-        whiteSpace: "normal",
-        wordBreak: "break-word",
-        overflowWrap: "anywhere",
-        boxSizing: "border-box"
-      };
+  const hasChildren = Array.isArray(node.children) && node.children.length > 0;
+  const bubbleWidth = isRoot ? 220 : hasChildren ? 220 : 248;
+  const labelStyle = {
+    width: `${bubbleWidth}px`,
+    minWidth: `${bubbleWidth}px`,
+    maxWidth: `${bubbleWidth}px`,
+    minHeight: isRoot ? "48px" : "44px",
+    padding: isRoot ? "12px 16px" : "10px 14px",
+    lineHeight: 1.28,
+    fontSize: isRoot ? "12.8px" : "12.4px",
+    boxSizing: "border-box",
+    whiteSpace: "normal",
+    wordBreak: "normal",
+    overflowWrap: "break-word",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    display: "-webkit-box",
+    WebkitBoxOrient: "vertical",
+    WebkitLineClamp: 2,
+    alignItems: "center"
+  };
 
   return (
     <div className={`mindmap-node ${isRoot ? "is-root" : ""}`}>
       <div className={`mindmap-label ${isRoot ? "root" : ""}`} title={node.label} style={labelStyle}>{node.label}</div>
 
-      {node.children?.length ? (
+      {hasChildren ? (
         <div className="mindmap-children">
           {node.children.map((child, index) => (
             <div key={`${child.label}-${index}`} className="mindmap-child-row">
               <div className="mindmap-connector">
                 <span className="mindmap-connector-dot" />
               </div>
-              <MindMapNode node={child} />
+              <MindMapNode node={child} depth={depth + 1} />
             </div>
           ))}
         </div>
