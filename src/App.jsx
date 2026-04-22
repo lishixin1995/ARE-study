@@ -1048,23 +1048,18 @@ async function rasterizeSvgMarkupToBlob(
 
   const safeWidth = Math.max(1, Math.ceil(width));
   const safeHeight = Math.max(1, Math.ceil(height));
-  let effectiveScale = Math.max(1, Number(scale) || 1);
+  const requestedScale = Math.max(0.25, Number(scale) || 1);
 
-  if (Number.isFinite(maxDimension) && maxDimension > 0) {
-    const dimensionRatio = Math.min(maxDimension / safeWidth, maxDimension / safeHeight);
-    if (Number.isFinite(dimensionRatio) && dimensionRatio > 0) {
-      effectiveScale = Math.min(effectiveScale, dimensionRatio);
-    }
-  }
+  const dimensionRatio = Number.isFinite(maxDimension) && maxDimension > 0
+    ? Math.min(1, maxDimension / safeWidth, maxDimension / safeHeight)
+    : 1;
 
-  if (Number.isFinite(maxPixels) && maxPixels > 0) {
-    const pixelRatio = Math.sqrt(maxPixels / (safeWidth * safeHeight));
-    if (Number.isFinite(pixelRatio) && pixelRatio > 0) {
-      effectiveScale = Math.min(effectiveScale, pixelRatio);
-    }
-  }
+  const pixelRatio = Number.isFinite(maxPixels) && maxPixels > 0
+    ? Math.min(1, Math.sqrt(maxPixels / (safeWidth * safeHeight)))
+    : 1;
 
-  effectiveScale = Math.max(0.5, effectiveScale);
+  const fitRatio = Math.min(1, dimensionRatio, pixelRatio);
+  const effectiveScale = Math.max(0.1, requestedScale * fitRatio);
 
   const canvasWidth = Math.max(1, Math.round(safeWidth * effectiveScale));
   const canvasHeight = Math.max(1, Math.round(safeHeight * effectiveScale));
@@ -1078,6 +1073,7 @@ async function rasterizeSvgMarkupToBlob(
       nextImage.onerror = error => reject(error);
       nextImage.src = svgDataUrl;
     });
+
     const canvas = document.createElement("canvas");
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
@@ -1743,7 +1739,7 @@ export default function App() {
     if (!expandedImage || typeof expandedImage !== "object") return;
 
     try {
-      setExpandedImageStatus(`Preparing ${String(format).toUpperCase()}...`);
+      setExpandedImageStatus(`Preparing ${String(format).toUpperCase()}... Large logic maps will be scaled down automatically.`);
 
       const isJpg = String(format).toLowerCase() === "jpg" || String(format).toLowerCase() === "jpeg";
       let blob = null;
