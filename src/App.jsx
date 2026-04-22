@@ -1016,8 +1016,53 @@ function svgMarkupToBlobUrl(svgMarkup = "") {
   return URL.createObjectURL(svgBlob);
 }
 
-async function rasterizeSvgMarkupToBlob(svgMarkup = "", { width = 0, height = 0, background = "#f8fafc", scale = 2, mimeType = "image/png", quality = 0.92 } = {}) {
+function dataUrlToBlob(dataUrl = "") {
+  if (!dataUrl || typeof dataUrl !== "string") return null;
+
+  try {
+    const [header, body] = dataUrl.split(",");
+    if (!header || !body) return null;
+    const mimeMatch = header.match(/data:([^;]+);base64/i);
+    const mimeType = mimeMatch?.[1] || "application/octet-stream";
+    const binary = atob(body);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return new Blob([bytes], { type: mimeType });
+  } catch {
+    return null;
+  }
+}
+
+async function rasterizeSvgMarkupToBlob(
+  svgMarkup = "",
+  { width = 0, height = 0, background = "#f8fafc", scale = 2, mimeType = "image/png", quality = 0.92, maxDimension = 4096, maxPixels = 16000000 } = {}
+) {
   if (!svgMarkup || !width || !height || typeof document === "undefined") return null;
+
+  const safeWidth = Math.max(1, Math.ceil(width));
+  const safeHeight = Math.max(1, Math.ceil(height));
+  let effectiveScale = Math.max(1, Number(scale) || 1);
+
+  if (Number.isFinite(maxDimension) && maxDimension > 0) {
+    const dimensionRatio = Math.min(maxDimension / safeWidth, maxDimension / safeHeight);
+    if (Number.isFinite(dimensionRatio) && dimensionRatio > 0) {
+      effectiveScale = Math.min(effectiveScale, dimensionRatio);
+    }
+  }
+
+  if (Number.isFinite(maxPixels) && maxPixels > 0) {
+    const pixelRatio = Math.sqrt(maxPixels / (safeWidth * safeHeight));
+    if (Number.isFinite(pixelRatio) && pixelRatio > 0) {
+      effectiveScale = Math.min(effectiveScale, pixelRatio);
+    }
+  }
+
+  effectiveScale = Math.max(0.25, effectiveScale);
+
+  const canvasWidth = Math.max(1, Math.round(safeWidth * effectiveScale));
+  const canvasHeight = Math.max(1, Math.round(safeHeight * effectiveScale));
 
   const svgUrl = svgMarkupToBlobUrl(svgMarkup);
   if (!svgUrl) return null;
@@ -1031,20 +1076,32 @@ async function rasterizeSvgMarkupToBlob(svgMarkup = "", { width = 0, height = 0,
     });
 
     const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(width * scale));
-    canvas.height = Math.max(1, Math.round(height * scale));
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
 
     const context = canvas.getContext("2d");
     if (!context) return null;
 
-    context.scale(scale, scale);
     context.fillStyle = background;
-    context.fillRect(0, 0, width, height);
-    context.drawImage(image, 0, 0, width, height);
+    context.fillRect(0, 0, canvasWidth, canvasHeight);
+    context.drawImage(image, 0, 0, canvasWidth, canvasHeight);
 
-    const blob = await new Promise(resolve => {
-      canvas.toBlob(nextBlob => resolve(nextBlob), mimeType, quality);
+    let blob = await new Promise(resolve => {
+      if (typeof canvas.toBlob === "function") {
+        canvas.toBlob(nextBlob => resolve(nextBlob || null), mimeType, quality);
+        return;
+      }
+      resolve(null);
     });
+
+    if (!blob) {
+      try {
+        const dataUrl = canvas.toDataURL(mimeType, quality);
+        blob = dataUrlToBlob(dataUrl);
+      } catch {
+        blob = null;
+      }
+    }
 
     return blob || null;
   } finally {
@@ -1686,22 +1743,25 @@ export default function App() {
       const isJpg = String(format).toLowerCase() === "jpg" || String(format).toLowerCase() === "jpeg";
       let blob = null;
 
-      if (expandedImage.sourceElement instanceof Element) {
-        blob = await rasterizeElementToBlob(expandedImage.sourceElement, {
-          background: "#f8fafc",
-          padding: 24,
-          scale: 2,
-          mimeType: isJpg ? "image/jpeg" : "image/png",
-          quality: isJpg ? 0.94 : 0.92
-        });
-      }
-
-      if (!blob && expandedImage.svgMarkup) {
+      if (expandedImage.svgMarkup) {
         blob = await rasterizeSvgMarkupToBlob(expandedImage.svgMarkup, {
           width: expandedImage.width,
           height: expandedImage.height,
           background: "#f8fafc",
           scale: 2,
+          maxDimension: 4096,
+          maxPixels: 16000000,
+          mimeType: isJpg ? "image/jpeg" : "image/png",
+          quality: isJpg ? 0.94 : 0.92
+        });
+      }
+
+      if (!blob && expandedImage.sourceElement instanceof Element) {
+        blob = await rasterizeElementToBlob(expandedImage.sourceElement, {
+          background: "#f8fafc",
+          padding: 24,
+          scale: 2,
+          maxDimension: 4096,
           mimeType: isJpg ? "image/jpeg" : "image/png",
           quality: isJpg ? 0.94 : 0.92
         });
@@ -1731,57 +1791,30 @@ export default function App() {
   }
 
   async function handleOpenLiveLogicImage() {
-    if ((!currentMindMap && !liveLogicPrintRef.current) || isOpeningLiveLogicImage) return;
+    if (!currentMindMap || isOpeningLiveLogicImage) return;
 
     try {
       setIsOpeningLiveLogicImage(true);
       setExpandedImageStatus("");
 
-      const liveLogicElement = liveLogicPrintRef.current;
+      const { svgMarkup, width, height } = buildMindMapSvgMarkup(currentMindMap, {
+        background: "#f8fafc",
+        padding: 28
+      });
 
-      if (liveLogicElement) {
-        const elementPreview = buildElementSvgMarkup(liveLogicElement, {
-          background: "#f8fafc",
-          padding: 24
-        });
-
-        if (elementPreview.svgMarkup && elementPreview.width && elementPreview.height) {
-          const previewUrl = svgMarkupToBlobUrl(elementPreview.svgMarkup);
-          if (previewUrl) {
-            openExpandedImage({
-              src: previewUrl,
-              previewUrl,
-              svgMarkup: elementPreview.svgMarkup,
-              width: elementPreview.width,
-              height: elementPreview.height,
-              sourceElement: liveLogicElement
-            });
-            setCaptureStatus("Image preview ready. Use Save PNG or Save JPG in the popup.");
-            return;
-          }
-        }
-      }
-
-      if (currentMindMap) {
-        const { svgMarkup, width, height } = buildMindMapSvgMarkup(currentMindMap, {
-          background: "#f8fafc",
-          padding: 28
-        });
-
-        if (svgMarkup && width && height) {
-          const previewUrl = svgMarkupToBlobUrl(svgMarkup);
-          if (previewUrl) {
-            openExpandedImage({
-              src: previewUrl,
-              previewUrl,
-              svgMarkup,
-              width,
-              height,
-              sourceElement: null
-            });
-            setCaptureStatus("Image preview ready. Use Save PNG or Save JPG in the popup.");
-            return;
-          }
+      if (svgMarkup && width && height) {
+        const previewUrl = svgMarkupToBlobUrl(svgMarkup);
+        if (previewUrl) {
+          openExpandedImage({
+            src: previewUrl,
+            previewUrl,
+            svgMarkup,
+            width,
+            height,
+            sourceElement: liveLogicPrintRef.current || null
+          });
+          setCaptureStatus("Image preview ready. Use Save PNG or Save JPG in the popup.");
+          return;
         }
       }
 
@@ -4002,7 +4035,7 @@ async function handleDeleteSelectedRoomOrSubroom() {
             </div>
             {typeof expandedImage === "object" && expandedImage?.svgMarkup ? (
               <div style={{ marginBottom: "10px", textAlign: "center", color: "#475569", fontSize: "13px" }}>
-                Preview uses the full live logic board. Use the buttons above to save PNG or JPG.
+                Preview uses the clean SVG version of the live logic board. Use the buttons above to save PNG or JPG.
               </div>
             ) : null}
             {expandedImageStatus ? (
