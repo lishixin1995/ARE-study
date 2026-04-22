@@ -1271,9 +1271,9 @@ function MindMapNode({ node, isRoot = false, depth = 0 }) {
   if (!node) return null;
 
   const hasChildren = Array.isArray(node.children) && node.children.length > 0;
-  const bubbleWidth = isRoot ? 250 : hasChildren ? 250 : 300;
-  const lineHeight = isRoot ? 1.24 : 1.26;
-  const fontSize = isRoot ? 12.8 : 12.4;
+  const bubbleWidth = isRoot ? 270 : hasChildren ? 320 : 360;
+  const lineHeight = isRoot ? 1.22 : 1.24;
+  const fontSize = isRoot ? 12.8 : 12.2;
   const maxHeightPx = Math.round(fontSize * lineHeight * 2 + (isRoot ? 24 : 20));
 
   const labelStyle = {
@@ -1287,8 +1287,8 @@ function MindMapNode({ node, isRoot = false, depth = 0 }) {
     fontSize: `${fontSize}px`,
     boxSizing: "border-box",
     whiteSpace: "normal",
-    wordBreak: "keep-all",
-    overflowWrap: "anywhere",
+    wordBreak: "normal",
+    overflowWrap: "break-word",
     overflow: "hidden",
     textOverflow: "ellipsis",
     display: "-webkit-box",
