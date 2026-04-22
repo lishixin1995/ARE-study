@@ -1266,35 +1266,68 @@ async function rasterizeElementToObjectUrl(
   return blob ? URL.createObjectURL(blob) : "";
 }
 
-
 function MindMapNode({ node, isRoot = false, depth = 0 }) {
   if (!node) return null;
 
   const hasChildren = Array.isArray(node.children) && node.children.length > 0;
-  const bubbleWidth = isRoot ? 270 : hasChildren ? 320 : 360;
-  const lineHeight = isRoot ? 1.22 : 1.24;
-  const fontSize = isRoot ? 12.8 : 12.2;
-  const maxHeightPx = Math.round(fontSize * lineHeight * 2 + (isRoot ? 24 : 20));
+
+  // 你要的是“读完”，不是省略号
+  // 所以直接给足宽度，并允许高度自动增长
+  const bubbleWidth = isRoot ? 300 : hasChildren ? 360 : 420;
 
   const labelStyle = {
     width: `${bubbleWidth}px`,
     minWidth: `${bubbleWidth}px`,
     maxWidth: `${bubbleWidth}px`,
-    minHeight: isRoot ? "50px" : "46px",
-    maxHeight: `${maxHeightPx}px`,
-    padding: isRoot ? "12px 16px" : "10px 14px",
-    lineHeight,
-    fontSize: `${fontSize}px`,
+    minHeight: isRoot ? "52px" : "48px",
+    height: "auto",
+    maxHeight: "none",
+
+    padding: isRoot ? "12px 18px" : "10px 16px",
     boxSizing: "border-box",
+
+    fontSize: isRoot ? "12.8px" : "12.2px",
+    lineHeight: 1.28,
+    fontWeight: isRoot ? 700 : 600,
+
     whiteSpace: "normal",
     wordBreak: "normal",
     overflowWrap: "break-word",
-    overflow: "hidden",
-    textOverflow: "ellipsis",
-    display: "-webkit-box",
-    WebkitBoxOrient: "vertical",
-    WebkitLineClamp: 2
+
+    overflow: "visible",
+    textOverflow: "clip",
+
+    display: "block",
+    WebkitLineClamp: "unset",
+    WebkitBoxOrient: "unset"
   };
+
+  return (
+    <div className={`mindmap-node ${isRoot ? "is-root" : ""}`}>
+      <div
+        className={`mindmap-label ${isRoot ? "root" : ""}`}
+        title={node.label}
+        style={labelStyle}
+      >
+        {node.label}
+      </div>
+
+      {hasChildren ? (
+        <div className="mindmap-children">
+          {node.children.map((child, index) => (
+            <div key={`${child.label}-${index}`} className="mindmap-child-row">
+              <div className="mindmap-connector">
+                <span className="mindmap-connector-dot" />
+              </div>
+              <MindMapNode node={child} depth={depth + 1} />
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 
   return (
     <div className={`mindmap-node ${isRoot ? "is-root" : ""}`}>
