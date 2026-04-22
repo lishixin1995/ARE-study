@@ -1069,6 +1069,7 @@ async function rasterizeMindMapToObjectUrl(mindMap, { background = "#f8fafc", pa
 }
 
 
+
 function inlineComputedStylesIntoClone(sourceNode, targetNode) {
   if (!sourceNode || !targetNode || typeof window === "undefined") return;
 
@@ -1092,29 +1093,52 @@ function inlineComputedStylesIntoClone(sourceNode, targetNode) {
   });
 }
 
-async function rasterizeElementToObjectUrl(element, { background = "#f8fafc", padding = 24, scale = 2, mimeType = "image/png", quality = 0.92, maxDimension = 4096 } = {}) {
-  if (!element || typeof window === "undefined" || typeof document === "undefined") return "";
+function buildElementSvgMarkup(element, { background = "#f8fafc", padding = 24 } = {}) {
+  if (!element || typeof window === "undefined" || typeof document === "undefined") {
+    return { svgMarkup: "", width: 0, height: 0, sourceWidth: 0, sourceHeight: 0 };
+  }
 
+  const rect = element.getBoundingClientRect ? element.getBoundingClientRect() : { width: 0, height: 0 };
   const sourceWidth = Math.max(
     1,
     Math.ceil(element.scrollWidth || 0),
     Math.ceil(element.offsetWidth || 0),
-    Math.ceil(element.getBoundingClientRect?.().width || 0)
+    Math.ceil(element.clientWidth || 0),
+    Math.ceil(rect.width || 0)
   );
-
   const sourceHeight = Math.max(
     1,
     Math.ceil(element.scrollHeight || 0),
     Math.ceil(element.offsetHeight || 0),
-    Math.ceil(element.getBoundingClientRect?.().height || 0)
+    Math.ceil(element.clientHeight || 0),
+    Math.ceil(rect.height || 0)
   );
 
   const totalWidth = sourceWidth + padding * 2;
   const totalHeight = sourceHeight + padding * 2;
-  if (!totalWidth || !totalHeight) return "";
+  if (!totalWidth || !totalHeight) {
+    return { svgMarkup: "", width: 0, height: 0, sourceWidth, sourceHeight };
+  }
 
   const clonedElement = element.cloneNode(true);
   inlineComputedStylesIntoClone(element, clonedElement);
+
+  if (clonedElement instanceof Element) {
+    clonedElement.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
+    clonedElement.style.width = `${sourceWidth}px`;
+    clonedElement.style.minWidth = `${sourceWidth}px`;
+    clonedElement.style.maxWidth = `${sourceWidth}px`;
+    clonedElement.style.height = `${sourceHeight}px`;
+    clonedElement.style.minHeight = `${sourceHeight}px`;
+    clonedElement.style.maxHeight = "none";
+    clonedElement.style.boxSizing = "border-box";
+    clonedElement.style.margin = "0";
+    clonedElement.style.transform = "none";
+    clonedElement.style.transformOrigin = "top left";
+    clonedElement.style.zoom = "1";
+    clonedElement.style.overflow = "visible";
+    clonedElement.style.flex = "0 0 auto";
+  }
 
   const wrapper = document.createElement("div");
   wrapper.setAttribute("xmlns", "http://www.w3.org/1999/xhtml");
@@ -1129,7 +1153,7 @@ async function rasterizeElementToObjectUrl(element, { background = "#f8fafc", pa
       `display:flex`,
       `align-items:flex-start`,
       `justify-content:flex-start`,
-      `overflow:hidden`
+      `overflow:visible`
     ].join(";")
   );
   wrapper.appendChild(clonedElement);
@@ -1137,45 +1161,51 @@ async function rasterizeElementToObjectUrl(element, { background = "#f8fafc", pa
   const serializedXhtml = new XMLSerializer().serializeToString(wrapper);
   const svgMarkup = `
     <svg xmlns="http://www.w3.org/2000/svg" width="${totalWidth}" height="${totalHeight}" viewBox="0 0 ${totalWidth} ${totalHeight}">
-      <foreignObject width="100%" height="100%">${serializedXhtml}</foreignObject>
+      <foreignObject x="0" y="0" width="${totalWidth}" height="${totalHeight}">${serializedXhtml}</foreignObject>
     </svg>
   `.trim();
 
-  const svgUrl = svgMarkupToBlobUrl(svgMarkup);
-  if (!svgUrl) return "";
+  return {
+    svgMarkup,
+    width: totalWidth,
+    height: totalHeight,
+    sourceWidth,
+    sourceHeight
+  };
+}
 
-  try {
-    const image = await new Promise((resolve, reject) => {
-      const nextImage = new Image();
-      nextImage.onload = () => resolve(nextImage);
-      nextImage.onerror = error => reject(error);
-      nextImage.src = svgUrl;
-    });
+async function rasterizeElementToBlob(
+  element,
+  { background = "#f8fafc", padding = 24, scale = 2, mimeType = "image/png", quality = 0.92, maxDimension = 4096 } = {}
+) {
+  const { svgMarkup, width, height } = buildElementSvgMarkup(element, { background, padding });
+  if (!svgMarkup || !width || !height) return null;
 
-    const maxBaseDimension = Math.max(totalWidth, totalHeight);
-    const outputScale = Math.max(1, Math.min(scale, maxDimension / Math.max(1, maxBaseDimension)));
+  return rasterizeSvgMarkupToBlob(svgMarkup, {
+    width,
+    height,
+    background,
+    scale,
+    mimeType,
+    quality,
+    maxDimension
+  });
+}
 
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(totalWidth * outputScale));
-    canvas.height = Math.max(1, Math.round(totalHeight * outputScale));
+async function rasterizeElementToObjectUrl(
+  element,
+  { background = "#f8fafc", padding = 24, scale = 2, mimeType = "image/png", quality = 0.92, maxDimension = 4096 } = {}
+) {
+  const blob = await rasterizeElementToBlob(element, {
+    background,
+    padding,
+    scale,
+    mimeType,
+    quality,
+    maxDimension
+  });
 
-    const context = canvas.getContext("2d");
-    if (!context) return "";
-
-    context.scale(outputScale, outputScale);
-    context.fillStyle = background;
-    context.fillRect(0, 0, totalWidth, totalHeight);
-    context.drawImage(image, 0, 0, totalWidth, totalHeight);
-
-    const blob = await new Promise(resolve => {
-      canvas.toBlob(nextBlob => resolve(nextBlob), mimeType, quality);
-    });
-
-    if (!blob) return "";
-    return URL.createObjectURL(blob);
-  } finally {
-    URL.revokeObjectURL(svgUrl);
-  }
+  return blob ? URL.createObjectURL(blob) : "";
 }
 
 
@@ -1562,6 +1592,7 @@ export default function App() {
   const [expandedImage, setExpandedImage] = useState(null);
   const [liveLogicZoom, setLiveLogicZoom] = useState(1);
   const [isOpeningLiveLogicImage, setIsOpeningLiveLogicImage] = useState(false);
+  const [expandedImageStatus, setExpandedImageStatus] = useState("");
   const [wrongQuestionAiResult, setWrongQuestionAiResult] = useState(null);
   const [wrongQuestionLocalAnalysis, setWrongQuestionLocalAnalysis] = useState(buildLocalWrongQuestionAnalysis(""));
   const [wrongQuestionAnalysisSourceText, setWrongQuestionAnalysisSourceText] = useState("");
@@ -1627,6 +1658,7 @@ export default function App() {
     });
   }
 
+
   function openExpandedImage(nextImage = null) {
     if (!nextImage?.src) return;
 
@@ -1634,6 +1666,7 @@ export default function App() {
       revokeExpandedImageResources(previousImage);
       return nextImage;
     });
+    setExpandedImageStatus("Preview ready. Use Save PNG or Save JPG.");
   }
 
   function closeExpandedImage() {
@@ -1641,23 +1674,41 @@ export default function App() {
       revokeExpandedImageResources(previousImage);
       return null;
     });
+    setExpandedImageStatus("");
   }
 
   async function downloadExpandedLogicImage(format = "png") {
-    if (!expandedImage || typeof expandedImage !== "object" || !expandedImage.svgMarkup) return;
+    if (!expandedImage || typeof expandedImage !== "object") return;
 
     try {
+      setExpandedImageStatus(`Preparing ${String(format).toUpperCase()}...`);
+
       const isJpg = String(format).toLowerCase() === "jpg" || String(format).toLowerCase() === "jpeg";
-      const blob = await rasterizeSvgMarkupToBlob(expandedImage.svgMarkup, {
-        width: expandedImage.width,
-        height: expandedImage.height,
-        background: "#f8fafc",
-        scale: 2,
-        mimeType: isJpg ? "image/jpeg" : "image/png",
-        quality: isJpg ? 0.94 : 0.92
-      });
+      let blob = null;
+
+      if (expandedImage.sourceElement instanceof Element) {
+        blob = await rasterizeElementToBlob(expandedImage.sourceElement, {
+          background: "#f8fafc",
+          padding: 24,
+          scale: 2,
+          mimeType: isJpg ? "image/jpeg" : "image/png",
+          quality: isJpg ? 0.94 : 0.92
+        });
+      }
+
+      if (!blob && expandedImage.svgMarkup) {
+        blob = await rasterizeSvgMarkupToBlob(expandedImage.svgMarkup, {
+          width: expandedImage.width,
+          height: expandedImage.height,
+          background: "#f8fafc",
+          scale: 2,
+          mimeType: isJpg ? "image/jpeg" : "image/png",
+          quality: isJpg ? 0.94 : 0.92
+        });
+      }
 
       if (!blob) {
+        setExpandedImageStatus(`Could not create a ${isJpg ? "JPG" : "PNG"} in this browser.`);
         setCaptureStatus("This browser could not save the logic image right now.");
         return;
       }
@@ -1670,47 +1721,75 @@ export default function App() {
       link.click();
       document.body.removeChild(link);
       setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+      setExpandedImageStatus(isJpg ? "JPG saved." : "PNG saved.");
       setCaptureStatus(isJpg ? "JPG saved." : "PNG saved.");
     } catch (error) {
       console.error(error);
+      setExpandedImageStatus(`Could not create a ${String(format).toUpperCase()} in this browser.`);
       setCaptureStatus("This browser could not save the logic image right now.");
     }
   }
 
   async function handleOpenLiveLogicImage() {
-    if (!currentMindMap || isOpeningLiveLogicImage) return;
+    if ((!currentMindMap && !liveLogicPrintRef.current) || isOpeningLiveLogicImage) return;
 
     try {
       setIsOpeningLiveLogicImage(true);
+      setExpandedImageStatus("");
 
-      const { svgMarkup, width, height } = buildMindMapSvgMarkup(currentMindMap, {
-        background: "#f8fafc",
-        padding: 28
-      });
+      const liveLogicElement = liveLogicPrintRef.current;
 
-      if (!svgMarkup || !width || !height) {
-        setCaptureStatus("Image preview could not be generated in this browser right now.");
-        return;
+      if (liveLogicElement) {
+        const elementPreview = buildElementSvgMarkup(liveLogicElement, {
+          background: "#f8fafc",
+          padding: 24
+        });
+
+        if (elementPreview.svgMarkup && elementPreview.width && elementPreview.height) {
+          const previewUrl = svgMarkupToBlobUrl(elementPreview.svgMarkup);
+          if (previewUrl) {
+            openExpandedImage({
+              src: previewUrl,
+              previewUrl,
+              svgMarkup: elementPreview.svgMarkup,
+              width: elementPreview.width,
+              height: elementPreview.height,
+              sourceElement: liveLogicElement
+            });
+            setCaptureStatus("Image preview ready. Use Save PNG or Save JPG in the popup.");
+            return;
+          }
+        }
       }
 
-      const previewUrl = svgMarkupToBlobUrl(svgMarkup);
-      if (!previewUrl) {
-        setCaptureStatus("Image preview could not be generated in this browser right now.");
-        return;
+      if (currentMindMap) {
+        const { svgMarkup, width, height } = buildMindMapSvgMarkup(currentMindMap, {
+          background: "#f8fafc",
+          padding: 28
+        });
+
+        if (svgMarkup && width && height) {
+          const previewUrl = svgMarkupToBlobUrl(svgMarkup);
+          if (previewUrl) {
+            openExpandedImage({
+              src: previewUrl,
+              previewUrl,
+              svgMarkup,
+              width,
+              height,
+              sourceElement: null
+            });
+            setCaptureStatus("Image preview ready. Use Save PNG or Save JPG in the popup.");
+            return;
+          }
+        }
       }
 
-      openExpandedImage({
-        src: previewUrl,
-        previewUrl,
-        svgMarkup,
-        width,
-        height,
-        pngUrl: "",
-        jpgUrl: ""
-      });
-      setCaptureStatus("Image preview ready. Use Save PNG or Save JPG in the popup.");
+      setExpandedImageStatus("Image preview could not be generated in this browser right now.");
+      setCaptureStatus("Image preview could not be generated in this browser right now.");
     } catch (error) {
       console.error(error);
+      setExpandedImageStatus("Image preview could not be generated in this browser right now.");
       setCaptureStatus("Image preview could not be generated in this browser right now.");
     } finally {
       setIsOpeningLiveLogicImage(false);
@@ -3923,8 +4002,11 @@ async function handleDeleteSelectedRoomOrSubroom() {
             </div>
             {typeof expandedImage === "object" && expandedImage?.svgMarkup ? (
               <div style={{ marginBottom: "10px", textAlign: "center", color: "#475569", fontSize: "13px" }}>
-                Preview is SVG for sharp display. Use the buttons above to save PNG or JPG.
+                Preview uses the full live logic board. Use the buttons above to save PNG or JPG.
               </div>
+            ) : null}
+            {expandedImageStatus ? (
+              <div style={{ marginBottom: "10px", textAlign: "center", color: "#64748b", fontSize: "13px" }}>{expandedImageStatus}</div>
             ) : null}
             <img src={typeof expandedImage === "string" ? expandedImage : expandedImage?.src} alt="Expanded" className="image-modal-img" />
           </div>
