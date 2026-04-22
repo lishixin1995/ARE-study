@@ -1010,6 +1010,11 @@ function buildMindMapSvgMarkup(mindMap, { background = "#f8fafc", padding = 28 }
   return { svgMarkup, width, height };
 }
 
+function svgMarkupToDataUrl(svgMarkup = "") {
+  if (!svgMarkup) return "";
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`;
+}
+
 function svgMarkupToBlobUrl(svgMarkup = "") {
   if (!svgMarkup) return "";
   const svgBlob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
@@ -1059,27 +1064,25 @@ async function rasterizeSvgMarkupToBlob(
     }
   }
 
-  effectiveScale = Math.max(0.25, effectiveScale);
+  effectiveScale = Math.max(0.5, effectiveScale);
 
   const canvasWidth = Math.max(1, Math.round(safeWidth * effectiveScale));
   const canvasHeight = Math.max(1, Math.round(safeHeight * effectiveScale));
-
-  const svgUrl = svgMarkupToBlobUrl(svgMarkup);
-  if (!svgUrl) return null;
+  const svgDataUrl = svgMarkupToDataUrl(svgMarkup);
 
   try {
     const image = await new Promise((resolve, reject) => {
       const nextImage = new Image();
+      nextImage.decoding = "sync";
       nextImage.onload = () => resolve(nextImage);
       nextImage.onerror = error => reject(error);
-      nextImage.src = svgUrl;
+      nextImage.src = svgDataUrl;
     });
-
     const canvas = document.createElement("canvas");
     canvas.width = canvasWidth;
     canvas.height = canvasHeight;
 
-    const context = canvas.getContext("2d");
+    const context = canvas.getContext("2d", { alpha: false });
     if (!context) return null;
 
     context.fillStyle = background;
@@ -1096,7 +1099,8 @@ async function rasterizeSvgMarkupToBlob(
 
     if (!blob) {
       try {
-        const dataUrl = canvas.toDataURL(mimeType, quality);
+        const fallbackMime = mimeType === "image/jpeg" ? "image/jpeg" : "image/png";
+        const dataUrl = canvas.toDataURL(fallbackMime, quality);
         blob = dataUrlToBlob(dataUrl);
       } catch {
         blob = null;
@@ -1104,8 +1108,9 @@ async function rasterizeSvgMarkupToBlob(
     }
 
     return blob || null;
-  } finally {
-    URL.revokeObjectURL(svgUrl);
+  } catch (error) {
+    console.error("rasterizeSvgMarkupToBlob failed", error);
+    return null;
   }
 }
 
@@ -1803,7 +1808,7 @@ export default function App() {
       });
 
       if (svgMarkup && width && height) {
-        const previewUrl = svgMarkupToBlobUrl(svgMarkup);
+        const previewUrl = svgMarkupToDataUrl(svgMarkup);
         if (previewUrl) {
           openExpandedImage({
             src: previewUrl,
