@@ -1010,45 +1010,103 @@ function buildMindMapSvgMarkup(mindMap, { background = "#f8fafc", padding = 28 }
   return { svgMarkup, width, height };
 }
 
+function svgMarkupToDataUrl(svgMarkup = "") {
+  if (!svgMarkup) return "";
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgMarkup)}`;
+}
+
 function svgMarkupToBlobUrl(svgMarkup = "") {
   if (!svgMarkup) return "";
   const svgBlob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
   return URL.createObjectURL(svgBlob);
 }
 
-async function rasterizeSvgMarkupToBlob(svgMarkup = "", { width = 0, height = 0, background = "#f8fafc", scale = 2, mimeType = "image/png", quality = 0.92 } = {}) {
+function dataUrlToBlob(dataUrl = "") {
+  if (!dataUrl || typeof dataUrl !== "string") return null;
+
+  try {
+    const [header, body] = dataUrl.split(",");
+    if (!header || !body) return null;
+    const mimeMatch = header.match(/data:([^;]+);base64/i);
+    const mimeType = mimeMatch?.[1] || "application/octet-stream";
+    const binary = atob(body);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return new Blob([bytes], { type: mimeType });
+  } catch {
+    return null;
+  }
+}
+
+async function rasterizeSvgMarkupToBlob(
+  svgMarkup = "",
+  { width = 0, height = 0, background = "#f8fafc", scale = 2, mimeType = "image/png", quality = 0.92, maxDimension = 4096, maxPixels = 16000000 } = {}
+) {
   if (!svgMarkup || !width || !height || typeof document === "undefined") return null;
 
-  const svgUrl = svgMarkupToBlobUrl(svgMarkup);
-  if (!svgUrl) return null;
+  const safeWidth = Math.max(1, Math.ceil(width));
+  const safeHeight = Math.max(1, Math.ceil(height));
+  const requestedScale = Math.max(0.25, Number(scale) || 1);
+
+  const dimensionRatio = Number.isFinite(maxDimension) && maxDimension > 0
+    ? Math.min(1, maxDimension / safeWidth, maxDimension / safeHeight)
+    : 1;
+
+  const pixelRatio = Number.isFinite(maxPixels) && maxPixels > 0
+    ? Math.min(1, Math.sqrt(maxPixels / (safeWidth * safeHeight)))
+    : 1;
+
+  const fitRatio = Math.min(1, dimensionRatio, pixelRatio);
+  const effectiveScale = Math.max(0.1, requestedScale * fitRatio);
+
+  const canvasWidth = Math.max(1, Math.round(safeWidth * effectiveScale));
+  const canvasHeight = Math.max(1, Math.round(safeHeight * effectiveScale));
+  const svgDataUrl = svgMarkupToDataUrl(svgMarkup);
 
   try {
     const image = await new Promise((resolve, reject) => {
       const nextImage = new Image();
+      nextImage.decoding = "sync";
       nextImage.onload = () => resolve(nextImage);
       nextImage.onerror = error => reject(error);
-      nextImage.src = svgUrl;
+      nextImage.src = svgDataUrl;
     });
 
     const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.round(width * scale));
-    canvas.height = Math.max(1, Math.round(height * scale));
+    canvas.width = canvasWidth;
+    canvas.height = canvasHeight;
 
-    const context = canvas.getContext("2d");
+    const context = canvas.getContext("2d", { alpha: false });
     if (!context) return null;
 
-    context.scale(scale, scale);
     context.fillStyle = background;
-    context.fillRect(0, 0, width, height);
-    context.drawImage(image, 0, 0, width, height);
+    context.fillRect(0, 0, canvasWidth, canvasHeight);
+    context.drawImage(image, 0, 0, canvasWidth, canvasHeight);
 
-    const blob = await new Promise(resolve => {
-      canvas.toBlob(nextBlob => resolve(nextBlob), mimeType, quality);
+    let blob = await new Promise(resolve => {
+      if (typeof canvas.toBlob === "function") {
+        canvas.toBlob(nextBlob => resolve(nextBlob || null), mimeType, quality);
+        return;
+      }
+      resolve(null);
     });
 
+    if (!blob) {
+      try {
+        const fallbackMime = mimeType === "image/jpeg" ? "image/jpeg" : "image/png";
+        const dataUrl = canvas.toDataURL(fallbackMime, quality);
+        blob = dataUrlToBlob(dataUrl);
+      } catch {
+        blob = null;
+      }
+    }
+
     return blob || null;
-  } finally {
-    URL.revokeObjectURL(svgUrl);
+  } catch (error) {
+    console.error("rasterizeSvgMarkupToBlob failed", error);
+    return null;
   }
 }
 
@@ -1212,15 +1270,60 @@ async function rasterizeElementToObjectUrl(
 function MindMapNode({ node, isRoot = false }) {
   if (!node) return null;
 
+  const labelStyle = isRoot
+    ? {
+        width: "150px",
+        minWidth: "150px",
+        maxWidth: "150px",
+        minHeight: "46px",
+        padding: "10px 12px",
+        lineHeight: 1.25,
+        fontSize: "12.5px",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        wordBreak: "break-word",
+        overflowWrap: "anywhere",
+        whiteSpace: "normal",
+        display: "-webkit-box",
+        WebkitBoxOrient: "vertical",
+        WebkitLineClamp: 2
+      }
+    : {
+        width: "136px",
+        minWidth: "136px",
+        maxWidth: "136px",
+        minHeight: "40px",
+        padding: "8px 10px",
+        lineHeight: 1.28,
+        fontSize: "12px",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        wordBreak: "break-word",
+        overflowWrap: "anywhere",
+        whiteSpace: "normal",
+        display: "-webkit-box",
+        WebkitBoxOrient: "vertical",
+        WebkitLineClamp: 2
+      };
+
   return (
-    <div className={`mindmap-node ${isRoot ? "is-root" : ""}`}>
-      <div className={`mindmap-label ${isRoot ? "root" : ""}`}>{node.label}</div>
+    <div
+      className={`mindmap-node ${isRoot ? "is-root" : ""}`}
+      style={{ display: "flex", flexDirection: "column", gap: isRoot ? "18px" : "12px", alignItems: "flex-start" }}
+    >
+      <div className={`mindmap-label ${isRoot ? "root" : ""}`} title={node.label} style={labelStyle}>
+        {node.label}
+      </div>
 
       {node.children?.length ? (
-        <div className="mindmap-children">
+        <div className="mindmap-children" style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
           {node.children.map((child, index) => (
-            <div key={`${child.label}-${index}`} className="mindmap-child-row">
-              <div className="mindmap-connector">
+            <div
+              key={`${child.label}-${index}`}
+              className="mindmap-child-row"
+              style={{ display: "flex", alignItems: "center", gap: "10px" }}
+            >
+              <div className="mindmap-connector" style={{ flex: "0 0 auto" }}>
                 <span className="mindmap-connector-dot" />
               </div>
               <MindMapNode node={child} />
@@ -1681,27 +1784,30 @@ export default function App() {
     if (!expandedImage || typeof expandedImage !== "object") return;
 
     try {
-      setExpandedImageStatus(`Preparing ${String(format).toUpperCase()}...`);
+      setExpandedImageStatus(`Preparing ${String(format).toUpperCase()}... Large logic maps will be scaled down automatically.`);
 
       const isJpg = String(format).toLowerCase() === "jpg" || String(format).toLowerCase() === "jpeg";
       let blob = null;
 
-      if (expandedImage.sourceElement instanceof Element) {
-        blob = await rasterizeElementToBlob(expandedImage.sourceElement, {
-          background: "#f8fafc",
-          padding: 24,
-          scale: 2,
-          mimeType: isJpg ? "image/jpeg" : "image/png",
-          quality: isJpg ? 0.94 : 0.92
-        });
-      }
-
-      if (!blob && expandedImage.svgMarkup) {
+      if (expandedImage.svgMarkup) {
         blob = await rasterizeSvgMarkupToBlob(expandedImage.svgMarkup, {
           width: expandedImage.width,
           height: expandedImage.height,
           background: "#f8fafc",
           scale: 2,
+          maxDimension: 4096,
+          maxPixels: 16000000,
+          mimeType: isJpg ? "image/jpeg" : "image/png",
+          quality: isJpg ? 0.94 : 0.92
+        });
+      }
+
+      if (!blob && expandedImage.sourceElement instanceof Element) {
+        blob = await rasterizeElementToBlob(expandedImage.sourceElement, {
+          background: "#f8fafc",
+          padding: 24,
+          scale: 2,
+          maxDimension: 4096,
           mimeType: isJpg ? "image/jpeg" : "image/png",
           quality: isJpg ? 0.94 : 0.92
         });
@@ -1731,57 +1837,30 @@ export default function App() {
   }
 
   async function handleOpenLiveLogicImage() {
-    if ((!currentMindMap && !liveLogicPrintRef.current) || isOpeningLiveLogicImage) return;
+    if (!currentMindMap || isOpeningLiveLogicImage) return;
 
     try {
       setIsOpeningLiveLogicImage(true);
       setExpandedImageStatus("");
 
-      const liveLogicElement = liveLogicPrintRef.current;
+      const { svgMarkup, width, height } = buildMindMapSvgMarkup(currentMindMap, {
+        background: "#f8fafc",
+        padding: 28
+      });
 
-      if (liveLogicElement) {
-        const elementPreview = buildElementSvgMarkup(liveLogicElement, {
-          background: "#f8fafc",
-          padding: 24
-        });
-
-        if (elementPreview.svgMarkup && elementPreview.width && elementPreview.height) {
-          const previewUrl = svgMarkupToBlobUrl(elementPreview.svgMarkup);
-          if (previewUrl) {
-            openExpandedImage({
-              src: previewUrl,
-              previewUrl,
-              svgMarkup: elementPreview.svgMarkup,
-              width: elementPreview.width,
-              height: elementPreview.height,
-              sourceElement: liveLogicElement
-            });
-            setCaptureStatus("Image preview ready. Use Save PNG or Save JPG in the popup.");
-            return;
-          }
-        }
-      }
-
-      if (currentMindMap) {
-        const { svgMarkup, width, height } = buildMindMapSvgMarkup(currentMindMap, {
-          background: "#f8fafc",
-          padding: 28
-        });
-
-        if (svgMarkup && width && height) {
-          const previewUrl = svgMarkupToBlobUrl(svgMarkup);
-          if (previewUrl) {
-            openExpandedImage({
-              src: previewUrl,
-              previewUrl,
-              svgMarkup,
-              width,
-              height,
-              sourceElement: null
-            });
-            setCaptureStatus("Image preview ready. Use Save PNG or Save JPG in the popup.");
-            return;
-          }
+      if (svgMarkup && width && height) {
+        const previewUrl = svgMarkupToDataUrl(svgMarkup);
+        if (previewUrl) {
+          openExpandedImage({
+            src: previewUrl,
+            previewUrl,
+            svgMarkup,
+            width,
+            height,
+            sourceElement: liveLogicPrintRef.current || null
+          });
+          setCaptureStatus("Image preview ready. Use Save PNG or Save JPG in the popup.");
+          return;
         }
       }
 
@@ -4002,7 +4081,7 @@ async function handleDeleteSelectedRoomOrSubroom() {
             </div>
             {typeof expandedImage === "object" && expandedImage?.svgMarkup ? (
               <div style={{ marginBottom: "10px", textAlign: "center", color: "#475569", fontSize: "13px" }}>
-                Preview uses the full live logic board. Use the buttons above to save PNG or JPG.
+                Preview uses the clean SVG version of the live logic board. Use the buttons above to save PNG or JPG.
               </div>
             ) : null}
             {expandedImageStatus ? (
