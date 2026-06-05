@@ -1,4 +1,4 @@
 {
-  "installCommand": "npm ci",
+  "installCommand": "npm ci --no-audit --no-fund --registry=https://registry.npmjs.org/",
   "buildCommand": "npm run build"
 }
