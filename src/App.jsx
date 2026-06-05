@@ -391,6 +391,7 @@ function splitEditorLines(text = "") {
 
 function readSavedCaptureNotes() {
   try {
+    if (typeof localStorage === "undefined") return [];
     const raw = localStorage.getItem("savedCaptureNotes");
     return raw ? JSON.parse(raw) : [];
   } catch {
@@ -400,10 +401,49 @@ function readSavedCaptureNotes() {
 
 function readWrongQuestionFlashcards() {
   try {
+    if (typeof localStorage === "undefined") return [];
     const raw = localStorage.getItem("wrongQuestionFlashcards");
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
+  }
+}
+
+function buildDefaultRoomTree() {
+  return DIVISIONS.reduce((tree, division) => {
+    tree[division] = (DEFAULT_ROOM_NAMES[division] || []).map((name, index) => ({
+      id: `${division}-${slugify(name) || `room-${index}`}`,
+      name,
+      children: []
+    }));
+    return tree;
+  }, {});
+}
+
+function readRoomTree() {
+  try {
+    if (typeof localStorage === "undefined") return buildDefaultRoomTree();
+    const raw = localStorage.getItem("studyRoomTree");
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (!parsed || typeof parsed !== "object") return buildDefaultRoomTree();
+
+    const defaults = buildDefaultRoomTree();
+    return DIVISIONS.reduce((tree, division) => {
+      const customRooms = Array.isArray(parsed[division]) ? parsed[division] : [];
+      tree[division] = customRooms.length ? customRooms : defaults[division];
+      return tree;
+    }, {});
+  } catch {
+    return buildDefaultRoomTree();
+  }
+}
+
+function writeLocalStudyData(key, value) {
+  try {
+    if (typeof localStorage === "undefined") return;
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Ignore storage write errors.
   }
 }
 
@@ -1590,7 +1630,7 @@ function buildLocalWrongQuestionAnalysis(text = '') {
 
 export default function App() {
   const [selectedDivision, setSelectedDivision] = useState("PPD");
-  const [roomTree, setRoomTree] = useState({});
+  const [roomTree, setRoomTree] = useState(readRoomTree);
   const [selectedRoomId, setSelectedRoomId] = useState("");
   const [selectedSubroomId, setSelectedSubroomId] = useState("");
 
@@ -1602,7 +1642,7 @@ export default function App() {
   const [captureAnalysisCleared, setCaptureAnalysisCleared] = useState(true);
   const [isCaptureAnalyzing, setIsCaptureAnalyzing] = useState(false);
 
-  const [savedCaptureNotes, setSavedCaptureNotes] = useState([]);
+  const [savedCaptureNotes, setSavedCaptureNotes] = useState(readSavedCaptureNotes);
   const [isSavedNotesModalOpen, setIsSavedNotesModalOpen] = useState(false);
 
   const [wrongQuestionImageFile, setWrongQuestionImageFile] = useState(null);
@@ -1613,7 +1653,7 @@ export default function App() {
   const [wrongQuestionStatus, setWrongQuestionStatus] = useState("Ready.");
   const [isRunningOcr, setIsRunningOcr] = useState(false);
 
-  const [wrongQuestionFlashcards, setWrongQuestionFlashcards] = useState([]);
+  const [wrongQuestionFlashcards, setWrongQuestionFlashcards] = useState(readWrongQuestionFlashcards);
   const [flashcardIndex, setFlashcardIndex] = useState(0);
   const [expandedImage, setExpandedImage] = useState(null);
   const [liveLogicZoom, setLiveLogicZoom] = useState(1);
@@ -1852,8 +1892,20 @@ export default function App() {
   }, [pdfExportPreferences]);
 
   useEffect(() => {
-  fetchRoomsFromCloud(selectedDivision);
-}, [selectedDivision]);
+    writeLocalStudyData("studyRoomTree", roomTree);
+  }, [roomTree]);
+
+  useEffect(() => {
+    writeLocalStudyData("savedCaptureNotes", savedCaptureNotes);
+  }, [savedCaptureNotes]);
+
+  useEffect(() => {
+    writeLocalStudyData("wrongQuestionFlashcards", wrongQuestionFlashcards);
+  }, [wrongQuestionFlashcards]);
+
+  useEffect(() => {
+    fetchRoomsFromCloud(selectedDivision);
+  }, [selectedDivision]);
   
   useEffect(() => {
     if (!divisionRooms.length) {
@@ -1977,7 +2029,7 @@ export default function App() {
     const data = await response.json();
 
     if (!response.ok) {
-      console.error(data.error || "Failed to load rooms.");
+      console.warn(data.error || "Failed to load rooms. Keeping local rooms.");
       return;
     }
 
@@ -1986,7 +2038,7 @@ export default function App() {
       [division]: Array.isArray(data.rooms) ? data.rooms : []
     }));
   } catch (error) {
-    console.error(error);
+    console.warn("Cloud rooms unavailable. Keeping local rooms.", error);
   }
 }
 
@@ -2048,8 +2100,7 @@ async function deleteRoomFromCloud(id) {
     const data = await response.json();
 
     if (!response.ok) {
-      console.error(data.error || "Failed to load notes.");
-      setSavedCaptureNotes([]);
+      console.warn(data.error || "Failed to load notes. Keeping local notes.");
       return;
     }
 
@@ -2072,8 +2123,7 @@ async function deleteRoomFromCloud(id) {
 
     setSavedCaptureNotes(normalizedNotes);
   } catch (error) {
-    console.error(error);
-    setSavedCaptureNotes([]);
+    console.warn("Cloud notes unavailable. Keeping local notes.", error);
   }
 }
 
@@ -2090,34 +2140,37 @@ async function deleteSavedNoteFromCloud(noteId) {
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      window.alert(data.error || "Failed to delete saved note.");
-      return false;
+      console.warn(data.error || "Cloud delete failed. Deleting local saved note only.");
+      fallbackDeleteLocal();
+      setCaptureStatus("Saved note deleted locally. Cloud sync is unavailable.");
+      return true;
     }
 
     fallbackDeleteLocal();
     setCaptureStatus("Saved note deleted.");
     return true;
   } catch (error) {
-    console.error(error);
-    window.alert("Failed to delete saved note.");
-    return false;
+    console.warn("Cloud delete failed. Deleting local saved note only.", error);
+    fallbackDeleteLocal();
+    setCaptureStatus("Saved note deleted locally. Cloud sync is unavailable.");
+    return true;
   }
 }
 
 async function fetchWrongQuestionFlashcardsFromCloud() {
   try {
     const response = await fetch("/api/wrong-questions");
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      console.error(data.error || "Failed to load flashcards.");
+      console.warn(data.error || "Failed to load cloud flashcards. Keeping local flashcards.");
       return;
     }
 
     setWrongQuestionFlashcards(Array.isArray(data.flashcards) ? data.flashcards : []);
     setFlashcardIndex(0);
   } catch (error) {
-    console.error(error);
+    console.warn("Cloud flashcards unavailable. Keeping local flashcards.", error);
   }
 }
 
@@ -2127,18 +2180,17 @@ async function deleteWrongQuestionFlashcardFromCloud(id) {
       method: "DELETE"
     });
 
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      window.alert(data.error || "Failed to delete flashcard.");
-      return false;
+      console.warn(data.error || "Cloud delete failed. Deleting local flashcard only.");
+      return true;
     }
 
     return true;
   } catch (error) {
-    console.error(error);
-    window.alert("Failed to delete flashcard.");
-    return false;
+    console.warn("Cloud delete failed. Deleting local flashcard only.", error);
+    return true;
   }
 }
 
@@ -2970,8 +3022,13 @@ async function handleAddRoom() {
     setSelectedRoomId(newRoom.id);
     setSelectedSubroomId("");
   } catch (error) {
-    console.error(error);
-    window.alert("Failed to create room.");
+    console.warn("Cloud room save failed. Saving room locally.", error);
+    setRoomTree(prev => ({
+      ...prev,
+      [selectedDivision]: [...getRoomsForDivision(prev, selectedDivision), newRoom]
+    }));
+    setSelectedRoomId(newRoom.id);
+    setSelectedSubroomId("");
   }
 }
 
@@ -3013,8 +3070,19 @@ async function handleAddSubroom() {
     lastHydratedCaptureWorkspaceKeyRef.current = "";
     setSelectedSubroomId(newSubroom.id);
   } catch (error) {
-    console.error(error);
-    window.alert("Failed to create sub-room.");
+    console.warn("Cloud sub-room save failed. Saving sub-room locally.", error);
+    setRoomTree(prev => ({
+      ...prev,
+      [selectedDivision]: getRoomsForDivision(prev, selectedDivision).map(room => {
+        if (room.id !== selectedRoomId) return room;
+        return {
+          ...room,
+          children: [...(room.children || []), newSubroom]
+        };
+      })
+    }));
+    lastHydratedCaptureWorkspaceKeyRef.current = "";
+    setSelectedSubroomId(newSubroom.id);
   }
 }
 
@@ -3038,8 +3106,18 @@ async function handleDeleteSelectedRoomOrSubroom() {
 
       setSelectedSubroomId("");
     } catch (error) {
-      console.error(error);
-      window.alert("Failed to delete sub-room.");
+      console.warn("Cloud sub-room delete failed. Deleting sub-room locally.", error);
+      setRoomTree(prev => ({
+        ...prev,
+        [selectedDivision]: getRoomsForDivision(prev, selectedDivision).map(room => {
+          if (room.id !== selectedRoomId) return room;
+          return {
+            ...room,
+            children: (room.children || []).filter(child => child.id !== selectedSubroomId)
+          };
+        })
+      }));
+      setSelectedSubroomId("");
     }
 
     return;
@@ -3059,8 +3137,13 @@ async function handleDeleteSelectedRoomOrSubroom() {
     setSelectedRoomId("");
     setSelectedSubroomId("");
   } catch (error) {
-    console.error(error);
-    window.alert("Failed to delete room.");
+    console.warn("Cloud room delete failed. Deleting room locally.", error);
+    setRoomTree(prev => ({
+      ...prev,
+      [selectedDivision]: getRoomsForDivision(prev, selectedDivision).filter(room => room.id !== selectedRoomId)
+    }));
+    setSelectedRoomId("");
+    setSelectedSubroomId("");
   }
 }
 
@@ -3236,25 +3319,29 @@ async function handleDeleteSelectedRoomOrSubroom() {
         body: JSON.stringify(newCard)
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        setWrongQuestionStatus(`Save failed: ${data.error || "Unknown error"}`);
+        setWrongQuestionFlashcards(prev => [newCard, ...prev.filter(card => card.id !== newCard.id)]);
+        setFlashcardIndex(0);
+        setWrongQuestionStatus("Flashcard saved locally. Cloud sync is unavailable.");
         return;
       }
 
-      setWrongQuestionFlashcards(prev => [data.flashcard || newCard, ...prev]);
+      setWrongQuestionFlashcards(prev => [data.flashcard || newCard, ...prev.filter(card => card.id !== newCard.id)]);
       setFlashcardIndex(0);
       setWrongQuestionStatus("Flashcard saved to cloud.");
     } catch (error) {
-      console.error(error);
-      setWrongQuestionStatus("Save failed: network error.");
+      console.warn("Cloud flashcard save failed. Saving locally.", error);
+      setWrongQuestionFlashcards(prev => [newCard, ...prev.filter(card => card.id !== newCard.id)]);
+      setFlashcardIndex(0);
+      setWrongQuestionStatus("Flashcard saved locally. Cloud sync is unavailable.");
     }
   }
 
   async function handleLoadSavedFlashcards() {
     await fetchWrongQuestionFlashcardsFromCloud();
-    setWrongQuestionStatus("Loaded saved flashcards from cloud.");
+    setWrongQuestionStatus("Loaded saved flashcards. Cloud sync is used when available; local cards stay available offline.");
   }
 
   async function handleWrongQuestionRunAI() {

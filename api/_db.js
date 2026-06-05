@@ -7,26 +7,27 @@ const connectionString =
   process.env.DATABASE_URL ||
   process.env.POSTGRES_PRISMA_URL;
 
-if (!connectionString) {
-  throw new Error("Missing DATABASE_URL / POSTGRES_URL in environment variables.");
-}
-
+const hasDatabase = Boolean(connectionString);
 const globalForDb = globalThis;
 
-export const pool =
-  globalForDb.__studyVaultPool ||
-  new Pool({
-    connectionString,
-    ssl: connectionString.includes("localhost")
-      ? false
-      : { rejectUnauthorized: false }
-  });
+export const pool = hasDatabase
+  ? globalForDb.__studyVaultPool ||
+    new Pool({
+      connectionString,
+      ssl: connectionString.includes("localhost")
+        ? false
+        : { rejectUnauthorized: false }
+    })
+  : null;
 
-if (!globalForDb.__studyVaultPool) {
+if (pool && !globalForDb.__studyVaultPool) {
   globalForDb.__studyVaultPool = pool;
 }
 
 export async function ensureTables() {
+  if (!pool) {
+    throw new Error("Cloud database is not configured. The app can still use local browser storage.");
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS study_rooms (
       id TEXT PRIMARY KEY,
