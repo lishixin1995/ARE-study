@@ -1619,6 +1619,7 @@ export default function App() {
   const [liveLogicZoom, setLiveLogicZoom] = useState(1);
   const [isOpeningLiveLogicImage, setIsOpeningLiveLogicImage] = useState(false);
   const [expandedImageStatus, setExpandedImageStatus] = useState("");
+  const [expandedImageZoom, setExpandedImageZoom] = useState(1);
   const [wrongQuestionAiResult, setWrongQuestionAiResult] = useState(null);
   const [wrongQuestionLocalAnalysis, setWrongQuestionLocalAnalysis] = useState(buildLocalWrongQuestionAnalysis(""));
   const [wrongQuestionAnalysisSourceText, setWrongQuestionAnalysisSourceText] = useState("");
@@ -1670,6 +1671,10 @@ export default function App() {
     setLiveLogicZoom(Math.min(2.25, Math.max(0.55, Number(nextZoom) || 1)));
   }
 
+  function adjustExpandedImageZoom(nextZoom) {
+    setExpandedImageZoom(Math.min(3, Math.max(0.65, Number(nextZoom) || 1)));
+  }
+
   function revokeExpandedImageResources(imageResource = null) {
     if (!imageResource || typeof imageResource !== "object") return;
 
@@ -1692,6 +1697,7 @@ export default function App() {
       revokeExpandedImageResources(previousImage);
       return nextImage;
     });
+    setExpandedImageZoom(1);
     setExpandedImageStatus("Preview ready. Use Save PNG or Save JPG.");
   }
 
@@ -1700,6 +1706,7 @@ export default function App() {
       revokeExpandedImageResources(previousImage);
       return null;
     });
+    setExpandedImageZoom(1);
     setExpandedImageStatus("");
   }
 
@@ -1763,6 +1770,31 @@ export default function App() {
       setIsOpeningLiveLogicImage(true);
       setExpandedImageStatus("");
 
+      if (currentMindMap) {
+        const { svgMarkup, width, height } = buildMindMapSvgMarkup(currentMindMap, {
+          background: "#f8fafc",
+          padding: 32
+        });
+
+        if (svgMarkup && width && height) {
+          const previewUrl = svgMarkupToBlobUrl(svgMarkup);
+          if (previewUrl) {
+            openExpandedImage({
+              src: previewUrl,
+              previewUrl,
+              svgMarkup,
+              width,
+              height,
+              sourceElement: null,
+              title: "Live Logic Image",
+              description: "Stable SVG preview that preserves the original logic-map ratio."
+            });
+            setCaptureStatus("Logic image preview ready. Use zoom, pan, Save PNG, or Save JPG in the popup.");
+            return;
+          }
+        }
+      }
+
       const liveLogicElement = liveLogicPrintRef.current;
 
       if (liveLogicElement) {
@@ -1780,32 +1812,11 @@ export default function App() {
               svgMarkup: elementPreview.svgMarkup,
               width: elementPreview.width,
               height: elementPreview.height,
-              sourceElement: liveLogicElement
+              sourceElement: liveLogicElement,
+              title: "Live Logic Image",
+              description: "Fallback DOM capture preview."
             });
-            setCaptureStatus("Image preview ready. Use Save PNG or Save JPG in the popup.");
-            return;
-          }
-        }
-      }
-
-      if (currentMindMap) {
-        const { svgMarkup, width, height } = buildMindMapSvgMarkup(currentMindMap, {
-          background: "#f8fafc",
-          padding: 28
-        });
-
-        if (svgMarkup && width && height) {
-          const previewUrl = svgMarkupToBlobUrl(svgMarkup);
-          if (previewUrl) {
-            openExpandedImage({
-              src: previewUrl,
-              previewUrl,
-              svgMarkup,
-              width,
-              height,
-              sourceElement: null
-            });
-            setCaptureStatus("Image preview ready. Use Save PNG or Save JPG in the popup.");
+            setCaptureStatus("Logic image preview ready. Use zoom, pan, Save PNG, or Save JPG in the popup.");
             return;
           }
         }
@@ -2863,7 +2874,7 @@ ${visibleText}`;
       aiResult: null,
       analysisSourceText: "",
       analysisCleared: true,
-      status: `Merged saved note from ${formatSavedAt(note.savedAt)} into the editor. Run Analyze or Ask AI to re-analyze everything.`
+      status: `Merged saved note from ${formatSavedAt(note.savedAt)} into the editor. Run Analyze with AI to re-analyze everything.`
     });
 
     applyCaptureWorkspace(mergedWorkspace);
@@ -3407,8 +3418,8 @@ async function handleDeleteSelectedRoomOrSubroom() {
               placeholder={editorPlaceholderText}
             />
             <div className="button-row top-gap">
-              <button onClick={handleAnalyzeCapture} disabled={!canEditCapture}>
-                Analyze
+              <button className="ask-ai-btn" onClick={handleCaptureRunAI} disabled={!canEditCapture || isCaptureAnalyzing}>
+                {isCaptureAnalyzing ? "Thinking..." : "✨ Analyze with AI"}
               </button>
             </div>
           </div>
@@ -3439,8 +3450,8 @@ async function handleDeleteSelectedRoomOrSubroom() {
               <div className="panel-head-row">
                 <h3>
                   {currentViewTitle}{" "}
-                  <span className={`engine-badge ${canEditCapture && captureAiResult ? "ai" : "local"}`}>
-                    {canEditCapture && captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
+                  <span className="engine-badge ai">
+                    {canEditCapture && captureAiResult ? "✨ AI Active" : "✨ AI Ready"}
                   </span>
                 </h3>
                 <div className="button-row" style={{ flexWrap: "wrap", justifyContent: "flex-end", gap: "8px" }}>
@@ -3518,8 +3529,8 @@ async function handleDeleteSelectedRoomOrSubroom() {
               <div className="panel-head-row">
                 <h3>
                   Live Logic Image{" "}
-                  <span className={`engine-badge ${canEditCapture && captureAiResult ? "ai" : "local"}`}>
-                    {canEditCapture && captureAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
+                  <span className="engine-badge ai">
+                    {canEditCapture && captureAiResult ? "✨ AI Active" : "✨ AI Ready"}
                   </span>
                 </h3>
                 <div className="button-row" style={{ flexWrap: "wrap", justifyContent: "flex-end", gap: "8px" }}>
@@ -3613,7 +3624,18 @@ async function handleDeleteSelectedRoomOrSubroom() {
                 <div className="subcard-title">Image Upload</div>
 
                 {wrongQuestionImagePreview ? (
-                  <img src={wrongQuestionImagePreview} alt="Preview" className="image-preview" />
+                  <img
+                    src={wrongQuestionImagePreview}
+                    alt="Preview"
+                    className="image-preview"
+                    onClick={() =>
+                      openExpandedImage({
+                        src: wrongQuestionImagePreview,
+                        title: "Wrong Question Image",
+                        description: "Full-size uploaded question preview. Zoom in if the screenshot is hard to read."
+                      })
+                    }
+                  />
                 ) : (
                   <div className="image-placeholder">Drag and drop an image here, or upload one.</div>
                 )}
@@ -3666,7 +3688,9 @@ async function handleDeleteSelectedRoomOrSubroom() {
                   placeholder="Write your own wrong-question notes here..."
                 />
                 <div className="button-row top-gap">
-                  <button onClick={handleAnalyzeWrongQuestion}>Analyze</button>
+                  <button className="ask-ai-btn" onClick={handleWrongQuestionRunAI} disabled={isAnalyzing}>
+                    {isAnalyzing ? "Thinking..." : "✨ Analyze with AI"}
+                  </button>
                 </div>
               </div>
             </div>
@@ -3675,8 +3699,8 @@ async function handleDeleteSelectedRoomOrSubroom() {
               <div className="panel-head-row">
                 <h3>
                   Analysis {" "}
-                  <span className={`engine-badge ${wrongQuestionAiResult ? "ai" : "local"}`}>
-                    {wrongQuestionAiResult ? "✨ AI Active" : "⚙️ Local Smart Engine"}
+                  <span className="engine-badge ai">
+                    {wrongQuestionAiResult ? "✨ AI Active" : "✨ AI Ready"}
                   </span>
                 </h3>
                 <button className="ask-ai-btn" onClick={handleWrongQuestionRunAI} disabled={isAnalyzing}>
@@ -3802,7 +3826,13 @@ async function handleDeleteSelectedRoomOrSubroom() {
                               src={currentFlashcard.imagePreview}
                               alt="Wrong question"
                               className="flashcard-image"
-                              onClick={() => setExpandedImage(currentFlashcard.imagePreview)}
+                              onClick={() =>
+                                openExpandedImage({
+                                  src: currentFlashcard.imagePreview,
+                                  title: "Saved Wrong Question",
+                                  description: currentFlashcard.questionText || "Full-size saved screenshot preview."
+                                })
+                              }
                             />
                           ) : (
                             <div className="flashcard-no-image">No image</div>
@@ -3975,66 +4005,54 @@ async function handleDeleteSelectedRoomOrSubroom() {
       />
 
       {expandedImage ? (
-        <div className="overlay-backdrop" onClick={closeExpandedImage}>
+        <div className="overlay-backdrop image-lightbox-backdrop" onClick={closeExpandedImage}>
           <div className="overlay-card image-modal" onClick={event => event.stopPropagation()}>
-            <button className="icon-close-btn image-close" onClick={closeExpandedImage}>
-              ×
-            </button>
-            <div className="button-row" style={{ justifyContent: "center", gap: "10px", marginBottom: "12px", flexWrap: "wrap" }}>
+            <div className="image-modal-header">
+              <div>
+                <div className="image-modal-title">
+                  {typeof expandedImage === "object" && expandedImage?.title ? expandedImage.title : "Image Preview"}
+                </div>
+                <div className="image-modal-subtitle">
+                  {typeof expandedImage === "object" && expandedImage?.description
+                    ? expandedImage.description
+                    : "Preview keeps the original image ratio. Zoom in and pan if the image is larger than the screen."}
+                </div>
+              </div>
+              <button className="icon-close-btn image-close" onClick={closeExpandedImage} aria-label="Close image preview">
+                ×
+              </button>
+            </div>
+
+            <div className="image-modal-toolbar">
+              <button type="button" onClick={() => adjustExpandedImageZoom(expandedImageZoom - 0.15)}>−</button>
+              <button type="button" onClick={() => adjustExpandedImageZoom(1)}>Reset {Math.round(expandedImageZoom * 100)}%</button>
+              <button type="button" onClick={() => adjustExpandedImageZoom(expandedImageZoom + 0.15)}>+</button>
               {typeof expandedImage === "object" && expandedImage?.svgMarkup ? (
                 <>
-                  <button
-                    type="button"
-                    onClick={() => downloadExpandedLogicImage("png")}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      minHeight: "38px",
-                      padding: "0 16px",
-                      borderRadius: "12px",
-                      border: "1px solid #cbd5e1",
-                      background: "#ffffff",
-                      color: "#0f172a",
-                      textDecoration: "none",
-                      fontWeight: 600,
-                      cursor: "pointer"
-                    }}
-                  >
-                    Save PNG
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => downloadExpandedLogicImage("jpg")}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      minHeight: "38px",
-                      padding: "0 16px",
-                      borderRadius: "12px",
-                      border: "1px solid #cbd5e1",
-                      background: "#ffffff",
-                      color: "#0f172a",
-                      textDecoration: "none",
-                      fontWeight: 600,
-                      cursor: "pointer"
-                    }}
-                  >
-                    Save JPG
-                  </button>
+                  <button type="button" onClick={() => downloadExpandedLogicImage("png")}>Save PNG</button>
+                  <button type="button" onClick={() => downloadExpandedLogicImage("jpg")}>Save JPG</button>
                 </>
               ) : null}
             </div>
-            {typeof expandedImage === "object" && expandedImage?.svgMarkup ? (
-              <div style={{ marginBottom: "10px", textAlign: "center", color: "#475569", fontSize: "13px" }}>
-                Preview uses the full live logic board. Use the buttons above to save PNG or JPG.
+
+            {expandedImageStatus ? <div className="image-modal-status">{expandedImageStatus}</div> : null}
+
+            <div className="image-modal-stage">
+              <div
+                className="image-modal-canvas"
+                style={{
+                  width: `${Math.round(expandedImageZoom * 100)}%`,
+                  height: `${Math.round(expandedImageZoom * 100)}%`
+                }}
+              >
+                <img
+                  src={typeof expandedImage === "string" ? expandedImage : expandedImage?.src}
+                  alt="Expanded"
+                  className="image-modal-img"
+                  draggable="false"
+                />
               </div>
-            ) : null}
-            {expandedImageStatus ? (
-              <div style={{ marginBottom: "10px", textAlign: "center", color: "#64748b", fontSize: "13px" }}>{expandedImageStatus}</div>
-            ) : null}
-            <img src={typeof expandedImage === "string" ? expandedImage : expandedImage?.src} alt="Expanded" className="image-modal-img" />
+            </div>
           </div>
         </div>
       ) : null}
