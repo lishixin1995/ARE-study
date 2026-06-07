@@ -13,6 +13,9 @@ const DEFAULT_ROOM_NAMES = {
   CE: ["Site Visit", "Submittals", "RFI", "Punch List"]
 };
 
+const LIVE_LOGIC_MIN_ZOOM = 0.1;
+const LIVE_LOGIC_MAX_ZOOM = 2;
+
 const SAMPLE_BY_DIVISION = {
   PA: `Site analysis should start with climate, zoning, topography, and access.
 Programming should connect client needs to spatial requirements.
@@ -1056,6 +1059,26 @@ function svgMarkupToBlobUrl(svgMarkup = "") {
   return URL.createObjectURL(svgBlob);
 }
 
+function clampZoomValue(nextZoom, minZoom, maxZoom) {
+  const numericZoom = Number(nextZoom);
+  const fallbackZoom = Number.isFinite(numericZoom) ? numericZoom : 1;
+  return Math.min(maxZoom, Math.max(minZoom, fallbackZoom));
+}
+
+function calculateLiveLogicFitZoom(imageResource = {}) {
+  if (typeof window === "undefined" || !imageResource?.width || !imageResource?.height) {
+    return 1;
+  }
+
+  const modalWidth = Math.min(1380, Math.max(320, window.innerWidth - 36));
+  const modalHeight = Math.min(920, Math.max(320, window.innerHeight - 36));
+  const availableWidth = Math.max(220, modalWidth - 76);
+  const availableHeight = Math.max(220, modalHeight - 210);
+  const fitZoom = Math.min(1, availableWidth / imageResource.width, availableHeight / imageResource.height);
+
+  return clampZoomValue(fitZoom, LIVE_LOGIC_MIN_ZOOM, LIVE_LOGIC_MAX_ZOOM);
+}
+
 async function rasterizeSvgMarkupToBlob(svgMarkup = "", { width = 0, height = 0, background = "#f8fafc", scale = 2, mimeType = "image/png", quality = 0.92 } = {}) {
   if (!svgMarkup || !width || !height || typeof document === "undefined") return null;
 
@@ -1708,11 +1731,16 @@ export default function App() {
   }
 
   function adjustLiveLogicZoom(nextZoom) {
-    setLiveLogicZoom(Math.min(2.25, Math.max(0.55, Number(nextZoom) || 1)));
+    setLiveLogicZoom(clampZoomValue(nextZoom, LIVE_LOGIC_MIN_ZOOM, LIVE_LOGIC_MAX_ZOOM));
   }
 
   function adjustExpandedImageZoom(nextZoom) {
-    setExpandedImageZoom(Math.min(3, Math.max(0.65, Number(nextZoom) || 1)));
+    const isLiveLogicImage = typeof expandedImage === "object" && expandedImage?.isLiveLogicImage;
+    setExpandedImageZoom(
+      isLiveLogicImage
+        ? clampZoomValue(nextZoom, LIVE_LOGIC_MIN_ZOOM, LIVE_LOGIC_MAX_ZOOM)
+        : clampZoomValue(nextZoom, 0.65, 3)
+    );
   }
 
   function revokeExpandedImageResources(imageResource = null) {
@@ -1737,7 +1765,7 @@ export default function App() {
       revokeExpandedImageResources(previousImage);
       return nextImage;
     });
-    setExpandedImageZoom(1);
+    setExpandedImageZoom(nextImage.isLiveLogicImage ? calculateLiveLogicFitZoom(nextImage) : 1);
     setExpandedImageStatus("Preview ready. Use Save PNG or Save JPG.");
   }
 
@@ -1826,6 +1854,7 @@ export default function App() {
               width,
               height,
               sourceElement: null,
+              isLiveLogicImage: true,
               title: "Live Logic Image",
               description: "Stable SVG preview that preserves the original logic-map ratio."
             });
@@ -1853,6 +1882,7 @@ export default function App() {
               width: elementPreview.width,
               height: elementPreview.height,
               sourceElement: liveLogicElement,
+              isLiveLogicImage: true,
               title: "Live Logic Image",
               description: "Fallback DOM capture preview."
             });
@@ -3382,6 +3412,18 @@ async function handleDeleteSelectedRoomOrSubroom() {
     }
   }
 
+  const expandedImageObject = expandedImage && typeof expandedImage === "object" ? expandedImage : null;
+  const isExpandedLiveLogicImage = Boolean(expandedImageObject?.isLiveLogicImage);
+  const expandedImageWidth = Number(expandedImageObject?.width) || 0;
+  const expandedImageHeight = Number(expandedImageObject?.height) || 0;
+  const hasExpandedLiveLogicDimensions = isExpandedLiveLogicImage && expandedImageWidth > 0 && expandedImageHeight > 0;
+  const expandedLiveLogicDisplayWidth = hasExpandedLiveLogicDimensions
+    ? Math.max(1, Math.round(expandedImageWidth * expandedImageZoom))
+    : 0;
+  const expandedLiveLogicDisplayHeight = hasExpandedLiveLogicDimensions
+    ? Math.max(1, Math.round(expandedImageHeight * expandedImageZoom))
+    : 0;
+
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -4097,11 +4139,11 @@ async function handleDeleteSelectedRoomOrSubroom() {
             <div className="image-modal-header">
               <div>
                 <div className="image-modal-title">
-                  {typeof expandedImage === "object" && expandedImage?.title ? expandedImage.title : "Image Preview"}
+                  {expandedImageObject?.title ? expandedImageObject.title : "Image Preview"}
                 </div>
                 <div className="image-modal-subtitle">
-                  {typeof expandedImage === "object" && expandedImage?.description
-                    ? expandedImage.description
+                  {expandedImageObject?.description
+                    ? expandedImageObject.description
                     : "Preview keeps the original image ratio. Zoom in and pan if the image is larger than the screen."}
                 </div>
               </div>
@@ -4114,7 +4156,7 @@ async function handleDeleteSelectedRoomOrSubroom() {
               <button type="button" onClick={() => adjustExpandedImageZoom(expandedImageZoom - 0.15)}>−</button>
               <button type="button" onClick={() => adjustExpandedImageZoom(1)}>Reset {Math.round(expandedImageZoom * 100)}%</button>
               <button type="button" onClick={() => adjustExpandedImageZoom(expandedImageZoom + 0.15)}>+</button>
-              {typeof expandedImage === "object" && expandedImage?.svgMarkup ? (
+              {expandedImageObject?.svgMarkup ? (
                 <>
                   <button type="button" onClick={() => downloadExpandedLogicImage("png")}>Save PNG</button>
                   <button type="button" onClick={() => downloadExpandedLogicImage("jpg")}>Save JPG</button>
@@ -4126,16 +4168,35 @@ async function handleDeleteSelectedRoomOrSubroom() {
 
             <div className="image-modal-stage">
               <div
-                className="image-modal-canvas"
-                style={{
-                  width: `${Math.round(expandedImageZoom * 100)}%`,
-                  height: `${Math.round(expandedImageZoom * 100)}%`
-                }}
+                className={`image-modal-canvas ${hasExpandedLiveLogicDimensions ? "is-live-logic-image" : ""}`}
+                style={
+                  hasExpandedLiveLogicDimensions
+                    ? {
+                        width: `${expandedLiveLogicDisplayWidth}px`,
+                        height: `${expandedLiveLogicDisplayHeight}px`,
+                        minWidth: `${expandedLiveLogicDisplayWidth}px`,
+                        minHeight: `${expandedLiveLogicDisplayHeight}px`
+                      }
+                    : {
+                        width: `${Math.round(expandedImageZoom * 100)}%`,
+                        height: `${Math.round(expandedImageZoom * 100)}%`
+                      }
+                }
               >
                 <img
-                  src={typeof expandedImage === "string" ? expandedImage : expandedImage?.src}
+                  src={typeof expandedImage === "string" ? expandedImage : expandedImageObject?.src}
                   alt="Expanded"
                   className="image-modal-img"
+                  style={
+                    hasExpandedLiveLogicDimensions
+                      ? {
+                          width: `${expandedLiveLogicDisplayWidth}px`,
+                          height: `${expandedLiveLogicDisplayHeight}px`,
+                          maxWidth: "none",
+                          maxHeight: "none"
+                        }
+                      : undefined
+                  }
                   draggable="false"
                 />
               </div>

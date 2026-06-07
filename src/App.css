@@ -1118,6 +1118,12 @@ button:hover:not(:disabled),
   padding: 22px;
 }
 
+.image-modal-canvas.is-live-logic-image {
+  align-items: flex-start;
+  justify-content: flex-start;
+  box-sizing: content-box;
+}
+
 .image-modal-img {
   width: auto;
   height: auto;
