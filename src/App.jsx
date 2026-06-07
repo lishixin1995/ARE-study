@@ -1838,32 +1838,6 @@ export default function App() {
       setIsOpeningLiveLogicImage(true);
       setExpandedImageStatus("");
 
-      if (currentMindMap) {
-        const { svgMarkup, width, height } = buildMindMapSvgMarkup(currentMindMap, {
-          background: "#f8fafc",
-          padding: 32
-        });
-
-        if (svgMarkup && width && height) {
-          const previewUrl = svgMarkupToBlobUrl(svgMarkup);
-          if (previewUrl) {
-            openExpandedImage({
-              src: previewUrl,
-              previewUrl,
-              svgMarkup,
-              width,
-              height,
-              sourceElement: null,
-              isLiveLogicImage: true,
-              title: "Live Logic Image",
-              description: "Stable SVG preview that preserves the original logic-map ratio."
-            });
-            setCaptureStatus("Logic image preview ready. Use zoom, pan, Save PNG, or Save JPG in the popup.");
-            return;
-          }
-        }
-      }
-
       const liveLogicElement = liveLogicPrintRef.current;
 
       if (liveLogicElement) {
@@ -1884,7 +1858,33 @@ export default function App() {
               sourceElement: liveLogicElement,
               isLiveLogicImage: true,
               title: "Live Logic Image",
-              description: "Fallback DOM capture preview."
+              description: "Full image preview with the same structure as the live logic map."
+            });
+            setCaptureStatus("Logic image preview ready. Use zoom, pan, Save PNG, or Save JPG in the popup.");
+            return;
+          }
+        }
+      }
+
+      if (currentMindMap) {
+        const { svgMarkup, width, height } = buildMindMapSvgMarkup(currentMindMap, {
+          background: "#f8fafc",
+          padding: 32
+        });
+
+        if (svgMarkup && width && height) {
+          const previewUrl = svgMarkupToBlobUrl(svgMarkup);
+          if (previewUrl) {
+            openExpandedImage({
+              src: previewUrl,
+              previewUrl,
+              svgMarkup,
+              width,
+              height,
+              sourceElement: null,
+              isLiveLogicImage: true,
+              title: "Live Logic Image",
+              description: "Stable SVG preview that preserves the original logic-map ratio."
             });
             setCaptureStatus("Logic image preview ready. Use zoom, pan, Save PNG, or Save JPG in the popup.");
             return;
