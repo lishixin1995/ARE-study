@@ -941,79 +941,127 @@ function measureMindMapLabelWidth(label = "", font = "600 14px Inter, system-ui,
   return Math.ceil(context.measureText(String(label || "")).width);
 }
 
-function layoutMindMapTree(node, depth = 0, config = {}) {
-  const nodeHeight = config.nodeHeight || 48;
-  const horizontalGap = config.horizontalGap || 24;
-  const verticalGap = config.verticalGap || 26;
-  const paddingX = config.paddingX || 18;
-  const minNodeWidth = config.minNodeWidth || 140;
-  const maxNodeWidth = config.maxNodeWidth || 360;
+function wrapMindMapSvgText(label = "", maxWidth = 320, font = "700 12px Inter, system-ui, sans-serif") {
+  const words = String(label || "").trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return [""];
 
-  const label = String(node?.label || "");
-  const measuredWidth = measureMindMapLabelWidth(label);
-  const nodeWidth = Math.min(maxNodeWidth, Math.max(minNodeWidth, measuredWidth + paddingX * 2));
-  const childLayouts = Array.isArray(node?.children)
-    ? node.children.map(child => layoutMindMapTree(child, depth + 1, config))
-    : [];
+  const lines = [];
+  let currentLine = "";
 
-  const childrenRowWidth = childLayouts.length
-    ? childLayouts.reduce((sum, child, index) => sum + child.subtreeWidth + (index ? horizontalGap : 0), 0)
-    : 0;
-
-  const subtreeWidth = Math.max(nodeWidth, childrenRowWidth || 0);
-  const offsetX = (subtreeWidth - nodeWidth) / 2;
-
-  let runningX = 0;
-  let maxSubtreeHeight = nodeHeight;
-  const positionedChildren = childLayouts.map((child, index) => {
-    const childX = runningX;
-    runningX += child.subtreeWidth + (index < childLayouts.length - 1 ? horizontalGap : 0);
-    maxSubtreeHeight = Math.max(maxSubtreeHeight, nodeHeight + verticalGap + child.subtreeHeight);
-    return {
-      ...child,
-      x: childX,
-      y: nodeHeight + verticalGap
-    };
+  words.forEach(word => {
+    const nextLine = currentLine ? `${currentLine} ${word}` : word;
+    if (currentLine && measureMindMapLabelWidth(nextLine, font) > maxWidth) {
+      lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = nextLine;
+    }
   });
+
+  if (currentLine) lines.push(currentLine);
+  return lines;
+}
+
+function layoutMindMapTree(node, depth = 0, config = {}) {
+  const label = String(node?.label || "");
+  const childNodes = Array.isArray(node?.children) ? node.children : [];
+  const hasChildren = childNodes.length > 0;
+  const nodeWidth = depth === 0 ? 300 : hasChildren ? 360 : 420;
+  const fontSize = depth === 0 ? 12.8 : 12.2;
+  const fontWeight = depth === 0 ? 800 : 700;
+  const textLines = wrapMindMapSvgText(
+    label,
+    nodeWidth - 34,
+    `${fontWeight} ${fontSize}px Inter, system-ui, sans-serif`
+  );
+  const lineHeight = fontSize * 1.28;
+  const nodeHeight = Math.max(depth === 0 ? 56 : 48, Math.ceil(textLines.length * lineHeight + 22));
+  const childIndent = config.childIndent || 74;
+  const childGap = config.childGap || 16;
+  const childLayouts = childNodes.map(child => layoutMindMapTree(child, depth + 1, config));
+  const childrenHeight = childLayouts.length
+    ? childLayouts.reduce((sum, child, index) => sum + child.height + (index ? childGap : 0), 0)
+    : 0;
+  const height = Math.max(nodeHeight, childrenHeight);
+  const childStartY = (height - childrenHeight) / 2;
+
+  let runningY = childStartY;
+  const positionedChildren = childLayouts.map((child, index) => {
+    const positionedChild = {
+      ...child,
+      x: nodeWidth + childIndent,
+      y: runningY
+    };
+    runningY += child.height + (index < childLayouts.length - 1 ? childGap : 0);
+    return positionedChild;
+  });
+
+  const childWidth = childLayouts.length ? Math.max(...childLayouts.map(child => child.width)) : 0;
 
   return {
     label,
     depth,
-    x: 0,
-    y: 0,
-    width: nodeWidth,
-    height: nodeHeight,
-    nodeX: offsetX,
-    nodeY: 0,
-    subtreeWidth,
-    subtreeHeight: maxSubtreeHeight,
+    width: nodeWidth + (childWidth ? childIndent + childWidth : 0),
+    height,
+    nodeWidth,
+    nodeHeight,
+    nodeY: (height - nodeHeight) / 2,
+    textLines,
+    fontSize,
+    fontWeight,
+    lineHeight,
+    childIndent,
     children: positionedChildren
   };
+}
+
+function renderMindMapSvgText(layout, x, y) {
+  const centerX = x + layout.nodeWidth / 2;
+  const centerY = y + layout.nodeY + layout.nodeHeight / 2;
+  const firstDy = -((layout.textLines.length - 1) * layout.lineHeight) / 2;
+
+  const tspans = layout.textLines
+    .map((line, index) => (
+      `<tspan x="${centerX}" dy="${index === 0 ? firstDy : layout.lineHeight}">${escapeXml(line)}</tspan>`
+    ))
+    .join("");
+
+  return `
+    <text y="${centerY}" text-anchor="middle" dominant-baseline="middle" font-family="Inter, system-ui, sans-serif" font-size="${layout.fontSize}" font-weight="${layout.fontWeight}" fill="#2f2a32">
+      ${tspans}
+    </text>
+  `;
 }
 
 function renderMindMapSvgNodes(layout, originX = 0, originY = 0) {
   if (!layout) return "";
 
-  const nodeX = originX + layout.nodeX;
+  const nodeX = originX;
   const nodeY = originY + layout.nodeY;
-  const centerX = nodeX + layout.width / 2;
-  const bottomY = nodeY + layout.height;
-  const radius = layout.depth === 0 ? 18 : 16;
-  const fill = layout.depth === 0 ? "#111827" : "#ffffff";
-  const stroke = layout.depth === 0 ? "#111827" : "#cbd5e1";
-  const textFill = layout.depth === 0 ? "#ffffff" : "#0f172a";
+  const nodeCenterY = nodeY + layout.nodeHeight / 2;
+  const radius = layout.depth === 0 ? 14 : 12;
+  const fill = "#fffaf2";
+  const stroke = "#d9c4ad";
 
-  const connectors = layout.children
-    .map(child => {
-      const childCenterX = originX + child.x + child.nodeX + child.width / 2;
-      const childTopY = originY + child.y + child.nodeY;
-      const midY = bottomY + 12;
-      return `
-        <path d="M ${centerX} ${bottomY} L ${centerX} ${midY} L ${childCenterX} ${midY} L ${childCenterX} ${childTopY}" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
-        <circle cx="${childCenterX}" cy="${childTopY}" r="4" fill="#94a3b8" />
-      `;
-    })
-    .join("");
+  const connectorLineX = nodeX + layout.nodeWidth + 30;
+  const childNodeX = nodeX + layout.nodeWidth + layout.childIndent;
+  const childCenters = layout.children.map(child => originY + child.y + child.nodeY + child.nodeHeight / 2);
+  const connectors = layout.children.length
+    ? `
+      <line x1="${nodeX + layout.nodeWidth}" y1="${nodeCenterY}" x2="${connectorLineX}" y2="${nodeCenterY}" stroke="#d9c4ad" stroke-width="1.5" />
+      <circle cx="${connectorLineX}" cy="${nodeCenterY}" r="4" fill="#efd9be" stroke="#fffaf2" stroke-width="1.5" />
+      <line x1="${connectorLineX}" y1="${Math.min(...childCenters)}" x2="${connectorLineX}" y2="${Math.max(...childCenters)}" stroke="#d9c4ad" stroke-width="1.5" />
+      ${layout.children
+        .map((child, index) => {
+          const childCenterY = childCenters[index];
+          return `
+            <line x1="${connectorLineX}" y1="${childCenterY}" x2="${childNodeX - 12}" y2="${childCenterY}" stroke="#d9c4ad" stroke-width="1.5" />
+            <circle cx="${connectorLineX}" cy="${childCenterY}" r="4" fill="#efd9be" stroke="#fffaf2" stroke-width="1.5" />
+          `;
+        })
+        .join("")}
+    `
+    : "";
 
   const childrenMarkup = layout.children
     .map(child => renderMindMapSvgNodes(child, originX + child.x, originY + child.y))
@@ -1021,8 +1069,8 @@ function renderMindMapSvgNodes(layout, originX = 0, originY = 0) {
 
   return `
     ${connectors}
-    <rect x="${nodeX}" y="${nodeY}" width="${layout.width}" height="${layout.height}" rx="${radius}" ry="${radius}" fill="${fill}" stroke="${stroke}" stroke-width="${layout.depth === 0 ? 0 : 1.5}" />
-    <text x="${centerX}" y="${nodeY + layout.height / 2}" text-anchor="middle" dominant-baseline="middle" font-family="Inter, system-ui, sans-serif" font-size="14" font-weight="${layout.depth === 0 ? 700 : 600}" fill="${textFill}">${escapeXml(layout.label)}</text>
+    <rect x="${nodeX}" y="${nodeY}" width="${layout.nodeWidth}" height="${layout.nodeHeight}" rx="${radius}" ry="${radius}" fill="${fill}" stroke="${stroke}" stroke-width="1.2" />
+    ${renderMindMapSvgText(layout, nodeX, originY)}
     ${childrenMarkup}
   `;
 }
@@ -1031,16 +1079,12 @@ function buildMindMapSvgMarkup(mindMap, { background = "#f8fafc", padding = 28 }
   if (!mindMap) return { svgMarkup: "", width: 0, height: 0 };
 
   const layout = layoutMindMapTree(mindMap, 0, {
-    nodeHeight: 48,
-    horizontalGap: 26,
-    verticalGap: 30,
-    paddingX: 18,
-    minNodeWidth: 148,
-    maxNodeWidth: 360
+    childIndent: 74,
+    childGap: 16
   });
 
-  const width = Math.max(1, Math.ceil(layout.subtreeWidth + padding * 2));
-  const height = Math.max(1, Math.ceil(layout.subtreeHeight + padding * 2));
+  const width = Math.max(1, Math.ceil(layout.width + padding * 2));
+  const height = Math.max(1, Math.ceil(layout.height + padding * 2));
   const content = renderMindMapSvgNodes(layout, padding, padding);
 
   const svgMarkup = `
@@ -1787,7 +1831,7 @@ export default function App() {
       const isJpg = String(format).toLowerCase() === "jpg" || String(format).toLowerCase() === "jpeg";
       let blob = null;
 
-      if (expandedImage.sourceElement instanceof Element) {
+      if (!expandedImage.isLiveLogicImage && expandedImage.sourceElement instanceof Element) {
         blob = await rasterizeElementToBlob(expandedImage.sourceElement, {
           background: "#f8fafc",
           padding: 24,
@@ -1838,6 +1882,32 @@ export default function App() {
       setIsOpeningLiveLogicImage(true);
       setExpandedImageStatus("");
 
+      if (currentMindMap) {
+        const { svgMarkup, width, height } = buildMindMapSvgMarkup(currentMindMap, {
+          background: "#f8fafc",
+          padding: 32
+        });
+
+        if (svgMarkup && width && height) {
+          const previewUrl = svgMarkupToBlobUrl(svgMarkup);
+          if (previewUrl) {
+            openExpandedImage({
+              src: previewUrl,
+              previewUrl,
+              svgMarkup,
+              width,
+              height,
+              sourceElement: null,
+              isLiveLogicImage: true,
+              title: "Live Logic Image",
+              description: "Full image preview with the same structure as the live logic map."
+            });
+            setCaptureStatus("Logic image preview ready. Use zoom, pan, Save PNG, or Save JPG in the popup.");
+            return;
+          }
+        }
+      }
+
       const liveLogicElement = liveLogicPrintRef.current;
 
       if (liveLogicElement) {
@@ -1858,33 +1928,7 @@ export default function App() {
               sourceElement: liveLogicElement,
               isLiveLogicImage: true,
               title: "Live Logic Image",
-              description: "Full image preview with the same structure as the live logic map."
-            });
-            setCaptureStatus("Logic image preview ready. Use zoom, pan, Save PNG, or Save JPG in the popup.");
-            return;
-          }
-        }
-      }
-
-      if (currentMindMap) {
-        const { svgMarkup, width, height } = buildMindMapSvgMarkup(currentMindMap, {
-          background: "#f8fafc",
-          padding: 32
-        });
-
-        if (svgMarkup && width && height) {
-          const previewUrl = svgMarkupToBlobUrl(svgMarkup);
-          if (previewUrl) {
-            openExpandedImage({
-              src: previewUrl,
-              previewUrl,
-              svgMarkup,
-              width,
-              height,
-              sourceElement: null,
-              isLiveLogicImage: true,
-              title: "Live Logic Image",
-              description: "Stable SVG preview that preserves the original logic-map ratio."
+              description: "Fallback DOM capture preview."
             });
             setCaptureStatus("Logic image preview ready. Use zoom, pan, Save PNG, or Save JPG in the popup.");
             return;
