@@ -26,7 +26,7 @@ if (pool && !globalForDb.__studyVaultPool) {
 
 export async function ensureTables() {
   if (!pool) {
-    throw new Error("Cloud database is not configured. The app can still use local browser storage.");
+    throw new Error("Cloud database is not configured.");
   }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS study_rooms (
@@ -56,10 +56,17 @@ export async function ensureTables() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS wrong_question_flashcards (
       id TEXT PRIMARY KEY,
+      division TEXT,
+      room_id TEXT,
+      room_name TEXT,
+      subroom_id TEXT,
+      subroom_name TEXT,
       topic_path TEXT,
       image_preview TEXT,
       ocr_text TEXT,
       edited_text TEXT NOT NULL,
+      notes_text TEXT,
+      analysis_source_text TEXT,
       question_text TEXT,
       summary TEXT,
       correct_answer JSONB,
@@ -68,6 +75,27 @@ export async function ensureTables() {
       trap_point JSONB NOT NULL DEFAULT '[]'::jsonb,
       memory_hook TEXT,
       saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    ALTER TABLE wrong_question_flashcards
+      ADD COLUMN IF NOT EXISTS division TEXT,
+      ADD COLUMN IF NOT EXISTS room_id TEXT,
+      ADD COLUMN IF NOT EXISTS room_name TEXT,
+      ADD COLUMN IF NOT EXISTS subroom_id TEXT,
+      ADD COLUMN IF NOT EXISTS subroom_name TEXT,
+      ADD COLUMN IF NOT EXISTS notes_text TEXT,
+      ADD COLUMN IF NOT EXISTS analysis_source_text TEXT;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_cloud_data (
+      app_key TEXT NOT NULL,
+      data_key TEXT NOT NULL,
+      data JSONB NOT NULL DEFAULT 'null'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (app_key, data_key)
     );
   `);
 }

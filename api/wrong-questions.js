@@ -36,10 +36,17 @@ export default async function handler(request, response) {
       const result = await pool.query(`
         SELECT
           id,
+          division,
+          room_id AS "roomId",
+          room_name AS "roomName",
+          subroom_id AS "subroomId",
+          subroom_name AS "subroomName",
           topic_path AS "topicPath",
           image_preview AS "imagePreview",
           ocr_text AS "ocrText",
           edited_text AS "editedText",
+          notes_text AS "notesText",
+          analysis_source_text AS "analysisSourceText",
           question_text AS "questionText",
           summary,
           correct_answer AS "correctAnswer",
@@ -57,13 +64,13 @@ export default async function handler(request, response) {
 
         return {
           ...card,
-          division: parsed.division,
-          roomName: parsed.roomName,
-          subroomName: parsed.subroomName,
-          roomId: "",
-          subroomId: "",
-          notesText: "",
-          analysisSourceText: ""
+          division: card.division || parsed.division,
+          roomName: card.roomName || parsed.roomName,
+          subroomName: card.subroomName || parsed.subroomName,
+          roomId: card.roomId || "",
+          subroomId: card.subroomId || "",
+          notesText: card.notesText || "",
+          analysisSourceText: card.analysisSourceText || ""
         };
       });
 
@@ -126,16 +133,28 @@ export default async function handler(request, response) {
       const result = await pool.query(
         `
         INSERT INTO wrong_question_flashcards (
-          id, topic_path, image_preview, ocr_text, edited_text, question_text, summary,
-          correct_answer, answer_extraction, bullet_points, trap_point, memory_hook, saved_at
+          id, division, room_id, room_name, subroom_id, subroom_name, topic_path,
+          image_preview, ocr_text, edited_text, notes_text, analysis_source_text,
+          question_text, summary, correct_answer, answer_extraction, bullet_points,
+          trap_point, memory_hook, saved_at
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,$12,$13)
+        VALUES (
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+          $15::jsonb,$16::jsonb,$17::jsonb,$18::jsonb,$19,$20
+        )
         RETURNING
           id,
+          division,
+          room_id AS "roomId",
+          room_name AS "roomName",
+          subroom_id AS "subroomId",
+          subroom_name AS "subroomName",
           topic_path AS "topicPath",
           image_preview AS "imagePreview",
           ocr_text AS "ocrText",
           edited_text AS "editedText",
+          notes_text AS "notesText",
+          analysis_source_text AS "analysisSourceText",
           question_text AS "questionText",
           summary,
           correct_answer AS "correctAnswer",
@@ -147,10 +166,17 @@ export default async function handler(request, response) {
         `,
         [
           id,
+          division,
+          roomId || "",
+          roomName || "",
+          subroomId || "",
+          subroomName || "",
           finalTopicPath,
           imagePreview || "",
           ocrText || "",
           finalEditedText,
+          notesText || "",
+          analysisSourceText || "",
           finalQuestionText,
           summary || "",
           JSON.stringify(correctAnswer || []),
@@ -164,13 +190,13 @@ export default async function handler(request, response) {
 
       const flashcard = {
         ...result.rows[0],
-        division,
-        roomId,
-        roomName,
-        subroomId,
-        subroomName,
-        notesText: notesText || "",
-        analysisSourceText: analysisSourceText || ""
+        division: result.rows[0].division || division,
+        roomId: result.rows[0].roomId || roomId,
+        roomName: result.rows[0].roomName || roomName,
+        subroomId: result.rows[0].subroomId || subroomId,
+        subroomName: result.rows[0].subroomName || subroomName,
+        notesText: result.rows[0].notesText || notesText || "",
+        analysisSourceText: result.rows[0].analysisSourceText || analysisSourceText || ""
       };
 
       return response.status(200).json({ flashcard });
