@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { requireAuthSession } from "./_auth.js";
 
 function safeParseBody(request) {
   if (!request?.body) return {};
@@ -653,6 +654,10 @@ Text:
 export default async function handler(request, response) {
   if (request.method !== "POST") {
     return response.status(405).json({ error: "Method not allowed" });
+  }
+
+  if (!requireAuthSession(request, response)) {
+    return;
   }
 
   if (!process.env.GEMINI_API_KEY) {

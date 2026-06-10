@@ -1,4 +1,5 @@
 import { ensureTables, pool } from "./_db.js";
+import { requireAuthSession } from "./_auth.js";
 
 const DEFAULT_ROOM_NAMES = {
   PA: ["Site", "Zoning", "Code", "Programming"],
@@ -61,6 +62,10 @@ function buildTree(rows = []) {
 
 export default async function handler(request, response) {
   try {
+    if (!requireAuthSession(request, response)) {
+      return;
+    }
+
     await ensureTables();
 
     if (request.method === "GET") {

@@ -1702,7 +1702,176 @@ function buildLocalWrongQuestionAnalysis(text = '') {
   });
 }
 
+function PasscodeGate({ onAuthenticated }) {
+  const [passcode, setPasscode] = useState("");
+  const [status, setStatus] = useState("Enter the site passcode to continue.");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+
+    if (!passcode.trim()) {
+      setStatus("Please enter the passcode.");
+      return;
+    }
+
+    try {
+      setIsSubmitting(true);
+      setStatus("Checking passcode...");
+
+      const response = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "same-origin",
+        body: JSON.stringify({ passcode })
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.authenticated) {
+        setStatus(data.error || "Passcode was not accepted.");
+        return;
+      }
+
+      setPasscode("");
+      onAuthenticated();
+    } catch {
+      setStatus("Could not reach the auth server. Try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  return (
+    <main className="passcode-shell">
+      <section className="passcode-card">
+        <div className="passcode-kicker">ARE Study Vault</div>
+        <h1>Passcode required</h1>
+        <p>Your study workspace is protected before any notes, rooms, or AI tools load.</p>
+
+        <form className="passcode-form" onSubmit={handleSubmit}>
+          <label htmlFor="site-passcode">Site passcode</label>
+          <input
+            id="site-passcode"
+            type="password"
+            value={passcode}
+            onChange={event => setPasscode(event.target.value)}
+            autoComplete="current-password"
+            autoFocus
+          />
+          <button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? "Checking..." : "Unlock"}
+          </button>
+        </form>
+
+        <div className="passcode-status">{status}</div>
+      </section>
+    </main>
+  );
+}
+
+function AuthLoadingScreen() {
+  return (
+    <main className="passcode-shell">
+      <section className="passcode-card">
+        <div className="passcode-kicker">ARE Study Vault</div>
+        <h1>Checking access</h1>
+        <p>Loading your secure session...</p>
+      </section>
+    </main>
+  );
+}
+
 export default function App() {
+  const [authState, setAuthState] = useState({
+    checking: true,
+    authenticated: false,
+    configured: true
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkAuthStatus() {
+      try {
+        const response = await fetch("/api/auth/status", {
+          credentials: "same-origin"
+        });
+        const data = await response.json().catch(() => ({}));
+
+        if (cancelled) return;
+
+        setAuthState({
+          checking: false,
+          authenticated: Boolean(response.ok && data.authenticated),
+          configured: data.configured !== false
+        });
+      } catch {
+        if (!cancelled) {
+          setAuthState({
+            checking: false,
+            authenticated: false,
+            configured: true
+          });
+        }
+      }
+    }
+
+    checkAuthStatus();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function handleLogout() {
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "same-origin"
+      });
+    } finally {
+      setAuthState(prev => ({
+        ...prev,
+        checking: false,
+        authenticated: false
+      }));
+    }
+  }
+
+  if (authState.checking) {
+    return <AuthLoadingScreen />;
+  }
+
+  if (!authState.configured) {
+    return (
+      <main className="passcode-shell">
+        <section className="passcode-card">
+          <div className="passcode-kicker">ARE Study Vault</div>
+          <h1>Passcode not configured</h1>
+          <p>Add SITE_PASSCODE in Vercel Environment Variables, then redeploy.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!authState.authenticated) {
+    return (
+      <PasscodeGate
+        onAuthenticated={() =>
+          setAuthState({
+            checking: false,
+            authenticated: true,
+            configured: true
+          })
+        }
+      />
+    );
+  }
+
+  return <AuthenticatedApp onLogout={handleLogout} />;
+}
+
+function AuthenticatedApp({ onLogout }) {
   const [selectedDivision, setSelectedDivision] = useState("PPD");
   const [roomTree, setRoomTree] = useState(readRoomTree);
   const [selectedRoomId, setSelectedRoomId] = useState("");
@@ -3462,7 +3631,12 @@ async function handleDeleteSelectedRoomOrSubroom() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand-card">
-          <div className="brand-title">ARE Study Vault</div>
+          <div className="brand-row">
+            <div className="brand-title">ARE Study Vault</div>
+            <button type="button" className="logout-btn" onClick={onLogout}>
+              Logout
+            </button>
+          </div>
           <div className="brand-subtitle">Capture notes, analyze logic, and save wrong questions.</div>
         </div>
 

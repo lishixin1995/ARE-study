@@ -1,4 +1,5 @@
 import { ensureTables, pool } from "./_db.js";
+import { requireAuthSession } from "./_auth.js";
 
 function readJsonBody(request) {
   if (!request?.body) return {};
@@ -30,6 +31,10 @@ function parseTopicPath(topicPath = "") {
 
 export default async function handler(request, response) {
   try {
+    if (!requireAuthSession(request, response)) {
+      return;
+    }
+
     await ensureTables();
 
     if (request.method === "GET") {

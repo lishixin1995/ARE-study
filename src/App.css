@@ -45,6 +45,73 @@ ul {
   margin: 0;
 }
 
+.passcode-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: radial-gradient(circle at top left, #e8eefc, transparent 34%), #f3f5fb;
+}
+
+.passcode-card {
+  width: min(100%, 420px);
+  background: #ffffff;
+  border: 1px solid #dfe5f0;
+  border-radius: 18px;
+  padding: 24px;
+  box-shadow: 0 22px 60px rgba(44, 58, 88, 0.14);
+}
+
+.passcode-kicker {
+  color: #687287;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.passcode-card h1 {
+  margin: 10px 0 8px;
+  font-size: 30px;
+}
+
+.passcode-card p,
+.passcode-status {
+  color: #687287;
+  line-height: 1.55;
+}
+
+.passcode-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.passcode-form label {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.passcode-form input {
+  width: 100%;
+  border: 1px solid #d6ddeb;
+  border-radius: 12px;
+  padding: 12px;
+  background: #fbfcff;
+}
+
+.passcode-form button {
+  margin-top: 4px;
+  background: #172033;
+  color: #ffffff;
+  border-color: #172033;
+}
+
+.passcode-status {
+  margin-top: 14px;
+  font-size: 14px;
+}
+
 .app-shell {
   min-height: 100vh;
   display: grid;
@@ -81,6 +148,21 @@ ul {
 .brand-title {
   font-size: 22px;
   font-weight: 800;
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.logout-btn {
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: #687287;
+  background: #fbfcff;
 }
 
 .brand-subtitle {
