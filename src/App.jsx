@@ -212,10 +212,6 @@ function wrongSearchText(card = {}) {
   ]);
 }
 
-function includesQuery(value, query) {
-  return searchableText([value]).includes(String(query || "").toLowerCase());
-}
-
 function itemPath(item = {}) {
   return [item.division || item.divisionId, item.roomName, item.subroomName || item.subRoomName].filter(Boolean).join(" / ");
 }
