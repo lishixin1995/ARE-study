@@ -543,10 +543,10 @@ main {
   width: max-content;
   max-width: none;
   overflow: visible;
-  border: 0;
-  border-radius: 0;
-  padding: 0;
-  background: transparent;
+  border: 1px solid var(--line-soft);
+  border-radius: 18px;
+  padding: 24px;
+  background: #fffaf2;
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -559,59 +559,121 @@ main {
   font-size: 8px;
 }
 
-.logic-dendrogram {
-  font-family: Georgia, "Times New Roman", serif;
+.logic-node {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-items: start;
+  gap: 0;
+  width: max-content;
+  min-width: 170px;
 }
 
-.logic-svg {
-  display: block;
-  overflow: visible;
-}
-
-.logic-svg-bg {
-  fill: #fffdf8;
-  stroke: #ead8c2;
-  stroke-width: 1;
-}
-
-.logic-branch,
-.logic-leaf-line {
-  stroke: #2f2a24;
-  stroke-width: 3;
-  stroke-linecap: square;
-  fill: none;
-}
-
-.logic-leaf-line {
-  stroke-width: 2.4;
-}
-
-.logic-internal-label circle {
-  fill: #2f2a24;
-}
-
-.logic-internal-label text {
-  fill: #6b5745;
+.logic-card {
+  width: 210px;
+  min-height: 46px;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  padding: 9px 13px;
+  border: 1px solid #dfc7ad;
+  border-radius: 13px;
+  background: #fffdf8;
+  color: #3f3328;
   font-family: Inter, Arial, sans-serif;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 750;
-  paint-order: stroke;
-  stroke: #fffdf8;
-  stroke-width: 5px;
-  stroke-linejoin: round;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  box-shadow: 0 8px 18px rgba(92, 62, 35, 0.08);
 }
 
-.logic-internal-label.depth-0 text {
-  fill: var(--accent-dark);
-  font-size: 13px;
+.logic-node.root > .logic-card {
+  width: 280px;
+  min-height: 58px;
+  background: linear-gradient(135deg, #7b4f2c, var(--accent-dark));
+  border-color: #7b4f2c;
+  color: #fffaf2;
+  font-size: 14px;
   font-weight: 850;
+  box-shadow: 0 12px 26px rgba(92, 62, 35, 0.16);
 }
 
-.logic-leaf-label text {
-  fill: #2f2a24;
-  font-size: 18px;
-  font-weight: 600;
-  dominant-baseline: auto;
+.logic-node.depth-1 > .logic-card {
+  width: 220px;
+  background: #fff2df;
+  border-color: #d7b691;
+  color: #513923;
+}
+
+.logic-node.depth-2 > .logic-card {
+  width: 190px;
+  background: #fffaf2;
+  border-color: #dfccb5;
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.logic-node.depth-3 > .logic-card {
+  width: 176px;
+  min-height: 42px;
+  background: #fffdf8;
+  border-color: #ead8c2;
+  font-size: 11.5px;
+  font-weight: 680;
+}
+
+.logic-children {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--logic-columns, 1), max-content);
+  justify-items: center;
+  align-items: start;
+  column-gap: 22px;
+  row-gap: 28px;
+  padding-top: 38px;
+  margin-top: 0;
+}
+
+.logic-children::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 1.5px;
+  height: 22px;
+  background: #d0b28f;
+  transform: translateX(-50%);
+}
+
+.logic-children::after {
+  content: "";
+  position: absolute;
+  top: 22px;
+  left: 105px;
+  right: 105px;
+  height: 1.5px;
+  background: #d0b28f;
+}
+
+.logic-children:has(.logic-child:only-child)::after {
+  display: none;
+}
+
+.logic-child {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-items: start;
+  padding-top: 16px;
+}
+
+.logic-child > span {
+  position: absolute;
+  top: 0;
+  width: 1.5px;
+  height: 16px;
+  background: #d0b28f;
 }
 
 .modal-backdrop {
@@ -779,8 +841,8 @@ main {
 
 .logic-fit .logic-image {
   overflow: visible;
-  border: 0;
-  background: transparent;
+  border: 1px solid var(--line-soft);
+  background: #fffaf2;
   display: flex;
   justify-content: center;
 }
