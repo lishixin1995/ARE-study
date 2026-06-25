@@ -279,12 +279,12 @@ function NoteEditor({ draft, editing, busy, status, setDraft, onFiles, onRemoveF
       {draft.attachments.length ? <div className="chips">{draft.attachments.map(item => <span key={item.id}>{item.kind.toUpperCase()} {item.name}<button onClick={() => onRemoveFile(item.id)}>Remove</button></span>)}</div> : null}
       <div className="buttons"><button className="ai" disabled={busy || !clean(draft.rawNotes)} onClick={onAnalyze}>{busy ? "Thinking..." : "Analyze with AI"}</button><button className="primary" onClick={onSave}>Save Note</button><button onClick={onCancel}>Cancel</button></div>
       {status ? <p className="status-banner">{status}</p> : null}
-      {hasAnalysis(draft.analysis) ? <div className="analysis-preview"><section><h3>Summary</h3><p>{draft.analysis.summary}</p></section><section><h3>Bullet Points</h3><ul>{draft.analysis.bulletPoints.map((item, index) => <li key={index}>{item}</li>)}</ul></section><section className="wide"><h3>Logic Image</h3><LogicImage analysis={draft.analysis} /></section></div> : null}
+      {hasAnalysis(draft.analysis) ? <div className="analysis-preview"><section><h3>Summary</h3><p>{draft.analysis.summary}</p></section><section><h3>Bullet Points</h3><ul>{draft.analysis.bulletPoints.map((item, index) => <li key={index}>{item}</li>)}</ul></section>{draft.analysis?.logicForest ? <section className="wide"><h3>Logic Map</h3><LogicImage analysis={draft.analysis} /></section> : null}</div> : null}
     </section>
   );
 }
 
-function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze }) {
+function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze, onGenerateLogicMap }) {
   const [tab, setTab] = useState("overview");
   const [zoom, setZoom] = useState(1);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -302,9 +302,10 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze }) {
 
   if (!note) return null;
 
+  const hasLogicMap = Boolean(note.analysis?.logicForest);
   const tabs = [
     ["overview", "Overview"],
-    ["logic", "Logic Image"],
+    ...(hasLogicMap ? [["logic", "Logic Map"]] : []),
     ["raw", "Raw Notes"],
     ["attachments", "Attachments"]
   ];
@@ -322,6 +323,7 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze }) {
           <div className="viewer-actions">
             <button onClick={() => onEdit(note)}>Edit</button>
             <button className="ai" disabled={busy || !clean(note.rawNotes)} onClick={() => onAnalyze(note)}>{busy ? "Thinking..." : "Re-analyze"}</button>
+            <button className="ai" disabled={busy || !clean(note.rawNotes)} onClick={async () => { const saved = await onGenerateLogicMap(note); if (saved?.analysis?.logicForest || hasLogicMap) setTab("logic"); }}>{hasLogicMap ? "Regenerate Logic Map" : "Generate Logic Map"}</button>
             <div className="card-menu-wrap">
               <button className="icon-menu-btn" aria-label="More actions" onClick={() => setMenuOpen(open => !open)}>•••</button>
               {menuOpen ? <div className="card-menu viewer-menu"><button onClick={() => { setMenuOpen(false); onDelete(note.id); }}>Delete</button></div> : null}
@@ -348,7 +350,7 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze }) {
             </div>
           ) : null}
 
-          {tab === "logic" ? (
+          {tab === "logic" && hasLogicMap ? (
             <section className="logic-tab">
               <div className="logic-toolbar">
                 <button disabled={zoom <= 0.75} onClick={() => setZoom(value => Math.max(0.75, Number((value - 0.15).toFixed(2))))}>Zoom Out</button>
@@ -402,7 +404,7 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze }) {
       {fullLogicOpen ? (
         <div className="image-modal-backdrop" onClick={event => { event.stopPropagation(); setFullLogicOpen(false); }}>
           <div className="image-modal" onClick={event => event.stopPropagation()}>
-            <div className="image-modal-head"><h3>Logic Image</h3><button onClick={() => setFullLogicOpen(false)}>Close</button></div>
+            <div className="image-modal-head"><h3>Logic Map</h3><button onClick={() => setFullLogicOpen(false)}>Close</button></div>
             <LogicImage analysis={note.analysis} />
           </div>
         </div>
@@ -505,7 +507,14 @@ function StudyApp({ onLogout }) {
     setDraft(prev => ({ ...prev, attachments: [...prev.attachments, ...next] }));
   }
 
-  async function analyzeText(rawNotes) {
+  async function analyzeSummary(rawNotes) {
+    const response = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: rawNotes, type: "summary", mode: "summary" }) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    return normalizeAnalysis(data.analysis);
+  }
+
+  async function generateLogicMapFromText(rawNotes) {
     const response = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: rawNotes, type: "capture" }) });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
@@ -516,10 +525,10 @@ function StudyApp({ onLogout }) {
     if (!clean(draft.rawNotes)) return setStatus("Raw Notes text is empty.");
     try {
       setBusy(true);
-      setStatus("AI analyzing Raw Notes text only...");
-      const analysis = await analyzeText(draft.rawNotes);
-      setDraft(prev => ({ ...prev, analysis }));
-      setStatus("AI analysis complete. Save Note to create or update the card.");
+      setStatus("AI generating Summary and Bullet Points from Raw Notes text only...");
+      const analysis = await analyzeSummary(draft.rawNotes);
+      setDraft(prev => ({ ...prev, analysis: { ...analysis, logicForest: prev.analysis?.logicForest || null } }));
+      setStatus("AI summary complete. Save Note to create or update the card.");
     } catch (error) {
       setStatus(`AI Error: ${error.message}`);
     } finally {
@@ -568,13 +577,37 @@ function StudyApp({ onLogout }) {
     if (!clean(note.rawNotes)) return;
     try {
       setBusy(true);
-      setStatus("Re-analyzing saved note Raw Notes text only...");
-      const analysis = await analyzeText(note.rawNotes);
-      const saved = await saveNote({ title: note.title, rawNotes: note.rawNotes, attachments: note.attachments || [], analysis }, note.id, note.roomId, note.subroomId);
+      setStatus("Re-analyzing Summary and Bullet Points from Raw Notes text only...");
+      const analysis = await analyzeSummary(note.rawNotes);
+      const saved = await saveNote({ title: note.title, rawNotes: note.rawNotes, attachments: note.attachments || [], analysis: { ...analysis, logicForest: note.analysis?.logicForest || null } }, note.id, note.roomId, note.subroomId);
       setViewerId(saved.id);
-      setStatus("Saved note re-analyzed and card updated.");
+      setStatus("Saved note Summary and Bullet Points updated. Existing Logic Map was preserved.");
     } catch (error) {
       setStatus(`AI Error: ${error.message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function generateLogicMap(note) {
+    if (!clean(note.rawNotes)) return null;
+    try {
+      setBusy(true);
+      setStatus("Generating Logic Map from Raw Notes text only...");
+      const generated = await generateLogicMapFromText(note.rawNotes);
+      const current = normalizeAnalysis(note.analysis);
+      const analysis = {
+        summary: current.summary,
+        bulletPoints: current.bulletPoints,
+        logicForest: generated.logicForest
+      };
+      const saved = await saveNote({ title: note.title, rawNotes: note.rawNotes, attachments: note.attachments || [], analysis }, note.id, note.roomId, note.subroomId);
+      setViewerId(saved.id);
+      setStatus("Logic Map saved to the current note.");
+      return saved;
+    } catch (error) {
+      setStatus(`Logic Map Error: ${error.message}`);
+      return null;
     } finally {
       setBusy(false);
     }
@@ -606,5 +639,5 @@ function StudyApp({ onLogout }) {
   }
 
   const main = !division ? <Dashboard onSelect={chooseDivision} /> : roomId && !subroomId ? roomDirectory() : roomId && subroomId ? subroomView() : divisionView();
-  return <div className="app-shell">{sidebar}<main>{status && !editorOpen ? <p className="status-banner">{status}</p> : null}{main}</main><Viewer note={viewerNote} busy={busy} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onAnalyze={reanalyze} /></div>;
+  return <div className="app-shell">{sidebar}<main>{status && !editorOpen ? <p className="status-banner">{status}</p> : null}{main}</main><Viewer note={viewerNote} busy={busy} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onAnalyze={reanalyze} onGenerateLogicMap={generateLogicMap} /></div>;
 }
