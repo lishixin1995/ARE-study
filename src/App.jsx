@@ -147,6 +147,11 @@ function downloadAttachment(item) {
   document.body.removeChild(link);
 }
 
+function openAttachment(item) {
+  if (!item?.dataUrl) return;
+  window.open(item.dataUrl, "_blank", "noopener,noreferrer");
+}
+
 function LogicNode({ node, root = false }) {
   if (!node) return null;
   return (
@@ -226,16 +231,38 @@ function Dashboard({ onSelect }) {
 }
 
 function NoteCard({ note, onOpen, onEdit, onDelete }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const counts = countAttachments(note.attachments);
-  const firstImage = note.attachments.find(item => item.kind === "image" || String(item.type || "").startsWith("image/"));
   return (
-    <button className="note-card" onClick={() => onOpen(note)}>
-      <div className="note-card-head"><div><h3>{note.title}</h3><small>{note.subroomName || "Sub-room"} - {formatDate(note.savedAt)}</small></div><b className={note.analyzed ? "ok" : "muted"}>{note.analyzed ? "AI Analyzed" : "Not Analyzed"}</b></div>
-      <p>{note.analysis?.summary ? clean(note.analysis.summary).slice(0, 170) : clean(note.rawNotes).slice(0, 170)}</p>
-      <ul>{(note.analysis?.bulletPoints || []).slice(0, 3).map((item, index) => <li key={index}>{item}</li>)}</ul>
-      <div className="card-media"><div className="thumb">{note.analysis?.logicForest ? <LogicImage analysis={note.analysis} compact /> : firstImage ? <img src={firstImage.dataUrl} alt="" /> : "No thumbnail"}</div><span>PDF {counts.pdf}</span><span>Image {counts.image}</span></div>
-      <div className="card-actions" onClick={event => event.stopPropagation()}><button onClick={() => onEdit(note)}>Edit</button><button className="danger" onClick={() => onDelete(note.id)}>Delete</button></div>
-    </button>
+    <article className="note-card" onClick={() => onOpen(note)} tabIndex={0} role="button" onKeyDown={event => event.key === "Enter" && onOpen(note)}>
+      <div className="note-card-head">
+        <div className="note-card-title-block">
+          <h3>{note.title}</h3>
+          <small>Updated {formatDate(note.savedAt)}</small>
+        </div>
+        <div className="card-menu-wrap" onClick={event => event.stopPropagation()}>
+          <button className="icon-menu-btn" aria-label="Note actions" onClick={() => setMenuOpen(open => !open)}>•••</button>
+          {menuOpen ? (
+            <div className="card-menu">
+              <button onClick={() => { setMenuOpen(false); onEdit(note); }}>Edit</button>
+              <button onClick={() => { setMenuOpen(false); onDelete(note.id); }}>Delete</button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+      <p className="summary-clamp">{note.analysis?.summary || clean(note.rawNotes) || "No summary yet."}</p>
+      <ul className="bullet-clamp">
+        {(note.analysis?.bulletPoints || []).slice(0, 2).map((item, index) => <li key={index}>{item}</li>)}
+      </ul>
+      <div className="card-footer">
+        <div className="card-badges">
+          <span className={note.analyzed ? "ok" : "muted"}>{note.analyzed ? "AI Analyzed" : "Not Analyzed"}</span>
+          <span>PDF {counts.pdf}</span>
+          <span>Image {counts.image}</span>
+        </div>
+        <span className="view-note-label">View Note</span>
+      </div>
+    </article>
   );
 }
 
@@ -258,14 +285,128 @@ function NoteEditor({ draft, editing, busy, status, setDraft, onFiles, onRemoveF
 }
 
 function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze }) {
+  const [tab, setTab] = useState("overview");
+  const [zoom, setZoom] = useState(1);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [preview, setPreview] = useState(null);
+  const [fullLogicOpen, setFullLogicOpen] = useState(false);
+
+  useEffect(() => {
+    if (!note) return;
+    setTab("overview");
+    setZoom(1);
+    setPreview(null);
+    setFullLogicOpen(false);
+    setMenuOpen(false);
+  }, [note?.id]);
+
   if (!note) return null;
+
+  const tabs = [
+    ["overview", "Overview"],
+    ["logic", "Logic Image"],
+    ["raw", "Raw Notes"],
+    ["attachments", "Attachments"]
+  ];
+  const zoomed = zoom > 1.01;
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <section className="viewer" onClick={event => event.stopPropagation()}>
-        <div className="workspace-head"><div><div className="eyebrow">Full Note Viewer</div><h2>{note.title}</h2><p>{note.division} / {note.roomName} / {note.subroomName} - {formatDate(note.savedAt)}</p></div><button onClick={onClose}>Close</button></div>
-        <div className="buttons"><button onClick={() => onEdit(note)}>Edit</button><button className="ai" disabled={busy || !clean(note.rawNotes)} onClick={() => onAnalyze(note)}>{busy ? "Thinking..." : "Re-analyze"}</button><button className="danger" onClick={() => onDelete(note.id)}>Delete</button></div>
-        <div className="viewer-grid"><section><h3>Summary</h3><p>{note.analysis?.summary || "No AI summary yet."}</p></section><section><h3>Bullet Points</h3>{note.analysis?.bulletPoints?.length ? <ul>{note.analysis.bulletPoints.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p>No AI bullet points yet.</p>}</section><section className="wide"><h3>Logic Image</h3><LogicImage analysis={note.analysis} /></section><section className="wide"><h3>Raw Notes</h3><pre>{note.rawNotes || "No raw notes saved."}</pre></section><section className="wide"><h3>PDF and Image Attachments</h3>{note.attachments?.length ? <div className="attachments">{note.attachments.map(item => <div className="attachment" key={item.id}><div><b>{item.name}</b><button onClick={() => downloadAttachment(item)}>Download</button></div>{item.kind === "pdf" || item.type === "application/pdf" ? <iframe title={item.name} src={item.dataUrl} /> : <img src={item.dataUrl} alt={item.name} />}</div>)}</div> : <p>No attachments saved.</p>}</section></div>
+        <header className="viewer-header">
+          <div>
+            <div className="eyebrow">Full Note Viewer</div>
+            <h2>{note.title}</h2>
+            <p>{note.division} / {note.roomName} / {note.subroomName} · Updated {formatDate(note.savedAt)}</p>
+          </div>
+          <div className="viewer-actions">
+            <button onClick={() => onEdit(note)}>Edit</button>
+            <button className="ai" disabled={busy || !clean(note.rawNotes)} onClick={() => onAnalyze(note)}>{busy ? "Thinking..." : "Re-analyze"}</button>
+            <div className="card-menu-wrap">
+              <button className="icon-menu-btn" aria-label="More actions" onClick={() => setMenuOpen(open => !open)}>•••</button>
+              {menuOpen ? <div className="card-menu viewer-menu"><button onClick={() => { setMenuOpen(false); onDelete(note.id); }}>Delete</button></div> : null}
+            </div>
+            <button onClick={onClose}>Close</button>
+          </div>
+        </header>
+
+        <nav className="viewer-tabs">
+          {tabs.map(([key, label]) => <button key={key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>{label}</button>)}
+        </nav>
+
+        <div className="viewer-body">
+          {tab === "overview" ? (
+            <div className="overview-stack">
+              <section>
+                <h3>Summary</h3>
+                <p>{note.analysis?.summary || "No AI summary yet."}</p>
+              </section>
+              <section>
+                <h3>Bullet Points</h3>
+                {note.analysis?.bulletPoints?.length ? <ul>{note.analysis.bulletPoints.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p>No AI bullet points yet.</p>}
+              </section>
+            </div>
+          ) : null}
+
+          {tab === "logic" ? (
+            <section className="logic-tab">
+              <div className="logic-toolbar">
+                <button disabled={zoom <= 0.75} onClick={() => setZoom(value => Math.max(0.75, Number((value - 0.15).toFixed(2))))}>Zoom Out</button>
+                <button onClick={() => setZoom(1)}>Reset</button>
+                <button disabled={zoom >= 2} onClick={() => setZoom(value => Math.min(2, Number((value + 0.15).toFixed(2))))}>Zoom In</button>
+                <button onClick={() => setFullLogicOpen(true)} disabled={!note.analysis?.logicForest}>Open Full Image</button>
+              </div>
+              <div className={`logic-stage ${zoomed ? "is-zoomed" : ""}`}>
+                <div className="logic-fit" style={{ transform: `scale(${zoom})` }}>
+                  <LogicImage analysis={note.analysis} />
+                </div>
+              </div>
+            </section>
+          ) : null}
+
+          {tab === "raw" ? <section className="raw-tab"><h3>Raw Notes</h3><div className="raw-note-text">{note.rawNotes || "No raw notes saved."}</div></section> : null}
+
+          {tab === "attachments" ? (
+            <section className="attachments-tab">
+              <h3>Attachments</h3>
+              {note.attachments?.length ? (
+                <>
+                  <div className="attachment-cards">
+                    {note.attachments.map(item => {
+                      const isPdf = item.kind === "pdf" || item.type === "application/pdf";
+                      return (
+                        <article className={`attachment-card ${isPdf ? "pdf" : "image"}`} key={item.id}>
+                          <div className="attachment-thumb">{isPdf ? <span>PDF</span> : <img src={item.dataUrl} alt={item.name} />}</div>
+                          <div className="attachment-info"><b>{item.name}</b><small>{isPdf ? "PDF file" : "Image file"}</small></div>
+                          <div className="attachment-actions">
+                            <button onClick={() => openAttachment(item)}>Open</button>
+                            <button onClick={() => setPreview(item)}>Preview</button>
+                            <button onClick={() => downloadAttachment(item)}>Download</button>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                  {preview ? (
+                    <div className="attachment-preview">
+                      <div><b>{preview.name}</b><button onClick={() => setPreview(null)}>Close Preview</button></div>
+                      {preview.kind === "pdf" || preview.type === "application/pdf" ? <iframe title={preview.name} src={preview.dataUrl} /> : <img src={preview.dataUrl} alt={preview.name} />}
+                    </div>
+                  ) : null}
+                </>
+              ) : <div className="empty-soft">No attachments saved for this note.</div>}
+            </section>
+          ) : null}
+        </div>
       </section>
+      {fullLogicOpen ? (
+        <div className="image-modal-backdrop" onClick={event => { event.stopPropagation(); setFullLogicOpen(false); }}>
+          <div className="image-modal" onClick={event => event.stopPropagation()}>
+            <div className="image-modal-head"><h3>Logic Image</h3><button onClick={() => setFullLogicOpen(false)}>Close</button></div>
+            <LogicImage analysis={note.analysis} />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
