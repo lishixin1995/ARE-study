@@ -35,94 +35,12 @@ function asList(value) {
   return [];
 }
 
-function normalizeNode(node, depth = 0) {
-  if (!node || typeof node !== "object" || depth > 6) return null;
-  const label = asText(node.label || node.title || node.name || "");
-  if (!label) return null;
-  const rawChildren = Array.isArray(node.children) ? node.children : Array.isArray(node.nodes) ? node.nodes : [];
-  return {
-    label,
-    type: asText(node.type || "point") || "point",
-    children: rawChildren.map(child => normalizeNode(child, depth + 1)).filter(Boolean)
-  };
-}
-
-function normalizeForest(value, fallbackSummary = "Study Notes", fallbackBullets = []) {
-  if (Array.isArray(value)) {
-    const nodes = value.map(item => normalizeNode(item)).filter(Boolean);
-    if (nodes.length === 1) return nodes[0];
-    if (nodes.length > 1) return { label: fallbackSummary || "Study Notes", type: "topic", children: nodes };
-  }
-
-  const node = normalizeNode(value);
-  if (node) return node;
-
-  return {
-    label: fallbackSummary || "Study Notes",
-    type: "topic",
-    children: fallbackBullets.slice(0, 6).map(item => ({ label: item, type: "point", children: [] }))
-  };
-}
-
 function normalizeAnalysis(raw) {
-  const summary = asText(raw?.summary);
-  const bulletPoints = asList(raw?.bulletPoints);
-  return {
-    summary,
-    bulletPoints,
-    logicForest: normalizeForest(raw?.logicForest || raw?.root, summary || "Study Notes", bulletPoints)
-  };
-}
-
-function normalizeSummaryAnalysis(raw) {
   return {
     summary: asText(raw?.summary),
-    bulletPoints: asList(raw?.bulletPoints),
-    logicForest: null
+    bulletPoints: asList(raw?.bulletPoints)
   };
 }
-
-const CAPTURE_PROMPT = `
-You are an expert ARE study-analysis engine for architecture learning notes.
-Analyze only the raw text provided by the user. Do not assume any unseen PDF or image content.
-Return ONLY valid JSON. Do not include markdown, explanations, or code fences.
-
-Use exactly this JSON shape:
-{
-  "summary": "",
-  "bulletPoints": [""],
-  "logicForest": [
-    {
-      "label": "",
-      "type": "topic",
-      "children": [
-        {
-          "label": "",
-          "type": "concept",
-          "children": [
-            {
-              "label": "",
-              "type": "rule",
-              "children": [
-                { "label": "", "type": "point", "children": [] }
-              ]
-            }
-          ]
-        }
-      ]
-    }
-  ]
-}
-
-Rules:
-- summary: 2 to 4 sentences explaining the core objective, decision logic, and main study takeaway.
-- bulletPoints: 5 to 10 complete, useful study bullets.
-- logicForest: a true hierarchy for a logic image, grouped by objective, inputs, rules, strategies, tools, metrics, and cautions when applicable.
-- Do not invent unsupported details.
-- Keep labels complete, precise, and not fragmentary.
-
-Raw Notes text:
-`;
 
 const SUMMARY_PROMPT = `
 You are an expert ARE study-analysis engine for architecture learning notes.
@@ -138,7 +56,6 @@ Use exactly this JSON shape:
 Rules:
 - summary: 2 to 4 sentences explaining the core objective, decision logic, and main study takeaway.
 - bulletPoints: 5 to 10 complete, useful study bullets.
-- Do not include logicForest, root, logicLinks, or any logic map data.
 - Do not invent unsupported details.
 
 Raw Notes text:
@@ -156,15 +73,14 @@ export default async function handler(request, response) {
   }
 
   try {
-    const { text = "", mode = "", type = "" } = readBody(request);
+    const { text = "" } = readBody(request);
     if (!String(text || "").trim()) {
       return response.status(400).json({ error: "Empty text" });
     }
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-    const summaryOnly = mode === "summary" || type === "summary";
-    const result = await model.generateContent(`${summaryOnly ? SUMMARY_PROMPT : CAPTURE_PROMPT}\n${text}`);
+    const result = await model.generateContent(`${SUMMARY_PROMPT}\n${text}`);
     const jsonText = extractJson(result?.response?.text?.() || "");
 
     let parsed;
@@ -174,7 +90,7 @@ export default async function handler(request, response) {
       return response.status(500).json({ error: `Model returned invalid JSON: ${jsonText.slice(0, 800)}` });
     }
 
-    return response.status(200).json({ analysis: summaryOnly ? normalizeSummaryAnalysis(parsed) : normalizeAnalysis(parsed) });
+    return response.status(200).json({ analysis: normalizeAnalysis(parsed) });
   } catch (error) {
     return response.status(500).json({ error: error?.message || "AI API Error" });
   }
