@@ -566,11 +566,11 @@ main {
   align-items: start;
   gap: 0;
   width: max-content;
-  min-width: 190px;
+  min-width: 210px;
 }
 
 .logic-label {
-  width: 236px;
+  width: 250px;
   min-height: 48px;
   display: grid;
   place-items: center;
@@ -598,8 +598,11 @@ main {
 .logic-children {
   position: relative;
   display: grid;
+  grid-template-columns: repeat(var(--logic-columns, 1), max-content);
   justify-items: center;
-  gap: 34px;
+  align-items: start;
+  column-gap: 30px;
+  row-gap: 34px;
   padding-top: 44px;
   margin-top: 0;
 }
@@ -610,34 +613,22 @@ main {
   top: 0;
   left: 50%;
   width: 2px;
-  bottom: 18px;
+  height: 24px;
   background: #d0b28f;
   transform: translateX(-50%);
 }
 
-.logic-child-row {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 22px;
-  padding-top: 18px;
-  width: max-content;
-  max-width: 860px;
-  flex-wrap: wrap;
-}
-
-.logic-child-row::before {
+.logic-children::after {
   content: "";
   position: absolute;
-  top: 0;
-  left: 118px;
-  right: 118px;
+  top: 24px;
+  left: 125px;
+  right: 125px;
   height: 2px;
   background: #d0b28f;
 }
 
-.logic-child-row.single::before {
+.logic-children:has(.logic-child:only-child)::after {
   display: none;
 }
 
@@ -646,7 +637,7 @@ main {
   display: grid;
   justify-items: center;
   align-items: start;
-  padding-top: 0;
+  padding-top: 18px;
 }
 
 .logic-child > span {
@@ -670,7 +661,7 @@ main {
 }
 
 .logic-node.depth-3 > .logic-label {
-  width: 200px;
+  width: 205px;
   min-height: 44px;
   background: #fffdf8;
   border-color: #e5d8ca;

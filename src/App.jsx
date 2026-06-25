@@ -154,35 +154,25 @@ function openAttachment(item) {
   window.open(item.dataUrl, "_blank", "noopener,noreferrer");
 }
 
-function chunkLogicChildren(children = [], depth = 0) {
-  const maxPerRow = depth <= 0 ? 3 : depth === 1 ? 3 : 2;
-  if (children.length <= maxPerRow) return [children];
-  const rowCount = Math.ceil(children.length / maxPerRow);
-  const balancedSize = Math.ceil(children.length / rowCount);
-  const rows = [];
-  for (let index = 0; index < children.length; index += balancedSize) {
-    rows.push(children.slice(index, index + balancedSize));
-  }
-  return rows;
+function logicColumnCount(count = 0, depth = 0) {
+  if (count <= 1) return 1;
+  if (depth === 0) return Math.min(count, 4);
+  if (depth === 1) return Math.min(count, 3);
+  return Math.min(count, 2);
 }
 
 function LogicNode({ node, root = false, depth = 0 }) {
   if (!node) return null;
   const children = Array.isArray(node.children) ? node.children : [];
-  const childRows = chunkLogicChildren(children, depth);
   return (
     <div className={`logic-node ${root ? "root" : ""} depth-${Math.min(depth, 3)}`}>
       <div className="logic-label">{node.label}</div>
       {children.length ? (
-        <div className="logic-children">
-          {childRows.map((row, rowIndex) => (
-            <div className={`logic-child-row ${row.length === 1 ? "single" : ""}`} key={`row-${depth}-${rowIndex}`}>
-              {row.map((child, index) => (
-                <div className="logic-child" key={`${child.label}-${rowIndex}-${index}`}>
-                  <span />
-                  <LogicNode node={child} depth={depth + 1} />
-                </div>
-              ))}
+        <div className="logic-children" style={{ "--logic-columns": String(logicColumnCount(children.length, depth)) }}>
+          {children.map((child, index) => (
+            <div className="logic-child" key={`${child.label}-${index}`}>
+              <span />
+              <LogicNode node={child} depth={depth + 1} />
             </div>
           ))}
         </div>
