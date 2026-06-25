@@ -540,8 +540,9 @@ main {
 }
 
 .logic-image {
-  width: 100%;
-  overflow: auto;
+  width: max-content;
+  max-width: none;
+  overflow: visible;
   border: 1px solid var(--line-soft);
   border-radius: 14px;
   padding: 14px;
@@ -565,11 +566,11 @@ main {
   align-items: start;
   gap: 0;
   width: max-content;
-  min-width: 220px;
+  min-width: 190px;
 }
 
 .logic-label {
-  width: 260px;
+  width: 236px;
   min-height: 48px;
   display: grid;
   place-items: center;
@@ -596,11 +597,10 @@ main {
 
 .logic-children {
   position: relative;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 24px;
-  padding-top: 40px;
+  display: grid;
+  justify-items: center;
+  gap: 34px;
+  padding-top: 44px;
   margin-top: 0;
 }
 
@@ -610,22 +610,34 @@ main {
   top: 0;
   left: 50%;
   width: 2px;
-  height: 24px;
+  bottom: 18px;
   background: #d0b28f;
   transform: translateX(-50%);
 }
 
-.logic-children::after {
+.logic-child-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 22px;
+  padding-top: 18px;
+  width: max-content;
+  max-width: 860px;
+  flex-wrap: wrap;
+}
+
+.logic-child-row::before {
   content: "";
   position: absolute;
-  top: 24px;
-  left: 0;
-  right: 0;
+  top: 0;
+  left: 118px;
+  right: 118px;
   height: 2px;
   background: #d0b28f;
 }
 
-.logic-children:has(.logic-child:only-child)::after {
+.logic-child-row.single::before {
   display: none;
 }
 
@@ -634,7 +646,7 @@ main {
   display: grid;
   justify-items: center;
   align-items: start;
-  padding-top: 18px;
+  padding-top: 0;
 }
 
 .logic-child > span {
@@ -651,14 +663,14 @@ main {
 }
 
 .logic-node.depth-2 > .logic-label {
-  width: 235px;
+  width: 220px;
   background: #fffaf2;
   border-color: #dfccb5;
   font-weight: 750;
 }
 
 .logic-node.depth-3 > .logic-label {
-  width: 215px;
+  width: 200px;
   min-height: 44px;
   background: #fffdf8;
   border-color: #e5d8ca;
@@ -790,25 +802,43 @@ main {
   margin-bottom: 14px;
 }
 
+.logic-map-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .logic-stage {
   min-height: 520px;
   overflow: hidden;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--line-soft);
   border-radius: 16px;
   background: #fffdf8;
+  padding: 18px;
 }
 
 .logic-stage.is-zoomed {
   overflow: auto;
-  place-items: start center;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.logic-scale-frame {
+  position: relative;
+  flex: 0 0 auto;
 }
 
 .logic-fit {
-  transform-origin: center top;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: max-content;
+  max-width: none;
+  transform-origin: top left;
   transition: transform 0.18s ease;
-  max-width: 100%;
 }
 
 .logic-fit .logic-image {
@@ -817,6 +847,16 @@ main {
   background: transparent;
   display: flex;
   justify-content: center;
+}
+
+.logic-error {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid #d7b691;
+  border-radius: 12px;
+  background: #fff2df;
+  color: #6f3f1f;
+  font-weight: 700;
 }
 
 .raw-tab {
@@ -965,43 +1005,18 @@ main {
   margin: 0;
 }
 
-.image-modal-controls {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.full-logic-stage {
+.logic-map-view.fullscreen {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: hidden;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--line-soft);
-  border-radius: 16px;
-  background: #fffdf8;
-  padding: 18px;
 }
 
-.image-modal.is-zoomed .full-logic-stage {
-  overflow: auto;
-  place-items: start center;
+.logic-map-view.fullscreen .logic-toolbar {
+  margin-bottom: 12px;
 }
 
-.full-logic-fit {
-  width: max-content;
-  max-width: none;
-  transform-origin: center top;
-  transition: transform 0.18s ease;
-}
-
-.full-logic-fit .logic-image {
-  overflow: visible;
-  border: 0;
-  background: transparent;
-  padding: 0;
+.logic-map-view.fullscreen .logic-stage {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 @media (max-width: 1080px) {

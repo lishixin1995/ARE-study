@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
 const DIVISIONS = [
@@ -23,6 +23,8 @@ const MARKER = "\n\n[[ARE_STUDY_NOTE_META_V2]]";
 const LEGACY_MARKER = "\n\n[[STUDY_CAPTURE_META_V1]]";
 const EMPTY_ANALYSIS = { summary: "", bulletPoints: [], logicForest: null };
 const ACCEPTED_TYPES = new Set(["application/pdf", "image/jpeg", "image/jpg", "image/png"]);
+const LOGIC_MIN_SCALE = 0.03;
+const LOGIC_MAX_SCALE = 2.5;
 
 const clean = value => String(value || "").replace(/\s+/g, " ").trim();
 const makeId = prefix => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -152,17 +154,35 @@ function openAttachment(item) {
   window.open(item.dataUrl, "_blank", "noopener,noreferrer");
 }
 
+function chunkLogicChildren(children = [], depth = 0) {
+  const maxPerRow = depth <= 0 ? 3 : depth === 1 ? 3 : 2;
+  if (children.length <= maxPerRow) return [children];
+  const rowCount = Math.ceil(children.length / maxPerRow);
+  const balancedSize = Math.ceil(children.length / rowCount);
+  const rows = [];
+  for (let index = 0; index < children.length; index += balancedSize) {
+    rows.push(children.slice(index, index + balancedSize));
+  }
+  return rows;
+}
+
 function LogicNode({ node, root = false, depth = 0 }) {
   if (!node) return null;
+  const children = Array.isArray(node.children) ? node.children : [];
+  const childRows = chunkLogicChildren(children, depth);
   return (
     <div className={`logic-node ${root ? "root" : ""} depth-${Math.min(depth, 3)}`}>
       <div className="logic-label">{node.label}</div>
-      {node.children?.length ? (
+      {children.length ? (
         <div className="logic-children">
-          {node.children.map((child, index) => (
-            <div className="logic-child" key={`${child.label}-${index}`}>
-              <span />
-              <LogicNode node={child} depth={depth + 1} />
+          {childRows.map((row, rowIndex) => (
+            <div className={`logic-child-row ${row.length === 1 ? "single" : ""}`} key={`row-${depth}-${rowIndex}`}>
+              {row.map((child, index) => (
+                <div className="logic-child" key={`${child.label}-${rowIndex}-${index}`}>
+                  <span />
+                  <LogicNode node={child} depth={depth + 1} />
+                </div>
+              ))}
             </div>
           ))}
         </div>
@@ -173,6 +193,149 @@ function LogicNode({ node, root = false, depth = 0 }) {
 
 function LogicImage({ analysis, compact = false }) {
   return <div className={`logic-image ${compact ? "compact" : ""}`}>{analysis?.logicForest ? <LogicNode node={analysis.logicForest} root /> : <div className="empty-soft">No logic image yet.</div>}</div>;
+}
+
+class LogicMapErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+
+  componentDidUpdate(previousProps) {
+    if (previousProps.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
+  render() {
+    if (this.state.error) {
+      return <div className="logic-error">Logic Map could not render: {this.state.error.message}</div>;
+    }
+    return this.props.children;
+  }
+}
+
+function LogicMapViewport({ analysis, fullscreen = false, onOpenFull, onClose }) {
+  const stageRef = useRef(null);
+  const contentRef = useRef(null);
+  const rafRef = useRef(0);
+  const [stageReady, setStageReady] = useState(false);
+  const [scale, setScale] = useState(1);
+  const [fitScale, setFitScale] = useState(1);
+  const [mapSize, setMapSize] = useState({ width: 0, height: 0 });
+  const [renderError, setRenderError] = useState("");
+  const hasMap = Boolean(analysis?.logicForest);
+
+  const fitEntireMap = useCallback(() => {
+    cancelAnimationFrame(rafRef.current);
+    const measure = attempt => {
+      rafRef.current = requestAnimationFrame(() => {
+        const stage = stageRef.current;
+        const content = contentRef.current;
+        if (!hasMap) {
+          setRenderError("No Logic Map data is available for this note.");
+          return;
+        }
+        if (!stage || stage.clientWidth <= 0 || stage.clientHeight <= 0) {
+          if (attempt < 8) return measure(attempt + 1);
+          setRenderError("Logic Map container is not ready yet.");
+          return;
+        }
+        if (!content) {
+          if (attempt < 8) return measure(attempt + 1);
+          setRenderError("Logic Map content was not mounted.");
+          return;
+        }
+
+        const width = Math.ceil(content.scrollWidth || content.offsetWidth || 0);
+        const height = Math.ceil(content.scrollHeight || content.offsetHeight || 0);
+        if (!width || !height) {
+          if (attempt < 8) return measure(attempt + 1);
+          setRenderError("Logic Map size could not be measured.");
+          return;
+        }
+
+        const availableWidth = Math.max(stage.clientWidth - 36, 1);
+        const availableHeight = Math.max(stage.clientHeight - 36, 1);
+        const nextFit = Math.max(LOGIC_MIN_SCALE, Math.min(1, availableWidth / width, availableHeight / height));
+        setRenderError("");
+        setMapSize({ width, height });
+        setFitScale(nextFit);
+        setScale(nextFit);
+      });
+    };
+    measure(0);
+  }, [hasMap]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    setStageReady(Boolean(stage?.clientWidth && stage?.clientHeight));
+    setScale(1);
+    setFitScale(1);
+    setMapSize({ width: 0, height: 0 });
+    setRenderError("");
+  }, [analysis?.logicForest, fullscreen]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return undefined;
+    const markReady = () => {
+      if (stage.clientWidth > 0 && stage.clientHeight > 0) {
+        setStageReady(true);
+        if (hasMap) fitEntireMap();
+      }
+    };
+    rafRef.current = requestAnimationFrame(markReady);
+    const observer = typeof ResizeObserver === "function" ? new ResizeObserver(markReady) : null;
+    observer?.observe(stage);
+    return () => {
+      cancelAnimationFrame(rafRef.current);
+      observer?.disconnect();
+    };
+  }, [fitEntireMap, hasMap]);
+
+  useEffect(() => {
+    if (stageReady && hasMap) fitEntireMap();
+  }, [stageReady, hasMap, fitEntireMap]);
+
+  const zoomed = scale > fitScale + 0.01;
+  const frameStyle = mapSize.width && mapSize.height ? { width: `${mapSize.width * scale}px`, height: `${mapSize.height * scale}px` } : undefined;
+
+  function zoomBy(delta) {
+    setScale(value => Math.max(LOGIC_MIN_SCALE, Math.min(LOGIC_MAX_SCALE, Number((value + delta).toFixed(3)))));
+  }
+
+  return (
+    <section className={`logic-map-view ${fullscreen ? "fullscreen" : ""}`}>
+      <div className="logic-toolbar">
+        <button disabled={!hasMap || scale <= LOGIC_MIN_SCALE + 0.001} onClick={() => zoomBy(-0.15)}>Zoom Out</button>
+        <button disabled={!hasMap} onClick={fitEntireMap}>{fullscreen ? "Fit Map" : "Reset"}</button>
+        <button disabled={!hasMap || scale >= LOGIC_MAX_SCALE} onClick={() => zoomBy(0.15)}>Zoom In</button>
+        {onOpenFull ? <button onClick={onOpenFull} disabled={!hasMap}>Open Full Image</button> : null}
+        {onClose ? <button onClick={onClose}>Close</button> : null}
+      </div>
+      {renderError ? <div className="logic-error">{renderError}</div> : null}
+      <div className={`logic-stage ${zoomed ? "is-zoomed" : ""}`} ref={stageRef}>
+        {hasMap && stageReady ? (
+          <div className="logic-scale-frame" style={frameStyle}>
+            <div className="logic-fit" ref={contentRef} style={{ transform: `scale(${scale})` }}>
+              <LogicMapErrorBoundary resetKey={analysis?.logicForest}>
+                <LogicImage analysis={analysis} />
+              </LogicMapErrorBoundary>
+            </div>
+          </div>
+        ) : hasMap ? (
+          <div className="empty-soft">Preparing Logic Map...</div>
+        ) : (
+          <div className="empty-soft">No logic image yet.</div>
+        )}
+      </div>
+    </section>
+  );
 }
 
 function AuthGate({ onAuthenticated }) {
@@ -285,12 +448,7 @@ function NoteEditor({ draft, editing, busy, status, setDraft, onFiles, onRemoveF
 }
 
 function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze, onGenerateLogicMap }) {
-  const fullStageRef = useRef(null);
-  const fullContentRef = useRef(null);
   const [tab, setTab] = useState("overview");
-  const [zoom, setZoom] = useState(1);
-  const [fullZoom, setFullZoom] = useState(1);
-  const [fullFitZoom, setFullFitZoom] = useState(1);
   const [menuOpen, setMenuOpen] = useState(false);
   const [preview, setPreview] = useState(null);
   const [fullLogicOpen, setFullLogicOpen] = useState(false);
@@ -298,30 +456,10 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze, onGenerateLo
   useEffect(() => {
     if (!note) return;
     setTab("overview");
-    setZoom(1);
-    setFullZoom(1);
-    setFullFitZoom(1);
     setPreview(null);
     setFullLogicOpen(false);
     setMenuOpen(false);
   }, [note?.id]);
-
-  function fitFullLogicMap() {
-    requestAnimationFrame(() => {
-      const stage = fullStageRef.current;
-      const content = fullContentRef.current;
-      if (!stage || !content) return;
-      const widthRatio = (stage.clientWidth - 32) / Math.max(content.scrollWidth, 1);
-      const heightRatio = (stage.clientHeight - 32) / Math.max(content.scrollHeight, 1);
-      const nextZoom = Math.min(1, Math.max(0.35, Number(Math.min(widthRatio, heightRatio).toFixed(2))));
-      setFullFitZoom(nextZoom);
-      setFullZoom(nextZoom);
-    });
-  }
-
-  useEffect(() => {
-    if (fullLogicOpen) fitFullLogicMap();
-  }, [fullLogicOpen, note?.id]);
 
   if (!note) return null;
 
@@ -331,8 +469,6 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze, onGenerateLo
     ...(hasLogicMap ? [["logic", "Logic Image"]] : []),
     ["attachments", "Attachments"]
   ];
-  const zoomed = zoom > 1.01;
-  const fullZoomed = fullZoom > fullFitZoom + 0.01;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -379,17 +515,7 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze, onGenerateLo
 
           {tab === "logic" && hasLogicMap ? (
             <section className="logic-tab">
-              <div className="logic-toolbar">
-                <button disabled={zoom <= 0.75} onClick={() => setZoom(value => Math.max(0.75, Number((value - 0.15).toFixed(2))))}>Zoom Out</button>
-                <button onClick={() => setZoom(1)}>Reset</button>
-                <button disabled={zoom >= 2} onClick={() => setZoom(value => Math.min(2, Number((value + 0.15).toFixed(2))))}>Zoom In</button>
-                <button onClick={() => setFullLogicOpen(true)} disabled={!note.analysis?.logicForest}>Open Full Image</button>
-              </div>
-              <div className={`logic-stage ${zoomed ? "is-zoomed" : ""}`}>
-                <div className="logic-fit" style={{ transform: `scale(${zoom})` }}>
-                  <LogicImage analysis={note.analysis} />
-                </div>
-              </div>
+              <LogicMapViewport analysis={note.analysis} onOpenFull={() => setFullLogicOpen(true)} />
             </section>
           ) : null}
 
@@ -428,21 +554,11 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze, onGenerateLo
       </section>
       {fullLogicOpen ? (
         <div className="image-modal-backdrop" onClick={event => { event.stopPropagation(); setFullLogicOpen(false); }}>
-          <div className={`image-modal ${fullZoomed ? "is-zoomed" : ""}`} onClick={event => event.stopPropagation()}>
+          <div className="image-modal" onClick={event => event.stopPropagation()}>
             <div className="image-modal-head">
               <h3>Logic Image</h3>
-              <div className="image-modal-controls">
-                <button disabled={fullZoom <= 0.35} onClick={() => setFullZoom(value => Math.max(0.35, Number((value - 0.15).toFixed(2))))}>Zoom Out</button>
-                <button onClick={fitFullLogicMap}>Reset</button>
-                <button disabled={fullZoom >= 2.25} onClick={() => setFullZoom(value => Math.min(2.25, Number((value + 0.15).toFixed(2))))}>Zoom In</button>
-                <button onClick={() => setFullLogicOpen(false)}>Close</button>
-              </div>
             </div>
-            <div className="full-logic-stage" ref={fullStageRef}>
-              <div className="full-logic-fit" ref={fullContentRef} style={{ transform: `scale(${fullZoom})` }}>
-                <LogicImage analysis={note.analysis} />
-              </div>
-            </div>
+            <LogicMapViewport analysis={note.analysis} fullscreen onClose={() => setFullLogicOpen(false)} />
           </div>
         </div>
       ) : null}
