@@ -543,10 +543,10 @@ main {
   width: max-content;
   max-width: none;
   overflow: visible;
-  border: 1px solid var(--line-soft);
-  border-radius: 14px;
-  padding: 14px;
-  background: #fffaf2;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -559,114 +559,59 @@ main {
   font-size: 8px;
 }
 
-.logic-node {
-  position: relative;
-  display: grid;
-  justify-items: center;
-  align-items: start;
-  gap: 0;
-  width: max-content;
-  min-width: 210px;
+.logic-dendrogram {
+  font-family: Georgia, "Times New Roman", serif;
 }
 
-.logic-label {
-  width: 250px;
-  min-height: 48px;
-  display: grid;
-  place-items: center;
-  text-align: center;
-  padding: 10px 14px;
-  border: 1px solid #d9c4ad;
-  border-radius: 14px;
-  background: #fff7ec;
-  color: #2f2a24;
-  font-size: 13px;
-  font-weight: 800;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
+.logic-svg {
+  display: block;
+  overflow: visible;
 }
 
-.logic-node.root > .logic-label {
-  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
-  border-color: transparent;
-  color: #fffaf2;
-  width: min(320px, 72vw);
-  min-height: 58px;
-  font-size: 14px;
+.logic-svg-bg {
+  fill: #fffdf8;
+  stroke: #ead8c2;
+  stroke-width: 1;
 }
 
-.logic-children {
-  position: relative;
-  display: grid;
-  grid-template-columns: repeat(var(--logic-columns, 1), max-content);
-  justify-items: center;
-  align-items: start;
-  column-gap: 30px;
-  row-gap: 34px;
-  padding-top: 44px;
-  margin-top: 0;
+.logic-branch,
+.logic-leaf-line {
+  stroke: #2f2a24;
+  stroke-width: 3;
+  stroke-linecap: square;
+  fill: none;
 }
 
-.logic-children::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 50%;
-  width: 2px;
-  height: 24px;
-  background: #d0b28f;
-  transform: translateX(-50%);
+.logic-leaf-line {
+  stroke-width: 2.4;
 }
 
-.logic-children::after {
-  content: "";
-  position: absolute;
-  top: 24px;
-  left: 125px;
-  right: 125px;
-  height: 2px;
-  background: #d0b28f;
+.logic-internal-label circle {
+  fill: #2f2a24;
 }
 
-.logic-children:has(.logic-child:only-child)::after {
-  display: none;
-}
-
-.logic-child {
-  position: relative;
-  display: grid;
-  justify-items: center;
-  align-items: start;
-  padding-top: 18px;
-}
-
-.logic-child > span {
-  position: absolute;
-  top: 0;
-  width: 2px;
-  height: 18px;
-  background: #d0b28f;
-}
-
-.logic-node.depth-1 > .logic-label {
-  background: #fff2df;
-  border-color: #d7b691;
-}
-
-.logic-node.depth-2 > .logic-label {
-  width: 220px;
-  background: #fffaf2;
-  border-color: #dfccb5;
-  font-weight: 750;
-}
-
-.logic-node.depth-3 > .logic-label {
-  width: 205px;
-  min-height: 44px;
-  background: #fffdf8;
-  border-color: #e5d8ca;
+.logic-internal-label text {
+  fill: #6b5745;
+  font-family: Inter, Arial, sans-serif;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 750;
+  paint-order: stroke;
+  stroke: #fffdf8;
+  stroke-width: 5px;
+  stroke-linejoin: round;
+}
+
+.logic-internal-label.depth-0 text {
+  fill: var(--accent-dark);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.logic-leaf-label text {
+  fill: #2f2a24;
+  font-size: 18px;
+  font-weight: 600;
+  dominant-baseline: auto;
 }
 
 .modal-backdrop {

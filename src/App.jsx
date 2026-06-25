@@ -23,8 +23,12 @@ const MARKER = "\n\n[[ARE_STUDY_NOTE_META_V2]]";
 const LEGACY_MARKER = "\n\n[[STUDY_CAPTURE_META_V1]]";
 const EMPTY_ANALYSIS = { summary: "", bulletPoints: [], logicForest: null };
 const ACCEPTED_TYPES = new Set(["application/pdf", "image/jpeg", "image/jpg", "image/png"]);
-const LOGIC_MIN_SCALE = 0.03;
+const LOGIC_MIN_SCALE = 0.08;
 const LOGIC_MAX_SCALE = 2.5;
+const LOGIC_ROW_HEIGHT = 46;
+const LOGIC_LEVEL_WIDTH = 112;
+const LOGIC_LABEL_WIDTH = 300;
+const LOGIC_PADDING = 30;
 
 const clean = value => String(value || "").replace(/\s+/g, " ").trim();
 const makeId = prefix => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -154,35 +158,83 @@ function openAttachment(item) {
   window.open(item.dataUrl, "_blank", "noopener,noreferrer");
 }
 
-function logicColumnCount(count = 0, depth = 0) {
-  if (count <= 1) return 1;
-  if (depth === 0) return Math.min(count, 4);
-  if (depth === 1) return Math.min(count, 3);
-  return Math.min(count, 2);
+function measureLogicDepth(node, depth = 0) {
+  const children = Array.isArray(node?.children) ? node.children : [];
+  if (!children.length) return depth;
+  return Math.max(depth, ...children.map(child => measureLogicDepth(child, depth + 1)));
 }
 
-function LogicNode({ node, root = false, depth = 0 }) {
-  if (!node) return null;
-  const children = Array.isArray(node.children) ? node.children : [];
-  return (
-    <div className={`logic-node ${root ? "root" : ""} depth-${Math.min(depth, 3)}`}>
-      <div className="logic-label">{node.label}</div>
-      {children.length ? (
-        <div className="logic-children" style={{ "--logic-columns": String(logicColumnCount(children.length, depth)) }}>
-          {children.map((child, index) => (
-            <div className="logic-child" key={`${child.label}-${index}`}>
-              <span />
-              <LogicNode node={child} depth={depth + 1} />
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
+function layoutLogicNode(node, depth, state, maxDepth) {
+  const children = Array.isArray(node?.children) ? node.children : [];
+  const x = LOGIC_PADDING + depth * LOGIC_LEVEL_WIDTH;
+  if (!children.length) {
+    const y = LOGIC_PADDING + state.leafIndex * LOGIC_ROW_HEIGHT;
+    state.leafIndex += 1;
+    return { node, depth, x, y, children: [], leaf: true, labelX: LOGIC_PADDING + (maxDepth + 1) * LOGIC_LEVEL_WIDTH };
+  }
+
+  const childLayouts = children.map(child => layoutLogicNode(child, depth + 1, state, maxDepth));
+  const y = (childLayouts[0].y + childLayouts[childLayouts.length - 1].y) / 2;
+  return { node, depth, x, y, children: childLayouts, leaf: false, labelX: LOGIC_PADDING + (maxDepth + 1) * LOGIC_LEVEL_WIDTH };
+}
+
+function collectLogicRows(layout, rows = []) {
+  rows.push(layout);
+  layout.children.forEach(child => collectLogicRows(child, rows));
+  return rows;
+}
+
+function collectLogicBranches(layout, branches = []) {
+  if (layout.children.length) {
+    const childX = layout.children[0].x;
+    const firstY = layout.children[0].y;
+    const lastY = layout.children[layout.children.length - 1].y;
+    branches.push({ type: "vertical", x: childX, y1: firstY, y2: lastY });
+    layout.children.forEach(child => {
+      branches.push({ type: "horizontal", x1: layout.x, x2: child.x, y: child.y });
+      collectLogicBranches(child, branches);
+    });
+  }
+  return branches;
 }
 
 function LogicImage({ analysis, compact = false }) {
-  return <div className={`logic-image ${compact ? "compact" : ""}`}>{analysis?.logicForest ? <LogicNode node={analysis.logicForest} root /> : <div className="empty-soft">No logic image yet.</div>}</div>;
+  const root = analysis?.logicForest;
+  if (!root) return <div className={`logic-image ${compact ? "compact" : ""}`}><div className="empty-soft">No logic image yet.</div></div>;
+
+  const maxDepth = Math.max(1, measureLogicDepth(root));
+  const layout = layoutLogicNode(root, 0, { leafIndex: 0 }, maxDepth);
+  const rows = collectLogicRows(layout);
+  const leaves = rows.filter(item => item.leaf);
+  const branches = collectLogicBranches(layout);
+  const labelX = LOGIC_PADDING + (maxDepth + 1) * LOGIC_LEVEL_WIDTH;
+  const width = labelX + LOGIC_LABEL_WIDTH + LOGIC_PADDING;
+  const height = Math.max(220, LOGIC_PADDING * 2 + Math.max(1, leaves.length - 1) * LOGIC_ROW_HEIGHT);
+
+  return (
+    <div className={`logic-image logic-dendrogram ${compact ? "compact" : ""}`}>
+      <svg className="logic-svg" width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Logic Map">
+        <rect className="logic-svg-bg" x="0" y="0" width={width} height={height} rx="18" />
+        {branches.map((branch, index) => branch.type === "vertical" ? (
+          <line className="logic-branch" key={`v-${index}`} x1={branch.x} x2={branch.x} y1={branch.y1} y2={branch.y2} />
+        ) : (
+          <line className="logic-branch" key={`h-${index}`} x1={branch.x1} x2={branch.x2} y1={branch.y} y2={branch.y} />
+        ))}
+        {rows.filter(item => !item.leaf).map((item, index) => (
+          <g className={`logic-internal-label depth-${Math.min(item.depth, 3)}`} key={`${item.node.label}-${item.depth}-${index}`}>
+            <circle cx={item.x} cy={item.y} r={item.depth === 0 ? 5 : 3.5} />
+            <text x={item.x + 10} y={item.y - 8}>{item.node.label}</text>
+          </g>
+        ))}
+        {leaves.map((item, index) => (
+          <g className="logic-leaf-label" key={`${item.node.label}-${index}`}>
+            <line className="logic-leaf-line" x1={item.x} x2={labelX - 16} y1={item.y} y2={item.y} />
+            <text x={labelX} y={item.y + 5}>{item.node.label}</text>
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
 }
 
 class LogicMapErrorBoundary extends Component {
