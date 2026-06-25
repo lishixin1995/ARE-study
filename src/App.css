@@ -34,7 +34,8 @@ body {
 
 button,
 input,
-textarea {
+textarea,
+select {
   font: inherit;
 }
 
@@ -123,7 +124,8 @@ label {
 }
 
 input,
-textarea {
+textarea,
+select {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -147,16 +149,49 @@ textarea {
 
 .app-shell {
   min-height: 100vh;
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   gap: 20px;
   padding: 20px;
 }
 
-.sidebar {
+.top-menu {
+  position: sticky;
+  top: 12px;
+  z-index: 25;
   display: flex;
-  flex-direction: column;
-  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px;
+  background: rgba(255, 250, 242, 0.94);
+  border: 1px solid var(--line-soft);
+  border-radius: 18px;
+  box-shadow: var(--shadow);
+}
+
+.top-nav,
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.top-nav button,
+.top-actions button {
+  border-radius: 999px;
+  padding: 8px 12px;
+}
+
+.top-brand {
+  font-weight: 900;
+}
+
+.top-nav button.active {
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+  color: #fffaf2;
+  border-color: transparent;
 }
 
 .brand-card {
@@ -228,6 +263,8 @@ main {
   flex-direction: column;
   gap: 16px;
   min-width: 0;
+  width: min(1240px, 100%);
+  margin: 0 auto;
 }
 
 .workspace {
@@ -236,16 +273,138 @@ main {
   padding: 16px;
 }
 
-.dashboard {
-  min-height: calc(100vh - 40px);
-  align-content: start;
-}
-
 .workspace-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+}
+
+.dashboard-page {
+  display: grid;
+  gap: 16px;
+}
+
+.dashboard-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.85fr) minmax(280px, 1fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.dashboard-panel {
+  display: grid;
+  gap: 14px;
+  background: rgba(255, 250, 242, 0.94);
+  border: 1px solid var(--line-soft);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: var(--shadow);
+}
+
+.continue-panel {
+  min-height: 300px;
+  align-content: start;
+}
+
+.continue-panel h2 {
+  margin: 0;
+  font-size: clamp(26px, 3vw, 42px);
+  line-height: 1.08;
+}
+
+.continue-panel p {
+  margin: 0;
+  color: #4e4033;
+  line-height: 1.65;
+}
+
+.continue-panel small,
+.dashboard-path {
+  color: var(--muted);
+}
+
+.continue-panel .primary {
+  justify-self: start;
+}
+
+.quick-panel {
+  align-content: start;
+}
+
+.quick-buttons {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.quick-buttons button.active {
+  background: #f3dfc7;
+  border-color: #d7b691;
+  color: var(--accent-dark);
+  font-weight: 800;
+}
+
+.dashboard-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dashboard-section-head h2 {
+  margin: 0;
+}
+
+.dashboard-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mini-card {
+  display: grid;
+  gap: 7px;
+  min-height: 160px;
+  text-align: left;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  padding: 13px;
+  background: rgba(255, 253, 248, 0.9);
+}
+
+.mini-card b {
+  color: var(--ink);
+}
+
+.mini-card span,
+.mini-card small {
+  color: var(--muted);
+}
+
+.mini-card p {
+  margin: 0;
+  color: #4e4033;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mini-card em {
+  color: var(--accent-dark);
+  font-style: normal;
+  font-weight: 900;
+}
+
+.light-panel {
+  box-shadow: 0 10px 26px rgba(73, 50, 27, 0.06);
+}
+
+.dashboard-stats {
+  color: var(--muted);
+  font-weight: 800;
+  padding: 4px 2px;
 }
 
 .division-grid,
@@ -971,6 +1130,21 @@ main {
 
 @media (max-width: 1080px) {
   .app-shell {
+    padding: 14px;
+  }
+
+  .top-menu {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .top-nav,
+  .top-actions {
+    justify-content: flex-start;
+  }
+
+  .dashboard-hero-grid,
+  .dashboard-mini-grid {
     grid-template-columns: 1fr;
   }
 

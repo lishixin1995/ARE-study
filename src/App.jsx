@@ -323,15 +323,23 @@ function AuthGate({ onAuthenticated }) {
   );
 }
 
-function Dashboard({ onSelect, searchQuery, onSearchChange, searchResults, searchLoading, onOpenSearchResult }) {
+function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, onOpenSearchResult, notes, wrongQuestions, quickAction, setQuickAction, quickRooms, onQuickStart, onOpenNote, onOpenWrongQuestion }) {
+  const recentNotes = [...notes].sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt)).slice(0, 6);
+  const recentWrongQuestions = [...wrongQuestions].sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt)).slice(0, 6);
+  const continueNote = recentNotes[0] || null;
+  const attachmentCount = notes.reduce((sum, note) => sum + (note.attachments?.length || 0), 0) + wrongQuestions.reduce((sum, card) => sum + (card.attachments?.length || 0), 0);
+  const selectedRooms = Array.isArray(quickRooms[quickAction.division]) ? quickRooms[quickAction.division] : [];
+  const selectedRoom = selectedRooms.find(item => item.id === quickAction.roomId) || null;
+  const selectedSubrooms = selectedRoom?.children || [];
+
   return (
-    <section className="workspace dashboard">
+    <section className="dashboard-page">
       <div className="workspace-head">
         <div>
           <div className="eyebrow">Main Dashboard</div>
           <h1>ARE Study Vault</h1>
         </div>
-        <p>Select a division to open rooms, sub-rooms, saved note cards, and full note viewers.</p>
+        <p>Search, continue studying, or jump straight into a sub-room.</p>
       </div>
       <SearchBar value={searchQuery} onChange={onSearchChange} placeholder="Search all study notes and wrong questions..." />
       {searchQuery ? (
@@ -343,9 +351,54 @@ function Dashboard({ onSelect, searchQuery, onSearchChange, searchResults, searc
           onOpen={onOpenSearchResult}
         />
       ) : null}
-      <div className="division-grid">
-        {DIVISIONS.map(([code, label, name]) => <button className="division-card" key={code} onClick={() => onSelect(code)}><strong>{label}</strong><span>{name}</span></button>)}
+      <div className="dashboard-hero-grid">
+        <section className="dashboard-panel continue-panel">
+          <div className="eyebrow">Continue Studying</div>
+          {continueNote ? (
+            <>
+              <h2>{continueNote.title}</h2>
+              <p className="dashboard-path">{itemPath(continueNote)}</p>
+              <p>{matchPreview([continueNote.analysis?.summary, continueNote.rawNotes], "")}</p>
+              <small>Updated {formatDate(continueNote.savedAt)}</small>
+              <button className="primary" onClick={() => onOpenNote(continueNote)}>Continue</button>
+            </>
+          ) : <div className="empty-soft">No study notes saved yet.</div>}
+        </section>
+        <section className="dashboard-panel quick-panel">
+          <div className="eyebrow">Quick Actions</div>
+          <div className="quick-buttons">
+            <button className={quickAction.type === "note" ? "active" : ""} onClick={() => setQuickAction(prev => ({ ...prev, type: "note" }))}>+ New Note</button>
+            <button className={quickAction.type === "wrong" ? "active" : ""} onClick={() => setQuickAction(prev => ({ ...prev, type: "wrong" }))}>+ New Wrong Question</button>
+          </div>
+          <label>Division</label>
+          <select value={quickAction.division} onChange={event => setQuickAction({ type: quickAction.type, division: event.target.value, roomId: "", subroomId: "" })}>
+            <option value="">Select division</option>
+            {DIVISIONS.map(([code, label, name]) => <option key={code} value={code}>{label} - {name}</option>)}
+          </select>
+          <label>Room</label>
+          <select value={quickAction.roomId} disabled={!quickAction.division} onChange={event => setQuickAction(prev => ({ ...prev, roomId: event.target.value, subroomId: "" }))}>
+            <option value="">Select room</option>
+            {selectedRooms.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+          <label>Sub-room</label>
+          <select value={quickAction.subroomId} disabled={!quickAction.roomId} onChange={event => setQuickAction(prev => ({ ...prev, subroomId: event.target.value }))}>
+            <option value="">Select sub-room</option>
+            {selectedSubrooms.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+          <button className="primary" disabled={!quickAction.division || !quickAction.roomId || !quickAction.subroomId} onClick={onQuickStart}>
+            Open Editor
+          </button>
+        </section>
       </div>
+      <section className="dashboard-panel">
+        <div className="dashboard-section-head"><h2>Recent Notes</h2></div>
+        {recentNotes.length ? <div className="dashboard-mini-grid">{recentNotes.map(note => <button className="mini-card" key={note.id} onClick={() => onOpenNote(note)}><b>{note.title}</b><span>{itemPath(note)}</span><p>{matchPreview([note.analysis?.summary, note.rawNotes], "")}</p><small>Updated {formatDate(note.savedAt)}</small><em>View Note</em></button>)}</div> : <div className="empty-soft">No recent notes yet.</div>}
+      </section>
+      <section className="dashboard-panel light-panel">
+        <div className="dashboard-section-head"><h2>Wrong Questions to Review</h2></div>
+        {recentWrongQuestions.length ? <div className="dashboard-mini-grid">{recentWrongQuestions.map(card => <button className="mini-card wrong-mini" key={card.id} onClick={() => onOpenWrongQuestion(card)}><b>{card.title}</b><span>{itemPath(card)}</span><p>{matchPreview([card.text], "")}</p><small>{card.attachments?.length || 0} attachments · Updated {formatDate(card.savedAt)}</small><em>View</em></button>)}</div> : <div className="empty-soft">No wrong questions saved yet.</div>}
+      </section>
+      <div className="dashboard-stats">{notes.length} Notes · {wrongQuestions.length} Wrong Questions · {attachmentCount} Attachments</div>
     </section>
   );
 }
@@ -669,6 +722,8 @@ function StudyApp({ onLogout }) {
   const [roomSearch, setRoomSearch] = useState("");
   const [allSearchData, setAllSearchData] = useState({ loaded: false, notes: [], wrongQuestions: [] });
   const [allSearchLoading, setAllSearchLoading] = useState(false);
+  const [quickAction, setQuickAction] = useState({ type: "note", division: "", roomId: "", subroomId: "" });
+  const [loadedRoomDivisions, setLoadedRoomDivisions] = useState([]);
   const debouncedDashboardSearch = useDebouncedValue(dashboardSearch);
   const debouncedRoomSearch = useDebouncedValue(roomSearch);
 
@@ -683,6 +738,8 @@ function StudyApp({ onLogout }) {
   const unassignedWrongQuestions = useMemo(() => wrongQuestions.filter(card => !(card.division || card.divisionId) || !card.roomId || !card.subroomId), [wrongQuestions]);
   const viewerNote = notes.find(note => note.id === viewerId) || null;
   const wrongViewerCard = wrongQuestions.find(card => card.id === wrongViewerId) || null;
+  const dashboardNotes = allSearchData.loaded ? allSearchData.notes : [];
+  const dashboardWrongQuestions = allSearchData.loaded ? allSearchData.wrongQuestions : [];
   const dashboardSearchResults = useMemo(() => {
     const query = clean(debouncedDashboardSearch).toLowerCase();
     if (!query) return [];
@@ -716,7 +773,11 @@ function StudyApp({ onLogout }) {
 
   useEffect(() => {
     if (!division) return;
-    fetch(`/api/rooms?division=${encodeURIComponent(division)}`).then(response => response.json().then(data => ({ ok: response.ok, data }))).then(({ ok, data }) => ok && setTree(prev => ({ ...prev, [division]: Array.isArray(data.rooms) ? data.rooms : [] }))).catch(() => setStatus("Cloud rooms unavailable."));
+    fetch(`/api/rooms?division=${encodeURIComponent(division)}`).then(response => response.json().then(data => ({ ok: response.ok, data }))).then(({ ok, data }) => {
+      if (!ok) return;
+      setTree(prev => ({ ...prev, [division]: Array.isArray(data.rooms) ? data.rooms : [] }));
+      setLoadedRoomDivisions(prev => prev.includes(division) ? prev : [...prev, division]);
+    }).catch(() => setStatus("Cloud rooms unavailable."));
     fetch(`/api/notes?division=${encodeURIComponent(division)}`).then(response => response.json().then(data => ({ ok: response.ok, data }))).then(({ ok, data }) => ok && setNotes(Array.isArray(data.notes) ? data.notes.map(parseNote) : [])).catch(() => setStatus("Cloud notes unavailable."));
     fetch(`/api/wrong-questions?division=${encodeURIComponent(division)}`).then(response => response.json().then(data => ({ ok: response.ok, data }))).then(({ ok, data }) => {
       if (!ok) return setWrongStatus(data.error || "Cloud wrong questions unavailable.");
@@ -726,8 +787,7 @@ function StudyApp({ onLogout }) {
   }, [division]);
 
   useEffect(() => {
-    const query = clean(debouncedDashboardSearch);
-    if (division || !query || allSearchData.loaded) return;
+    if (division || allSearchData.loaded) return;
 
     let cancelled = false;
     async function loadAllSearchData() {
@@ -749,7 +809,22 @@ function StudyApp({ onLogout }) {
 
     loadAllSearchData();
     return () => { cancelled = true; };
-  }, [allSearchData.loaded, debouncedDashboardSearch, division]);
+  }, [allSearchData.loaded, division]);
+
+  useEffect(() => {
+    if (!quickAction.division || loadedRoomDivisions.includes(quickAction.division)) return;
+    let cancelled = false;
+    fetch(`/api/rooms?division=${encodeURIComponent(quickAction.division)}`)
+      .then(response => response.json().then(data => ({ ok: response.ok, data })))
+      .then(({ ok, data }) => {
+        if (!cancelled && ok) {
+          setTree(prev => ({ ...prev, [quickAction.division]: Array.isArray(data.rooms) ? data.rooms : [] }));
+          setLoadedRoomDivisions(prev => prev.includes(quickAction.division) ? prev : [...prev, quickAction.division]);
+        }
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [loadedRoomDivisions, quickAction.division]);
 
   function closeEditor() {
     setEditorOpen(false);
@@ -799,16 +874,49 @@ function StudyApp({ onLogout }) {
   function openSearchResult(result) {
     if (result.type === "note") {
       const note = parseNote(result.item);
-      setNotes(prev => [note, ...prev.filter(item => item.id !== note.id)]);
-      setViewerId(note.id);
-      setWrongViewerId("");
+      openDashboardNote(note);
       return;
     }
 
     const card = normalizeWrongQuestion(result.item);
-    setWrongQuestions(prev => [card, ...prev.filter(item => item.id !== card.id)]);
-    setWrongViewerId(card.id);
+    openDashboardWrongQuestion(card);
+  }
+
+  function openDashboardNote(note) {
+    const parsed = parseNote(note);
+    setNotes(prev => [parsed, ...prev.filter(item => item.id !== parsed.id)]);
+    setViewerId(parsed.id);
+    setWrongViewerId("");
+  }
+
+  function openDashboardWrongQuestion(card) {
+    const parsed = normalizeWrongQuestion(card);
+    setWrongQuestions(prev => [parsed, ...prev.filter(item => item.id !== parsed.id)]);
+    setWrongViewerId(parsed.id);
     setViewerId("");
+  }
+
+  function startQuickAction() {
+    if (!quickAction.division || !quickAction.roomId || !quickAction.subroomId) return;
+    setDivision(quickAction.division);
+    setRoomId(quickAction.roomId);
+    setSubroomId(quickAction.subroomId);
+    setViewerId("");
+    setWrongViewerId("");
+    setStatus("");
+    setWrongStatus("");
+    if (quickAction.type === "wrong") {
+      closeEditor();
+      setWrongEditingId("");
+      setWrongDraft({ title: "", text: "", attachments: [] });
+      setWrongEditorOpen(true);
+      return;
+    }
+
+    closeWrongEditor();
+    setEditingId("");
+    setDraft({ title: "", rawNotes: "", attachments: [], analysis: { ...EMPTY_ANALYSIS } });
+    setEditorOpen(true);
   }
 
   async function attachFiles(fileList) {
@@ -981,7 +1089,19 @@ function StudyApp({ onLogout }) {
     setWrongStatus("Wrong question deleted.");
   }
 
-  const sidebar = <aside className="sidebar"><div className="brand-card"><div><button className="brand" onClick={() => chooseDivision("")}>ARE Study Vault</button><p>Cloud-synced note cards by ARE room and sub-room.</p></div><button onClick={onLogout}>Logout</button></div><section><h3>Study Notes</h3><button className={!division ? "active" : ""} onClick={() => chooseDivision("")}><b>Main Dashboard</b><small>Division and room notes</small></button></section><section><h3>Divisions</h3>{DIVISIONS.map(([code, label, name]) => <button key={code} className={division === code ? "active" : ""} onClick={() => chooseDivision(code)}><b>{label}</b><small>{name}</small></button>)}</section>{division ? <section><h3>{info.label} Rooms</h3>{rooms.map(item => <div className="room-group" key={item.id}><button className={roomId === item.id && !subroomId ? "active" : ""} onClick={() => chooseRoom(item.id)}>{item.name}</button>{item.children?.length ? <div className="subrooms">{item.children.map(child => <button key={child.id} className={subroomId === child.id ? "active" : ""} onClick={() => chooseSubroom(item.id, child.id)}>{child.name}</button>)}</div> : null}</div>)}</section> : null}</aside>;
+  const topMenu = (
+    <header className="top-menu">
+      <nav className="top-nav">
+        <button className="top-brand" onClick={() => chooseDivision("")}>ARE Study Vault</button>
+        <button className={!division ? "active" : ""} onClick={() => chooseDivision("")}>Dashboard</button>
+        {DIVISIONS.map(([code, label]) => <button key={code} className={division === code ? "active" : ""} onClick={() => chooseDivision(code)}>{label}</button>)}
+      </nav>
+      <div className="top-actions">
+        <button onClick={() => chooseDivision("")}>Search</button>
+        <button onClick={onLogout}>Logout</button>
+      </div>
+    </header>
+  );
 
   function roomDirectory() {
     const children = room?.children || [];
@@ -1047,7 +1167,15 @@ function StudyApp({ onLogout }) {
       searchResults={dashboardSearchResults}
       searchLoading={allSearchLoading || (Boolean(clean(debouncedDashboardSearch)) && !allSearchData.loaded)}
       onOpenSearchResult={openSearchResult}
+      notes={dashboardNotes}
+      wrongQuestions={dashboardWrongQuestions}
+      quickAction={quickAction}
+      setQuickAction={setQuickAction}
+      quickRooms={tree}
+      onQuickStart={startQuickAction}
+      onOpenNote={openDashboardNote}
+      onOpenWrongQuestion={openDashboardWrongQuestion}
     />
   ) : roomId && !subroomId ? roomDirectory() : roomId && subroomId ? subroomView() : divisionView();
-  return <div className="app-shell">{sidebar}<main>{status && !editorOpen ? <p className="status-banner">{status}</p> : null}{unassignedWrongQuestions.length && division ? <p className="status-banner">{unassignedWrongQuestions.length} legacy wrong question card(s) are preserved without sub-room assignment and are not shown in Sub-room lists.</p> : null}{main}</main><Viewer note={viewerNote} busy={busy} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onAnalyze={reanalyze} /><WrongQuestionViewer card={wrongViewerCard} canManage={Boolean(subroomId)} onClose={() => setWrongViewerId("")} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} /></div>;
+  return <div className="app-shell">{topMenu}<main>{status && !editorOpen ? <p className="status-banner">{status}</p> : null}{unassignedWrongQuestions.length && division ? <p className="status-banner">{unassignedWrongQuestions.length} legacy wrong question card(s) are preserved without sub-room assignment and are not shown in Sub-room lists.</p> : null}{main}</main><Viewer note={viewerNote} busy={busy} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onAnalyze={reanalyze} /><WrongQuestionViewer card={wrongViewerCard} canManage={Boolean(subroomId)} onClose={() => setWrongViewerId("")} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} /></div>;
 }
