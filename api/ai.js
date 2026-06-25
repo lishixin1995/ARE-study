@@ -110,7 +110,6 @@ Rules:
 - summary: 2 to 4 sentences explaining the core objective, decision logic, and main study takeaway.
 - bulletPoints: 5 to 10 complete, useful study bullets.
 - logicForest: a true hierarchy for a logic image, grouped by objective, inputs, rules, strategies, tools, metrics, and cautions when applicable.
-- Do not output logicLinks.
 - Do not invent unsupported details.
 - Keep labels complete, precise, and not fragmentary.
 
