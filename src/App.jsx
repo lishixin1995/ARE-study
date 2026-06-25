@@ -30,7 +30,6 @@ const WRONG_QUESTION_TYPES = new Set([
   "image/jpg",
   "image/png"
 ]);
-const WRONG_QUESTIONS_VIEW = "__wrong_questions__";
 
 const clean = value => String(value || "").replace(/\s+/g, " ").trim();
 const makeId = prefix => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -158,7 +157,22 @@ function normalizeWrongQuestion(card = {}) {
   const text = typeof card.text === "string" ? card.text : String(card.editedText || card.questionText || "");
   const title = clean(card.title) || text.split(/\r?\n/).map(line => line.trim()).find(Boolean) || "Untitled Wrong Question";
   const attachments = Array.isArray(card.attachments) ? card.attachments.filter(item => item?.dataUrl) : [];
-  return { ...card, title, text, attachments, savedAt: card.savedAt || new Date().toISOString() };
+  return {
+    ...card,
+    division: card.division || card.divisionId || "",
+    divisionId: card.divisionId || card.division || "",
+    roomId: card.roomId || "",
+    roomName: card.roomName || "",
+    subroomId: card.subroomId || card.subRoomId || "",
+    subRoomId: card.subRoomId || card.subroomId || "",
+    subroomName: card.subroomName || card.subRoomName || "",
+    subRoomName: card.subRoomName || card.subroomName || "",
+    topicPath: card.topicPath || "",
+    title,
+    text,
+    attachments,
+    savedAt: card.savedAt || new Date().toISOString()
+  };
 }
 
 function downloadAttachment(item) {
@@ -366,7 +380,7 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze }) {
   );
 }
 
-function WrongQuestionCard({ card, onOpen, onEdit, onDelete }) {
+function WrongQuestionCard({ card, onOpen, onEdit, onDelete, canManage = true }) {
   const counts = countWrongAttachments(card.attachments);
   return (
     <article className="wrong-card" onClick={() => onOpen(card)} tabIndex={0} role="button" onKeyDown={event => event.key === "Enter" && onOpen(card)}>
@@ -378,14 +392,14 @@ function WrongQuestionCard({ card, onOpen, onEdit, onDelete }) {
       </div>
       <p>{card.text || "No wrong question text saved."}</p>
       <div className="card-badges">
+        <span>Image {counts.image}</span>
         <span>PDF {counts.pdf}</span>
         <span>DOCX {counts.docx}</span>
-        <span>Image {counts.image}</span>
       </div>
       <div className="wrong-card-actions" onClick={event => event.stopPropagation()}>
         <button onClick={() => onOpen(card)}>View</button>
-        <button onClick={() => onEdit(card)}>Edit</button>
-        <button onClick={() => onDelete(card.id)}>Delete</button>
+        {canManage ? <button onClick={() => onEdit(card)}>Edit</button> : null}
+        {canManage ? <button onClick={() => onDelete(card.id)}>Delete</button> : null}
       </div>
     </article>
   );
@@ -434,7 +448,7 @@ function WrongQuestionEditor({ draft, editing, status, setDraft, onFiles, onRemo
   );
 }
 
-function WrongQuestionViewer({ card, onClose, onEdit, onDelete }) {
+function WrongQuestionViewer({ card, onClose, onEdit, onDelete, canManage = true }) {
   const [preview, setPreview] = useState(null);
 
   useEffect(() => {
@@ -453,8 +467,8 @@ function WrongQuestionViewer({ card, onClose, onEdit, onDelete }) {
             <p>Updated {formatDate(card.savedAt)}</p>
           </div>
           <div className="viewer-actions">
-            <button onClick={() => onEdit(card)}>Edit</button>
-            <button onClick={() => onDelete(card.id)}>Delete</button>
+            {canManage ? <button onClick={() => onEdit(card)}>Edit</button> : null}
+            {canManage ? <button onClick={() => onDelete(card.id)}>Delete</button> : null}
             <button onClick={onClose}>Close</button>
           </div>
         </header>
@@ -546,30 +560,28 @@ function StudyApp({ onLogout }) {
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const isWrongQuestions = division === WRONG_QUESTIONS_VIEW;
   const info = divisionInfo(division);
   const rooms = useMemo(() => Array.isArray(tree[division]) ? tree[division] : [], [tree, division]);
   const room = useMemo(() => rooms.find(item => item.id === roomId) || null, [rooms, roomId]);
   const subroom = useMemo(() => (room?.children || []).find(item => item.id === subroomId) || null, [room, subroomId]);
   const divisionNotes = useMemo(() => notes.filter(note => note.division === division).sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt)), [notes, division]);
   const subroomNotes = useMemo(() => divisionNotes.filter(note => note.roomId === roomId && (note.subroomId || "") === subroomId), [divisionNotes, roomId, subroomId]);
+  const wrongQuestionsForSubroom = (targetRoomId, targetSubroomId) => wrongQuestions.filter(card => (card.division || card.divisionId) === division && card.roomId === targetRoomId && (card.subroomId || "") === targetSubroomId).sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt));
+  const subroomWrongQuestions = useMemo(() => wrongQuestionsForSubroom(roomId, subroomId), [wrongQuestions, division, roomId, subroomId]);
+  const unassignedWrongQuestions = useMemo(() => wrongQuestions.filter(card => !(card.division || card.divisionId) || !card.roomId || !card.subroomId), [wrongQuestions]);
   const viewerNote = notes.find(note => note.id === viewerId) || null;
   const wrongViewerCard = wrongQuestions.find(card => card.id === wrongViewerId) || null;
 
   useEffect(() => {
-    if (!division || isWrongQuestions) return;
+    if (!division) return;
     fetch(`/api/rooms?division=${encodeURIComponent(division)}`).then(response => response.json().then(data => ({ ok: response.ok, data }))).then(({ ok, data }) => ok && setTree(prev => ({ ...prev, [division]: Array.isArray(data.rooms) ? data.rooms : [] }))).catch(() => setStatus("Cloud rooms unavailable."));
     fetch(`/api/notes?division=${encodeURIComponent(division)}`).then(response => response.json().then(data => ({ ok: response.ok, data }))).then(({ ok, data }) => ok && setNotes(Array.isArray(data.notes) ? data.notes.map(parseNote) : [])).catch(() => setStatus("Cloud notes unavailable."));
-  }, [division, isWrongQuestions]);
-
-  useEffect(() => {
-    if (!isWrongQuestions) return;
-    fetch("/api/wrong-questions").then(response => response.json().then(data => ({ ok: response.ok, data }))).then(({ ok, data }) => {
+    fetch(`/api/wrong-questions?division=${encodeURIComponent(division)}`).then(response => response.json().then(data => ({ ok: response.ok, data }))).then(({ ok, data }) => {
       if (!ok) return setWrongStatus(data.error || "Cloud wrong questions unavailable.");
       setWrongQuestions(Array.isArray(data.flashcards) ? data.flashcards.map(normalizeWrongQuestion) : []);
       setWrongStatus("");
     }).catch(() => setWrongStatus("Cloud wrong questions unavailable."));
-  }, [isWrongQuestions]);
+  }, [division]);
 
   function closeEditor() {
     setEditorOpen(false);
@@ -595,29 +607,22 @@ function StudyApp({ onLogout }) {
     setWrongStatus("");
   }
 
-  function chooseWrongQuestions() {
-    setDivision(WRONG_QUESTIONS_VIEW);
-    setRoomId("");
-    setSubroomId("");
-    setViewerId("");
-    closeEditor();
-    closeWrongEditor();
-    setStatus("");
-    setWrongStatus("");
-  }
-
   function chooseRoom(idValue) {
     setRoomId(idValue);
     setSubroomId("");
     setViewerId("");
+    setWrongViewerId("");
     closeEditor();
+    closeWrongEditor();
   }
 
   function chooseSubroom(parentId, idValue) {
     setRoomId(parentId);
     setSubroomId(idValue);
     setViewerId("");
+    setWrongViewerId("");
     closeEditor();
+    closeWrongEditor();
   }
 
   async function attachFiles(fileList) {
@@ -727,10 +732,23 @@ function StudyApp({ onLogout }) {
 
   async function saveWrongQuestion() {
     try {
+      if (!roomId || !subroomId) return setWrongStatus("Open a sub-room before saving a wrong question.");
       if (!clean(wrongDraft.title) && !clean(wrongDraft.text) && !wrongDraft.attachments.length) return setWrongStatus("Add a title, wrong question text, or attachment before saving.");
       const existing = wrongEditingId ? wrongQuestions.find(card => card.id === wrongEditingId) : null;
+      const targetRoomId = existing?.roomId || roomId;
+      const targetSubroomId = existing?.subroomId || subroomId;
+      const targetRoom = rooms.find(item => item.id === targetRoomId);
+      const targetSubroom = (targetRoom?.children || []).find(item => item.id === targetSubroomId);
       const payload = {
         id: wrongEditingId || makeId("wrong"),
+        division: existing?.division || existing?.divisionId || division,
+        divisionId: existing?.divisionId || existing?.division || division,
+        roomId: targetRoomId,
+        roomName: existing?.roomName || targetRoom?.name || "",
+        subroomId: targetSubroomId,
+        subRoomId: targetSubroomId,
+        subroomName: existing?.subroomName || targetSubroom?.name || "",
+        subRoomName: existing?.subRoomName || existing?.subroomName || targetSubroom?.name || "",
         title: clean(wrongDraft.title) || "Untitled Wrong Question",
         text: String(wrongDraft.text || "").trim(),
         attachments: wrongDraft.attachments,
@@ -750,6 +768,12 @@ function StudyApp({ onLogout }) {
 
   function editWrongQuestion(card) {
     const parsed = normalizeWrongQuestion(card);
+    if (!parsed.roomId || !parsed.subroomId) {
+      setWrongStatus("This legacy wrong question has no sub-room assignment yet, so it is preserved but cannot be edited from a sub-room.");
+      return;
+    }
+    setRoomId(parsed.roomId);
+    setSubroomId(parsed.subroomId);
     setWrongViewerId("");
     setWrongEditingId(parsed.id);
     setWrongDraft({ title: parsed.title, text: parsed.text, attachments: parsed.attachments || [] });
@@ -767,53 +791,21 @@ function StudyApp({ onLogout }) {
     setWrongStatus("Wrong question deleted.");
   }
 
-  const sidebar = <aside className="sidebar"><div className="brand-card"><div><button className="brand" onClick={() => chooseDivision("")}>ARE Study Vault</button><p>Cloud-synced note cards by ARE room and sub-room.</p></div><button onClick={onLogout}>Logout</button></div><section><h3>Study Notes</h3><button className={isWrongQuestions ? "" : !division ? "active" : ""} onClick={() => chooseDivision("")}><b>Main Dashboard</b><small>Division and room notes</small></button></section><section><h3>Divisions</h3>{DIVISIONS.map(([code, label, name]) => <button key={code} className={division === code ? "active" : ""} onClick={() => chooseDivision(code)}><b>{label}</b><small>{name}</small></button>)}</section><section><h3>Resources</h3><button className={isWrongQuestions ? "active" : ""} onClick={chooseWrongQuestions}><b>Wrong Questions</b><small>Simple cloud-synced error cards</small></button></section>{division && !isWrongQuestions ? <section><h3>{info.label} Rooms</h3>{rooms.map(item => <div className="room-group" key={item.id}><button className={roomId === item.id && !subroomId ? "active" : ""} onClick={() => chooseRoom(item.id)}>{item.name}</button>{item.children?.length ? <div className="subrooms">{item.children.map(child => <button key={child.id} className={subroomId === child.id ? "active" : ""} onClick={() => chooseSubroom(item.id, child.id)}>{child.name}</button>)}</div> : null}</div>)}</section> : null}</aside>;
+  const sidebar = <aside className="sidebar"><div className="brand-card"><div><button className="brand" onClick={() => chooseDivision("")}>ARE Study Vault</button><p>Cloud-synced note cards by ARE room and sub-room.</p></div><button onClick={onLogout}>Logout</button></div><section><h3>Study Notes</h3><button className={!division ? "active" : ""} onClick={() => chooseDivision("")}><b>Main Dashboard</b><small>Division and room notes</small></button></section><section><h3>Divisions</h3>{DIVISIONS.map(([code, label, name]) => <button key={code} className={division === code ? "active" : ""} onClick={() => chooseDivision(code)}><b>{label}</b><small>{name}</small></button>)}</section>{division ? <section><h3>{info.label} Rooms</h3>{rooms.map(item => <div className="room-group" key={item.id}><button className={roomId === item.id && !subroomId ? "active" : ""} onClick={() => chooseRoom(item.id)}>{item.name}</button>{item.children?.length ? <div className="subrooms">{item.children.map(child => <button key={child.id} className={subroomId === child.id ? "active" : ""} onClick={() => chooseSubroom(item.id, child.id)}>{child.name}</button>)}</div> : null}</div>)}</section> : null}</aside>;
 
   function roomDirectory() {
     const children = room?.children || [];
-    return <section className="workspace"><div className="workspace-head"><div><div className="eyebrow">Room Directory</div><h1>{room?.name}</h1></div><p>Sub-rooms and saved note cards only.</p></div>{children.length ? children.map(child => { const cards = divisionNotes.filter(note => note.roomId === roomId && (note.subroomId || "") === child.id); return <section className="subroom-section" key={child.id}><div className="subroom-head"><button onClick={() => chooseSubroom(roomId, child.id)}>{child.name}</button><span>{cards.length} saved cards</span></div>{cards.length ? <div className="cards">{cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}</div> : <div className="empty-soft">No saved note cards in this sub-room yet.</div>}</section>; }) : <div className="empty-soft">No sub-rooms yet.</div>}</section>;
+    return <section className="workspace"><div className="workspace-head"><div><div className="eyebrow">Room Directory</div><h1>{room?.name}</h1></div><p>Sub-rooms with Study Notes and Wrong Question previews.</p></div>{children.length ? children.map(child => { const cards = divisionNotes.filter(note => note.roomId === roomId && (note.subroomId || "") === child.id); const wrongCards = wrongQuestionsForSubroom(roomId, child.id); return <section className="subroom-section" key={child.id}><div className="subroom-head"><button onClick={() => chooseSubroom(roomId, child.id)}>{child.name}</button><span>{cards.length} notes - {wrongCards.length} wrong questions</span></div><section className="content-section"><h3>Study Notes</h3>{cards.length ? <div className="cards">{cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}</div> : <div className="empty-soft">No saved note cards in this sub-room yet.</div>}</section><section className="content-section"><h3>Wrong Questions</h3>{wrongCards.length ? <div className="wrong-cards">{wrongCards.map(card => <WrongQuestionCard key={card.id} card={card} canManage={false} onOpen={item => setWrongViewerId(item.id)} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />)}</div> : <div className="empty-soft">No wrong question cards in this sub-room yet.</div>}</section></section>; }) : <div className="empty-soft">No sub-rooms yet.</div>}</section>;
   }
 
   function subroomView() {
-    return <section className="workspace"><div className="workspace-head"><div><div className="eyebrow">Sub-room</div><h1>{subroom?.name}</h1><p>{info.label} / {room?.name}</p></div><button className="primary" onClick={() => { setEditingId(""); setDraft({ title: "", rawNotes: "", attachments: [], analysis: { ...EMPTY_ANALYSIS } }); setEditorOpen(true); }}>+ New Note</button></div>{editorOpen ? <NoteEditor draft={draft} editing={editingId} busy={busy} status={status} setDraft={setDraft} onFiles={attachFiles} onRemoveFile={fileId => setDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onAnalyze={analyzeDraft} onSave={saveDraft} onCancel={closeEditor} /> : null}<div className="cards">{subroomNotes.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}</div>{!subroomNotes.length && !editorOpen ? <div className="empty-soft">No saved note cards here yet. Use + New Note when ready.</div> : null}</section>;
+    return <section className="workspace"><div className="workspace-head"><div><div className="eyebrow">Sub-room</div><h1>{subroom?.name}</h1><p>{info.label} / {room?.name}</p></div><div className="buttons"><button className="primary" onClick={() => { closeWrongEditor(); setEditingId(""); setDraft({ title: "", rawNotes: "", attachments: [], analysis: { ...EMPTY_ANALYSIS } }); setEditorOpen(true); }}>+ New Note</button><button className="primary" onClick={() => { closeEditor(); setWrongEditingId(""); setWrongDraft({ title: "", text: "", attachments: [] }); setWrongEditorOpen(true); setWrongStatus(""); }}>+ New Wrong Question</button></div></div><section className="content-section"><div className="content-section-head"><h2>Study Notes</h2><span>{subroomNotes.length} cards</span></div>{editorOpen ? <NoteEditor draft={draft} editing={editingId} busy={busy} status={status} setDraft={setDraft} onFiles={attachFiles} onRemoveFile={fileId => setDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onAnalyze={analyzeDraft} onSave={saveDraft} onCancel={closeEditor} /> : null}<div className="cards">{subroomNotes.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}</div>{!subroomNotes.length && !editorOpen ? <div className="empty-soft">No saved note cards here yet. Use + New Note when ready.</div> : null}</section><section className="content-section"><div className="content-section-head"><h2>Wrong Questions</h2><span>{subroomWrongQuestions.length} cards</span></div>{wrongEditorOpen ? <WrongQuestionEditor draft={wrongDraft} editing={wrongEditingId} status={wrongStatus} setDraft={setWrongDraft} onFiles={attachWrongFiles} onRemoveFile={fileId => setWrongDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onSave={saveWrongQuestion} onCancel={closeWrongEditor} /> : null}{!wrongEditorOpen && wrongStatus ? <p className="status-banner">{wrongStatus}</p> : null}<div className="wrong-cards">{subroomWrongQuestions.map(card => <WrongQuestionCard key={card.id} card={card} onOpen={item => setWrongViewerId(item.id)} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />)}</div>{!subroomWrongQuestions.length && !wrongEditorOpen ? <div className="empty-soft">No wrong question cards here yet. Use + New Wrong Question when ready.</div> : null}</section></section>;
   }
 
   function divisionView() {
     return <section className="workspace"><div className="workspace-head"><div><div className="eyebrow">Division</div><h1>{info.label} - {info.name}</h1></div><p>{divisionNotes.length} saved notes</p></div><div className="directory-grid">{rooms.map(item => <button key={item.id} onClick={() => chooseRoom(item.id)}><b>{item.name}</b><span>{item.children?.length || 0} sub-rooms - {divisionNotes.filter(note => note.roomId === item.id).length} notes</span></button>)}</div></section>;
   }
 
-  function wrongQuestionsView() {
-    return (
-      <section className="workspace wrong-question-page">
-        <div className="workspace-head">
-          <div>
-            <div className="eyebrow">Independent Resource Area</div>
-            <h1>Wrong Questions</h1>
-            <p>{wrongQuestions.length} saved wrong question cards</p>
-          </div>
-          <button className="primary" onClick={() => { setWrongEditingId(""); setWrongDraft({ title: "", text: "", attachments: [] }); setWrongEditorOpen(true); setWrongStatus(""); }}>+ New Wrong Question</button>
-        </div>
-        {wrongEditorOpen ? (
-          <WrongQuestionEditor
-            draft={wrongDraft}
-            editing={wrongEditingId}
-            status={wrongStatus}
-            setDraft={setWrongDraft}
-            onFiles={attachWrongFiles}
-            onRemoveFile={fileId => setWrongDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))}
-            onSave={saveWrongQuestion}
-            onCancel={closeWrongEditor}
-          />
-        ) : null}
-        {!wrongEditorOpen && wrongStatus ? <p className="status-banner">{wrongStatus}</p> : null}
-        <div className="wrong-cards">
-          {wrongQuestions.map(card => <WrongQuestionCard key={card.id} card={card} onOpen={item => setWrongViewerId(item.id)} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />)}
-        </div>
-        {!wrongQuestions.length && !wrongEditorOpen ? <div className="empty-soft">No wrong question cards saved yet. Use + New Wrong Question when ready.</div> : null}
-      </section>
-    );
-  }
-
-  const main = isWrongQuestions ? wrongQuestionsView() : !division ? <Dashboard onSelect={chooseDivision} /> : roomId && !subroomId ? roomDirectory() : roomId && subroomId ? subroomView() : divisionView();
-  return <div className="app-shell">{sidebar}<main>{status && !editorOpen && !isWrongQuestions ? <p className="status-banner">{status}</p> : null}{main}</main><Viewer note={viewerNote} busy={busy} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onAnalyze={reanalyze} /><WrongQuestionViewer card={wrongViewerCard} onClose={() => setWrongViewerId("")} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} /></div>;
+  const main = !division ? <Dashboard onSelect={chooseDivision} /> : roomId && !subroomId ? roomDirectory() : roomId && subroomId ? subroomView() : divisionView();
+  return <div className="app-shell">{sidebar}<main>{status && !editorOpen ? <p className="status-banner">{status}</p> : null}{unassignedWrongQuestions.length && division ? <p className="status-banner">{unassignedWrongQuestions.length} legacy wrong question card(s) are preserved without sub-room assignment and are not shown in Sub-room lists.</p> : null}{main}</main><Viewer note={viewerNote} busy={busy} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onAnalyze={reanalyze} /><WrongQuestionViewer card={wrongViewerCard} canManage={Boolean(subroomId)} onClose={() => setWrongViewerId("")} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} /></div>;
 }
