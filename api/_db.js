@@ -85,6 +85,8 @@ export async function ensureTables() {
       ADD COLUMN IF NOT EXISTS room_name TEXT,
       ADD COLUMN IF NOT EXISTS subroom_id TEXT,
       ADD COLUMN IF NOT EXISTS subroom_name TEXT,
+      ADD COLUMN IF NOT EXISTS title TEXT,
+      ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
       ADD COLUMN IF NOT EXISTS notes_text TEXT,
       ADD COLUMN IF NOT EXISTS analysis_source_text TEXT;
   `);
