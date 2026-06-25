@@ -546,6 +546,9 @@ main {
   border-radius: 14px;
   padding: 14px;
   background: #fffaf2;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
 }
 
 .logic-image.compact {
@@ -556,10 +559,13 @@ main {
 }
 
 .logic-node {
-  display: flex;
-  align-items: center;
-  gap: 28px;
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-items: start;
+  gap: 0;
   width: max-content;
+  min-width: 220px;
 }
 
 .logic-label {
@@ -583,23 +589,81 @@ main {
   background: linear-gradient(135deg, var(--accent), var(--accent-dark));
   border-color: transparent;
   color: #fffaf2;
+  width: min(320px, 72vw);
+  min-height: 58px;
+  font-size: 14px;
 }
 
 .logic-children {
-  display: grid;
-  gap: 12px;
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 24px;
+  padding-top: 40px;
+  margin-top: 0;
+}
+
+.logic-children::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 2px;
+  height: 24px;
+  background: #d0b28f;
+  transform: translateX(-50%);
+}
+
+.logic-children::after {
+  content: "";
+  position: absolute;
+  top: 24px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #d0b28f;
+}
+
+.logic-children:has(.logic-child:only-child)::after {
+  display: none;
 }
 
 .logic-child {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  position: relative;
+  display: grid;
+  justify-items: center;
+  align-items: start;
+  padding-top: 18px;
 }
 
-.logic-child span {
-  width: 22px;
-  height: 1px;
-  background: #d9c4ad;
+.logic-child > span {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 18px;
+  background: #d0b28f;
+}
+
+.logic-node.depth-1 > .logic-label {
+  background: #fff2df;
+  border-color: #d7b691;
+}
+
+.logic-node.depth-2 > .logic-label {
+  width: 235px;
+  background: #fffaf2;
+  border-color: #dfccb5;
+  font-weight: 750;
+}
+
+.logic-node.depth-3 > .logic-label {
+  width: 215px;
+  min-height: 44px;
+  background: #fffdf8;
+  border-color: #e5d8ca;
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .modal-backdrop {
@@ -712,6 +776,10 @@ main {
   padding-left: 20px;
   display: grid;
   gap: 8px;
+}
+
+.overview-raw .raw-note-text {
+  width: min(900px, 100%);
 }
 
 .logic-toolbar {
@@ -869,22 +937,25 @@ main {
   z-index: 60;
   display: grid;
   place-items: center;
-  padding: 18px;
+  padding: 10px;
   background: rgba(48, 34, 22, 0.65);
 }
 
 .image-modal {
-  width: min(1200px, 94vw);
-  height: min(820px, 90vh);
-  overflow: auto;
+  width: calc(100vw - 20px);
+  height: calc(100vh - 20px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   background: #fffaf2;
   border: 1px solid var(--line);
   border-radius: 18px;
-  padding: 16px;
+  padding: 12px;
 }
 
 .image-modal-head {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
@@ -892,6 +963,45 @@ main {
 
 .image-modal-head h3 {
   margin: 0;
+}
+
+.image-modal-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.full-logic-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-soft);
+  border-radius: 16px;
+  background: #fffdf8;
+  padding: 18px;
+}
+
+.image-modal.is-zoomed .full-logic-stage {
+  overflow: auto;
+  place-items: start center;
+}
+
+.full-logic-fit {
+  width: max-content;
+  max-width: none;
+  transform-origin: center top;
+  transition: transform 0.18s ease;
+}
+
+.full-logic-fit .logic-image {
+  overflow: visible;
+  border: 0;
+  background: transparent;
+  padding: 0;
 }
 
 @media (max-width: 1080px) {

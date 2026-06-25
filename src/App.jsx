@@ -152,17 +152,17 @@ function openAttachment(item) {
   window.open(item.dataUrl, "_blank", "noopener,noreferrer");
 }
 
-function LogicNode({ node, root = false }) {
+function LogicNode({ node, root = false, depth = 0 }) {
   if (!node) return null;
   return (
-    <div className={`logic-node ${root ? "root" : ""}`}>
+    <div className={`logic-node ${root ? "root" : ""} depth-${Math.min(depth, 3)}`}>
       <div className="logic-label">{node.label}</div>
       {node.children?.length ? (
         <div className="logic-children">
           {node.children.map((child, index) => (
             <div className="logic-child" key={`${child.label}-${index}`}>
               <span />
-              <LogicNode node={child} />
+              <LogicNode node={child} depth={depth + 1} />
             </div>
           ))}
         </div>
@@ -285,8 +285,12 @@ function NoteEditor({ draft, editing, busy, status, setDraft, onFiles, onRemoveF
 }
 
 function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze, onGenerateLogicMap }) {
+  const fullStageRef = useRef(null);
+  const fullContentRef = useRef(null);
   const [tab, setTab] = useState("overview");
   const [zoom, setZoom] = useState(1);
+  const [fullZoom, setFullZoom] = useState(1);
+  const [fullFitZoom, setFullFitZoom] = useState(1);
   const [menuOpen, setMenuOpen] = useState(false);
   const [preview, setPreview] = useState(null);
   const [fullLogicOpen, setFullLogicOpen] = useState(false);
@@ -295,21 +299,40 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze, onGenerateLo
     if (!note) return;
     setTab("overview");
     setZoom(1);
+    setFullZoom(1);
+    setFullFitZoom(1);
     setPreview(null);
     setFullLogicOpen(false);
     setMenuOpen(false);
   }, [note?.id]);
+
+  function fitFullLogicMap() {
+    requestAnimationFrame(() => {
+      const stage = fullStageRef.current;
+      const content = fullContentRef.current;
+      if (!stage || !content) return;
+      const widthRatio = (stage.clientWidth - 32) / Math.max(content.scrollWidth, 1);
+      const heightRatio = (stage.clientHeight - 32) / Math.max(content.scrollHeight, 1);
+      const nextZoom = Math.min(1, Math.max(0.35, Number(Math.min(widthRatio, heightRatio).toFixed(2))));
+      setFullFitZoom(nextZoom);
+      setFullZoom(nextZoom);
+    });
+  }
+
+  useEffect(() => {
+    if (fullLogicOpen) fitFullLogicMap();
+  }, [fullLogicOpen, note?.id]);
 
   if (!note) return null;
 
   const hasLogicMap = Boolean(note.analysis?.logicForest);
   const tabs = [
     ["overview", "Overview"],
-    ...(hasLogicMap ? [["logic", "Logic Map"]] : []),
-    ["raw", "Raw Notes"],
+    ...(hasLogicMap ? [["logic", "Logic Image"]] : []),
     ["attachments", "Attachments"]
   ];
   const zoomed = zoom > 1.01;
+  const fullZoomed = fullZoom > fullFitZoom + 0.01;
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -347,6 +370,10 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze, onGenerateLo
                 <h3>Bullet Points</h3>
                 {note.analysis?.bulletPoints?.length ? <ul>{note.analysis.bulletPoints.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p>No AI bullet points yet.</p>}
               </section>
+              <section className="overview-raw">
+                <h3>Raw Notes</h3>
+                <div className="raw-note-text">{note.rawNotes || "No raw notes saved."}</div>
+              </section>
             </div>
           ) : null}
 
@@ -365,8 +392,6 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze, onGenerateLo
               </div>
             </section>
           ) : null}
-
-          {tab === "raw" ? <section className="raw-tab"><h3>Raw Notes</h3><div className="raw-note-text">{note.rawNotes || "No raw notes saved."}</div></section> : null}
 
           {tab === "attachments" ? (
             <section className="attachments-tab">
@@ -403,9 +428,21 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze, onGenerateLo
       </section>
       {fullLogicOpen ? (
         <div className="image-modal-backdrop" onClick={event => { event.stopPropagation(); setFullLogicOpen(false); }}>
-          <div className="image-modal" onClick={event => event.stopPropagation()}>
-            <div className="image-modal-head"><h3>Logic Map</h3><button onClick={() => setFullLogicOpen(false)}>Close</button></div>
-            <LogicImage analysis={note.analysis} />
+          <div className={`image-modal ${fullZoomed ? "is-zoomed" : ""}`} onClick={event => event.stopPropagation()}>
+            <div className="image-modal-head">
+              <h3>Logic Image</h3>
+              <div className="image-modal-controls">
+                <button disabled={fullZoom <= 0.35} onClick={() => setFullZoom(value => Math.max(0.35, Number((value - 0.15).toFixed(2))))}>Zoom Out</button>
+                <button onClick={fitFullLogicMap}>Reset</button>
+                <button disabled={fullZoom >= 2.25} onClick={() => setFullZoom(value => Math.min(2.25, Number((value + 0.15).toFixed(2))))}>Zoom In</button>
+                <button onClick={() => setFullLogicOpen(false)}>Close</button>
+              </div>
+            </div>
+            <div className="full-logic-stage" ref={fullStageRef}>
+              <div className="full-logic-fit" ref={fullContentRef} style={{ transform: `scale(${fullZoom})` }}>
+                <LogicImage analysis={note.analysis} />
+              </div>
+            </div>
           </div>
         </div>
       ) : null}
