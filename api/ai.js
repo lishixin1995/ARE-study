@@ -74,6 +74,14 @@ function normalizeAnalysis(raw) {
   };
 }
 
+function normalizeSummaryAnalysis(raw) {
+  return {
+    summary: asText(raw?.summary),
+    bulletPoints: asList(raw?.bulletPoints),
+    logicForest: null
+  };
+}
+
 const CAPTURE_PROMPT = `
 You are an expert ARE study-analysis engine for architecture learning notes.
 Analyze only the raw text provided by the user. Do not assume any unseen PDF or image content.
@@ -116,6 +124,26 @@ Rules:
 Raw Notes text:
 `;
 
+const SUMMARY_PROMPT = `
+You are an expert ARE study-analysis engine for architecture learning notes.
+Analyze only the raw text provided by the user. Do not assume any unseen PDF or image content.
+Return ONLY valid JSON. Do not include markdown, explanations, or code fences.
+
+Use exactly this JSON shape:
+{
+  "summary": "",
+  "bulletPoints": [""]
+}
+
+Rules:
+- summary: 2 to 4 sentences explaining the core objective, decision logic, and main study takeaway.
+- bulletPoints: 5 to 10 complete, useful study bullets.
+- Do not include logicForest, root, logicLinks, or any logic map data.
+- Do not invent unsupported details.
+
+Raw Notes text:
+`;
+
 export default async function handler(request, response) {
   if (request.method !== "POST") {
     return response.status(405).json({ error: "Method not allowed" });
@@ -128,14 +156,15 @@ export default async function handler(request, response) {
   }
 
   try {
-    const { text = "" } = readBody(request);
+    const { text = "", mode = "", type = "" } = readBody(request);
     if (!String(text || "").trim()) {
       return response.status(400).json({ error: "Empty text" });
     }
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-    const result = await model.generateContent(`${CAPTURE_PROMPT}\n${text}`);
+    const summaryOnly = mode === "summary" || type === "summary";
+    const result = await model.generateContent(`${summaryOnly ? SUMMARY_PROMPT : CAPTURE_PROMPT}\n${text}`);
     const jsonText = extractJson(result?.response?.text?.() || "");
 
     let parsed;
@@ -145,7 +174,7 @@ export default async function handler(request, response) {
       return response.status(500).json({ error: `Model returned invalid JSON: ${jsonText.slice(0, 800)}` });
     }
 
-    return response.status(200).json({ analysis: normalizeAnalysis(parsed) });
+    return response.status(200).json({ analysis: summaryOnly ? normalizeSummaryAnalysis(parsed) : normalizeAnalysis(parsed) });
   } catch (error) {
     return response.status(500).json({ error: error?.message || "AI API Error" });
   }
