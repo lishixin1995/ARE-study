@@ -19,36 +19,21 @@ const DEFAULT_ROOMS = {
   CE: ["Site Visit", "Submittals", "RFI", "Punch List"]
 };
 
-const NOTE_MARKER = "\n\n[[ARE_STUDY_NOTE_META_V2]]";
+const MARKER = "\n\n[[ARE_STUDY_NOTE_META_V2]]";
 const LEGACY_MARKER = "\n\n[[STUDY_CAPTURE_META_V1]]";
 const EMPTY_ANALYSIS = { summary: "", bulletPoints: [], logicForest: null };
 const ACCEPTED_TYPES = new Set(["application/pdf", "image/jpeg", "image/jpg", "image/png"]);
 
-function clean(value = "") {
-  return String(value || "").replace(/\s+/g, " ").trim();
-}
-
-function id(prefix = "id") {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-function slug(text = "") {
-  return clean(text).toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/gi, "-").replace(/^-+|-+$/g, "");
-}
-
-function dateLabel(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
-}
+const clean = value => String(value || "").replace(/\s+/g, " ").trim();
+const makeId = prefix => `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+const slug = value => clean(value).toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/gi, "-").replace(/^-+|-+$/g, "");
 
 function divisionInfo(code) {
   const item = DIVISIONS.find(([value]) => value === code) || DIVISIONS[0];
   return { code: item[0], label: item[1], name: item[2] };
 }
 
-function defaultRoomTree() {
+function defaultTree() {
   return DIVISIONS.reduce((tree, [code]) => {
     tree[code] = (DEFAULT_ROOMS[code] || []).map((name, index) => ({
       id: `${code}-${slug(name) || `room-${index}`}`,
@@ -59,36 +44,25 @@ function defaultRoomTree() {
   }, {});
 }
 
-function roomsFor(tree, division) {
-  return Array.isArray(tree?.[division]) ? tree[division] : [];
-}
-
-function roomById(tree, division, roomId) {
-  return roomsFor(tree, division).find(room => room.id === roomId) || null;
-}
-
-function subroomById(tree, division, roomId, subroomId) {
-  return (roomById(tree, division, roomId)?.children || []).find(subroom => subroom.id === subroomId) || null;
+function formatDate(value) {
+  const date = new Date(value || "");
+  if (Number.isNaN(date.getTime())) return value || "";
+  return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")} ${date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 }
 
 function normalizeNode(node, depth = 0) {
   if (!node || typeof node !== "object" || depth > 6) return null;
   const label = clean(node.label || node.title || node.name || "");
   if (!label) return null;
-  const rawChildren = Array.isArray(node.children) ? node.children : Array.isArray(node.nodes) ? node.nodes : [];
-  return {
-    label,
-    type: clean(node.type || "point") || "point",
-    children: rawChildren.map(child => normalizeNode(child, depth + 1)).filter(Boolean)
-  };
+  const children = Array.isArray(node.children) ? node.children : Array.isArray(node.nodes) ? node.nodes : [];
+  return { label, type: clean(node.type || "point") || "point", children: children.map(child => normalizeNode(child, depth + 1)).filter(Boolean) };
 }
 
 function normalizeForest(value, fallback = "Study Notes") {
-  if (!value) return null;
   if (Array.isArray(value)) {
     const nodes = value.map(item => normalizeNode(item)).filter(Boolean);
-    if (!nodes.length) return null;
-    return nodes.length === 1 ? nodes[0] : { label: fallback, type: "topic", children: nodes };
+    if (nodes.length === 1) return nodes[0];
+    if (nodes.length > 1) return { label: fallback, type: "topic", children: nodes };
   }
   return normalizeNode(value);
 }
@@ -104,7 +78,7 @@ function hasAnalysis(analysis) {
   return Boolean(analysis?.summary || analysis?.bulletPoints?.length || analysis?.logicForest);
 }
 
-function splitStoredText(text = "", marker = NOTE_MARKER) {
+function splitMeta(text = "", marker = MARKER) {
   const raw = String(text || "");
   const index = raw.lastIndexOf(marker);
   if (index < 0) return { visible: raw.trim(), meta: null };
@@ -115,21 +89,21 @@ function splitStoredText(text = "", marker = NOTE_MARKER) {
   }
 }
 
-function parseNote(note = {}) {
-  const raw = String(note.text || "");
-  const modern = splitStoredText(raw, NOTE_MARKER);
+function parseNote(note) {
+  const raw = String(note?.text || "");
+  const parsed = splitMeta(raw, MARKER);
   let title = "Untitled Note";
-  let rawNotes = modern.visible;
+  let rawNotes = parsed.visible;
   let analysis = { ...EMPTY_ANALYSIS };
   let attachments = [];
 
-  if (modern.meta && typeof modern.meta === "object") {
-    title = clean(modern.meta.title) || title;
-    rawNotes = typeof modern.meta.rawNotes === "string" ? modern.meta.rawNotes : rawNotes;
-    analysis = normalizeAnalysis(modern.meta.analysis);
-    attachments = Array.isArray(modern.meta.attachments) ? modern.meta.attachments.filter(item => item?.dataUrl) : [];
+  if (parsed.meta) {
+    title = clean(parsed.meta.title) || title;
+    rawNotes = typeof parsed.meta.rawNotes === "string" ? parsed.meta.rawNotes : rawNotes;
+    analysis = normalizeAnalysis(parsed.meta.analysis);
+    attachments = Array.isArray(parsed.meta.attachments) ? parsed.meta.attachments.filter(item => item?.dataUrl) : [];
   } else {
-    const legacy = splitStoredText(raw, LEGACY_MARKER);
+    const legacy = splitMeta(raw, LEGACY_MARKER);
     rawNotes = legacy.visible || rawNotes;
     title = rawNotes.split(/\r?\n/).map(line => line.trim()).find(Boolean) || title;
     analysis = normalizeAnalysis(legacy.meta?.aiResult || legacy.meta?.localAnalysis || null);
@@ -138,23 +112,16 @@ function parseNote(note = {}) {
   return { ...note, title, rawNotes, plainText: rawNotes, analysis, attachments, analyzed: hasAnalysis(analysis) };
 }
 
-function packNote({ title, rawNotes, analysis, attachments }) {
-  const safeTitle = clean(title) || "Untitled Note";
-  const safeRaw = String(rawNotes || "").trim();
-  const safeAnalysis = normalizeAnalysis(analysis);
-  const visible = [safeTitle, safeRaw].filter(Boolean).join("\n\n");
-  return `${visible || safeTitle}${NOTE_MARKER}${JSON.stringify({ version: 2, title: safeTitle, rawNotes: safeRaw, analysis: safeAnalysis, analyzed: hasAnalysis(safeAnalysis), attachments })}`;
+function packNote(draft) {
+  const title = clean(draft.title) || "Untitled Note";
+  const rawNotes = String(draft.rawNotes || "").trim();
+  const analysis = normalizeAnalysis(draft.analysis);
+  const visible = [title, rawNotes].filter(Boolean).join("\n\n");
+  const meta = { version: 2, title, rawNotes, analysis, analyzed: hasAnalysis(analysis), attachments: draft.attachments || [] };
+  return `${visible || title}${MARKER}${JSON.stringify(meta)}`;
 }
 
-function attachmentCounts(items = []) {
-  return items.reduce((count, item) => {
-    if (item.kind === "pdf" || item.type === "application/pdf") count.pdf += 1;
-    if (item.kind === "image" || String(item.type || "").startsWith("image/")) count.image += 1;
-    return count;
-  }, { pdf: 0, image: 0 });
-}
-
-function readFile(file) {
+function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ""));
@@ -163,10 +130,18 @@ function readFile(file) {
   });
 }
 
-function downloadAttachment(attachment) {
+function countAttachments(items = []) {
+  return items.reduce((count, item) => {
+    if (item.kind === "pdf" || item.type === "application/pdf") count.pdf += 1;
+    if (item.kind === "image" || String(item.type || "").startsWith("image/")) count.image += 1;
+    return count;
+  }, { pdf: 0, image: 0 });
+}
+
+function downloadAttachment(item) {
   const link = document.createElement("a");
-  link.href = attachment.dataUrl;
-  link.download = attachment.name || "attachment";
+  link.href = item.dataUrl;
+  link.download = item.name || "attachment";
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
@@ -174,7 +149,21 @@ function downloadAttachment(attachment) {
 
 function LogicNode({ node, root = false }) {
   if (!node) return null;
-  return <div className={`logic-node ${root ? "root" : ""}`}><div className="logic-label">{node.label}</div>{node.children?.length ? <div className="logic-children">{node.children.map((child, index) => <div className="logic-child" key={`${child.label}-${index}`}><span /><LogicNode node={child} /></div>)}</div> : null}</div>;
+  return (
+    <div className={`logic-node ${root ? "root" : ""}`}>
+      <div className="logic-label">{node.label}</div>
+      {node.children?.length ? (
+        <div className="logic-children">
+          {node.children.map((child, index) => (
+            <div className="logic-child" key={`${child.label}-${index}`}>
+              <span />
+              <LogicNode node={child} />
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function LogicImage({ analysis, compact = false }) {
@@ -191,11 +180,9 @@ function AuthGate({ onAuthenticated }) {
     if (!passcode.trim()) return setStatus("Please enter the passcode.");
     try {
       setBusy(true);
-      setStatus("Checking passcode...");
       const response = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "same-origin", body: JSON.stringify({ passcode }) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.authenticated) return setStatus(data.error || "Passcode was not accepted.");
-      setPasscode("");
       onAuthenticated();
     } catch {
       setStatus("Could not reach the auth server. Try again.");
@@ -204,32 +191,87 @@ function AuthGate({ onAuthenticated }) {
     }
   }
 
-  return <main className="passcode-shell"><section className="passcode-card"><div className="eyebrow">ARE Study Vault</div><h1>Passcode required</h1><p>Your cloud study workspace is protected before notes, rooms, attachments, or AI tools load.</p><form className="passcode-form" onSubmit={submit}><label htmlFor="passcode">Site passcode</label><input id="passcode" type="password" value={passcode} onChange={event => setPasscode(event.target.value)} autoFocus /><button disabled={busy}>{busy ? "Checking..." : "Unlock"}</button></form><p className="status-line">{status}</p></section></main>;
+  return (
+    <main className="passcode-shell">
+      <section className="passcode-card">
+        <div className="eyebrow">ARE Study Vault</div>
+        <h1>Passcode required</h1>
+        <p>Your cloud study workspace is protected before notes, rooms, attachments, or AI tools load.</p>
+        <form className="passcode-form" onSubmit={submit}>
+          <label htmlFor="passcode">Site passcode</label>
+          <input id="passcode" type="password" value={passcode} onChange={event => setPasscode(event.target.value)} autoFocus />
+          <button disabled={busy}>{busy ? "Checking..." : "Unlock"}</button>
+        </form>
+        <p className="status-line">{status}</p>
+      </section>
+    </main>
+  );
 }
 
 function Dashboard({ onSelect }) {
-  return <section className="workspace dashboard"><div className="workspace-head"><div><div className="eyebrow">Main Dashboard</div><h1>ARE Study Vault</h1></div><p>Select a division to open rooms, sub-rooms, saved note cards, and full note viewers.</p></div><div className="division-grid">{DIVISIONS.map(([code, label, name]) => <button className="division-card" key={code} onClick={() => onSelect(code)}><strong>{label}</strong><span>{name}</span></button>)}</div></section>;
+  return (
+    <section className="workspace dashboard">
+      <div className="workspace-head">
+        <div>
+          <div className="eyebrow">Main Dashboard</div>
+          <h1>ARE Study Vault</h1>
+        </div>
+        <p>Select a division to open rooms, sub-rooms, saved note cards, and full note viewers.</p>
+      </div>
+      <div className="division-grid">
+        {DIVISIONS.map(([code, label, name]) => <button className="division-card" key={code} onClick={() => onSelect(code)}><strong>{label}</strong><span>{name}</span></button>)}
+      </div>
+    </section>
+  );
 }
 
 function NoteCard({ note, onOpen, onEdit, onDelete }) {
-  const counts = attachmentCounts(note.attachments);
+  const counts = countAttachments(note.attachments);
   const firstImage = note.attachments.find(item => item.kind === "image" || String(item.type || "").startsWith("image/"));
-  return <button className="note-card" onClick={() => onOpen(note)}><div className="note-card-head"><div><h3>{note.title}</h3><small>{note.subroomName || "Sub-room"} - {dateLabel(note.savedAt)}</small></div><b className={note.analyzed ? "ok" : "muted"}>{note.analyzed ? "AI Analyzed" : "Not Analyzed"}</b></div><p>{note.analysis?.summary ? clean(note.analysis.summary).slice(0, 170) : clean(note.rawNotes).slice(0, 170)}</p><ul>{(note.analysis?.bulletPoints || []).slice(0, 3).map((item, index) => <li key={index}>{item}</li>)}</ul><div className="card-media"><div className="thumb">{note.analysis?.logicForest ? <LogicImage analysis={note.analysis} compact /> : firstImage ? <img src={firstImage.dataUrl} alt="" /> : "No thumbnail"}</div><span>PDF {counts.pdf}</span><span>Image {counts.image}</span></div><div className="card-actions" onClick={event => event.stopPropagation()}><button onClick={() => onEdit(note)}>Edit</button><button className="danger" onClick={() => onDelete(note.id)}>Delete</button></div></button>;
+  return (
+    <button className="note-card" onClick={() => onOpen(note)}>
+      <div className="note-card-head"><div><h3>{note.title}</h3><small>{note.subroomName || "Sub-room"} - {formatDate(note.savedAt)}</small></div><b className={note.analyzed ? "ok" : "muted"}>{note.analyzed ? "AI Analyzed" : "Not Analyzed"}</b></div>
+      <p>{note.analysis?.summary ? clean(note.analysis.summary).slice(0, 170) : clean(note.rawNotes).slice(0, 170)}</p>
+      <ul>{(note.analysis?.bulletPoints || []).slice(0, 3).map((item, index) => <li key={index}>{item}</li>)}</ul>
+      <div className="card-media"><div className="thumb">{note.analysis?.logicForest ? <LogicImage analysis={note.analysis} compact /> : firstImage ? <img src={firstImage.dataUrl} alt="" /> : "No thumbnail"}</div><span>PDF {counts.pdf}</span><span>Image {counts.image}</span></div>
+      <div className="card-actions" onClick={event => event.stopPropagation()}><button onClick={() => onEdit(note)}>Edit</button><button className="danger" onClick={() => onDelete(note.id)}>Delete</button></div>
+    </button>
+  );
 }
 
 function NoteEditor({ draft, editing, busy, status, setDraft, onFiles, onRemoveFile, onAnalyze, onSave, onCancel }) {
   const inputRef = useRef(null);
-  return <section className="editor"><div className="workspace-head"><div><div className="eyebrow">{editing ? "Edit Note" : "New Note"}</div><h2>Capture Editor</h2></div><button onClick={onCancel}>Cancel</button></div><label>Note Title</label><input value={draft.title} onChange={event => setDraft({ ...draft, title: event.target.value })} placeholder="Give this note a title" /><label>Raw Notes text</label><textarea value={draft.rawNotes} onChange={event => setDraft({ ...draft, rawNotes: event.target.value })} placeholder="Paste or type raw notes here..." /><div className="upload-row"><div><b>Attachments</b><p>PDF, JPEG, JPG, and PNG are saved only as attachments.</p></div><button onClick={() => inputRef.current?.click()}>Upload Files</button><input ref={inputRef} type="file" multiple accept="application/pdf,image/jpeg,image/jpg,image/png,.pdf,.jpeg,.jpg,.png" hidden onChange={event => onFiles(event.target.files)} /></div>{draft.attachments.length ? <div className="chips">{draft.attachments.map(item => <span key={item.id}>{item.kind.toUpperCase()} {item.name}<button onClick={() => onRemoveFile(item.id)}>Remove</button></span>)}</div> : null}<div className="buttons"><button className="ai" disabled={busy || !clean(draft.rawNotes)} onClick={onAnalyze}>{busy ? "Thinking..." : "Analyze with AI"}</button><button className="primary" onClick={onSave}>Save Note</button><button onClick={onCancel}>Cancel</button></div>{status ? <p className="status-banner">{status}</p> : null}{hasAnalysis(draft.analysis) ? <div className="analysis-preview"><section><h3>Summary</h3><p>{draft.analysis.summary}</p></section><section><h3>Bullet Points</h3><ul>{draft.analysis.bulletPoints.map((item, index) => <li key={index}>{item}</li>)}</ul></section><section className="wide"><h3>Logic Image</h3><LogicImage analysis={draft.analysis} /></section></div> : null}</section>;
+  return (
+    <section className="editor">
+      <div className="workspace-head"><div><div className="eyebrow">{editing ? "Edit Note" : "New Note"}</div><h2>Capture Editor</h2></div><button onClick={onCancel}>Cancel</button></div>
+      <label>Note Title</label>
+      <input value={draft.title} onChange={event => setDraft({ ...draft, title: event.target.value })} placeholder="Give this note a title" />
+      <label>Raw Notes text</label>
+      <textarea value={draft.rawNotes} onChange={event => setDraft({ ...draft, rawNotes: event.target.value })} placeholder="Paste or type raw notes here..." />
+      <div className="upload-row"><div><b>Attachments</b><p>PDF, JPEG, JPG, and PNG are saved only as attachments.</p></div><button onClick={() => inputRef.current?.click()}>Upload Files</button><input ref={inputRef} type="file" multiple accept="application/pdf,image/jpeg,image/jpg,image/png,.pdf,.jpeg,.jpg,.png" hidden onChange={event => onFiles(event.target.files)} /></div>
+      {draft.attachments.length ? <div className="chips">{draft.attachments.map(item => <span key={item.id}>{item.kind.toUpperCase()} {item.name}<button onClick={() => onRemoveFile(item.id)}>Remove</button></span>)}</div> : null}
+      <div className="buttons"><button className="ai" disabled={busy || !clean(draft.rawNotes)} onClick={onAnalyze}>{busy ? "Thinking..." : "Analyze with AI"}</button><button className="primary" onClick={onSave}>Save Note</button><button onClick={onCancel}>Cancel</button></div>
+      {status ? <p className="status-banner">{status}</p> : null}
+      {hasAnalysis(draft.analysis) ? <div className="analysis-preview"><section><h3>Summary</h3><p>{draft.analysis.summary}</p></section><section><h3>Bullet Points</h3><ul>{draft.analysis.bulletPoints.map((item, index) => <li key={index}>{item}</li>)}</ul></section><section className="wide"><h3>Logic Image</h3><LogicImage analysis={draft.analysis} /></section></div> : null}
+    </section>
+  );
 }
 
 function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze }) {
   if (!note) return null;
-  return <div className="modal-backdrop" onClick={onClose}><section className="viewer" onClick={event => event.stopPropagation()}><div className="workspace-head"><div><div className="eyebrow">Full Note Viewer</div><h2>{note.title}</h2><p>{note.division} / {note.roomName} / {note.subroomName} - {dateLabel(note.savedAt)}</p></div><button onClick={onClose}>Close</button></div><div className="buttons"><button onClick={() => onEdit(note)}>Edit</button><button className="ai" disabled={busy || !clean(note.rawNotes)} onClick={() => onAnalyze(note)}>{busy ? "Thinking..." : "Re-analyze"}</button><button className="danger" onClick={() => onDelete(note.id)}>Delete</button></div><div className="viewer-grid"><section><h3>Summary</h3><p>{note.analysis?.summary || "No AI summary yet."}</p></section><section><h3>Bullet Points</h3>{note.analysis?.bulletPoints?.length ? <ul>{note.analysis.bulletPoints.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p>No AI bullet points yet.</p>}</section><section className="wide"><h3>Logic Image</h3><LogicImage analysis={note.analysis} /></section><section className="wide"><h3>Raw Notes</h3><pre>{note.rawNotes || "No raw notes saved."}</pre></section><section className="wide"><h3>PDF and Image Attachments</h3>{note.attachments?.length ? <div className="attachments">{note.attachments.map(item => <div className="attachment" key={item.id}><div><b>{item.name}</b><button onClick={() => downloadAttachment(item)}>Download</button></div>{item.kind === "pdf" || item.type === "application/pdf" ? <iframe title={item.name} src={item.dataUrl} /> : <img src={item.dataUrl} alt={item.name} />}</div>)}</div> : <p>No attachments saved.</p>}</section></div></section></div>;
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <section className="viewer" onClick={event => event.stopPropagation()}>
+        <div className="workspace-head"><div><div className="eyebrow">Full Note Viewer</div><h2>{note.title}</h2><p>{note.division} / {note.roomName} / {note.subroomName} - {formatDate(note.savedAt)}</p></div><button onClick={onClose}>Close</button></div>
+        <div className="buttons"><button onClick={() => onEdit(note)}>Edit</button><button className="ai" disabled={busy || !clean(note.rawNotes)} onClick={() => onAnalyze(note)}>{busy ? "Thinking..." : "Re-analyze"}</button><button className="danger" onClick={() => onDelete(note.id)}>Delete</button></div>
+        <div className="viewer-grid"><section><h3>Summary</h3><p>{note.analysis?.summary || "No AI summary yet."}</p></section><section><h3>Bullet Points</h3>{note.analysis?.bulletPoints?.length ? <ul>{note.analysis.bulletPoints.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p>No AI bullet points yet.</p>}</section><section className="wide"><h3>Logic Image</h3><LogicImage analysis={note.analysis} /></section><section className="wide"><h3>Raw Notes</h3><pre>{note.rawNotes || "No raw notes saved."}</pre></section><section className="wide"><h3>PDF and Image Attachments</h3>{note.attachments?.length ? <div className="attachments">{note.attachments.map(item => <div className="attachment" key={item.id}><div><b>{item.name}</b><button onClick={() => downloadAttachment(item)}>Download</button></div>{item.kind === "pdf" || item.type === "application/pdf" ? <iframe title={item.name} src={item.dataUrl} /> : <img src={item.dataUrl} alt={item.name} />}</div>)}</div> : <p>No attachments saved.</p>}</section></div>
+      </section>
+    </div>
+  );
 }
 
 export default function App() {
   const [auth, setAuth] = useState({ checking: true, authenticated: false, configured: true });
-
   useEffect(() => {
     let cancelled = false;
     async function check() {
@@ -260,7 +302,7 @@ function StudyApp({ onLogout }) {
   const [division, setDivision] = useState("");
   const [roomId, setRoomId] = useState("");
   const [subroomId, setSubroomId] = useState("");
-  const [tree, setTree] = useState(defaultRoomTree);
+  const [tree, setTree] = useState(defaultTree);
   const [notes, setNotes] = useState([]);
   const [viewerId, setViewerId] = useState("");
   const [editorOpen, setEditorOpen] = useState(false);
@@ -270,17 +312,17 @@ function StudyApp({ onLogout }) {
   const [busy, setBusy] = useState(false);
 
   const info = divisionInfo(division);
-  const rooms = useMemo(() => roomsFor(tree, division), [tree, division]);
-  const room = useMemo(() => roomById(tree, division, roomId), [tree, division, roomId]);
-  const subroom = useMemo(() => subroomById(tree, division, roomId, subroomId), [tree, division, roomId, subroomId]);
+  const rooms = useMemo(() => Array.isArray(tree[division]) ? tree[division] : [], [tree, division]);
+  const room = useMemo(() => rooms.find(item => item.id === roomId) || null, [rooms, roomId]);
+  const subroom = useMemo(() => (room?.children || []).find(item => item.id === subroomId) || null, [room, subroomId]);
   const divisionNotes = useMemo(() => notes.filter(note => note.division === division).sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt)), [notes, division]);
   const subroomNotes = useMemo(() => divisionNotes.filter(note => note.roomId === roomId && (note.subroomId || "") === subroomId), [divisionNotes, roomId, subroomId]);
   const viewerNote = notes.find(note => note.id === viewerId) || null;
 
   useEffect(() => {
     if (!division) return;
-    fetch(`/api/rooms?division=${encodeURIComponent(division)}`).then(r => r.json().then(data => ({ ok: r.ok, data }))).then(({ ok, data }) => ok && setTree(prev => ({ ...prev, [division]: Array.isArray(data.rooms) ? data.rooms : [] }))).catch(() => setStatus("Cloud rooms unavailable."));
-    fetch(`/api/notes?division=${encodeURIComponent(division)}`).then(r => r.json().then(data => ({ ok: r.ok, data }))).then(({ ok, data }) => ok && setNotes(Array.isArray(data.notes) ? data.notes.map(parseNote) : [])).catch(() => setStatus("Cloud notes unavailable."));
+    fetch(`/api/rooms?division=${encodeURIComponent(division)}`).then(response => response.json().then(data => ({ ok: response.ok, data }))).then(({ ok, data }) => ok && setTree(prev => ({ ...prev, [division]: Array.isArray(data.rooms) ? data.rooms : [] }))).catch(() => setStatus("Cloud rooms unavailable."));
+    fetch(`/api/notes?division=${encodeURIComponent(division)}`).then(response => response.json().then(data => ({ ok: response.ok, data }))).then(({ ok, data }) => ok && setNotes(Array.isArray(data.notes) ? data.notes.map(parseNote) : [])).catch(() => setStatus("Cloud notes unavailable."));
   }, [division]);
 
   function closeEditor() {
@@ -312,46 +354,14 @@ function StudyApp({ onLogout }) {
     closeEditor();
   }
 
-  async function addRoom() {
-    const name = window.prompt(`New room name for ${info.label}:`);
-    if (!name?.trim()) return;
-    const next = { id: id("room"), name: name.trim(), children: [] };
-    const response = await fetch("/api/rooms", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: next.id, division, parentId: null, name: next.name, roomType: "room", sortOrder: rooms.length }) });
-    if (!response.ok) return setStatus("Cloud room save failed.");
-    setTree(prev => ({ ...prev, [division]: [...roomsFor(prev, division), next] }));
-    chooseRoom(next.id);
-  }
-
-  async function addSubroom() {
-    if (!roomId) return setStatus("Select a room before adding a sub-room.");
-    const name = window.prompt(`New sub-room under "${room?.name || "room"}":`);
-    if (!name?.trim()) return;
-    const next = { id: id("subroom"), name: name.trim() };
-    const response = await fetch("/api/rooms", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: next.id, division, parentId: roomId, name: next.name, roomType: "subroom", sortOrder: room?.children?.length || 0 }) });
-    if (!response.ok) return setStatus("Cloud sub-room save failed.");
-    setTree(prev => ({ ...prev, [division]: roomsFor(prev, division).map(item => item.id === roomId ? { ...item, children: [...(item.children || []), next] } : item) }));
-    chooseSubroom(roomId, next.id);
-  }
-
-  async function deleteRoomItem() {
-    const target = subroomId || roomId;
-    if (!target || !window.confirm("Delete selected room item? Existing notes and old database data will stay untouched.")) return;
-    const response = await fetch(`/api/rooms?id=${encodeURIComponent(target)}`, { method: "DELETE" });
-    if (!response.ok) return setStatus("Cloud room delete failed.");
-    setTree(prev => ({ ...prev, [division]: roomsFor(prev, division).filter(item => item.id !== target).map(item => ({ ...item, children: (item.children || []).filter(child => child.id !== target) })) }));
-    if (target === roomId) setRoomId("");
-    setSubroomId("");
-    closeEditor();
-  }
-
   async function attachFiles(fileList) {
-    const accepted = [];
+    const next = [];
     for (const file of Array.from(fileList || [])) {
       const type = file.type === "image/jpg" ? "image/jpeg" : file.type;
       if (!ACCEPTED_TYPES.has(type)) continue;
-      accepted.push({ id: id("att"), name: file.name, type, size: file.size, kind: type === "application/pdf" ? "pdf" : "image", dataUrl: await readFile(file) });
+      next.push({ id: makeId("att"), name: file.name, type, size: file.size, kind: type === "application/pdf" ? "pdf" : "image", dataUrl: await fileToDataUrl(file) });
     }
-    setDraft(prev => ({ ...prev, attachments: [...prev.attachments, ...accepted] }));
+    setDraft(prev => ({ ...prev, attachments: [...prev.attachments, ...next] }));
   }
 
   async function analyzeText(rawNotes) {
@@ -366,7 +376,8 @@ function StudyApp({ onLogout }) {
     try {
       setBusy(true);
       setStatus("AI analyzing Raw Notes text only...");
-      setDraft(prev => ({ ...prev, analysis: await analyzeText(prev.rawNotes) }));
+      const analysis = await analyzeText(draft.rawNotes);
+      setDraft(prev => ({ ...prev, analysis }));
       setStatus("AI analysis complete. Save Note to create or update the card.");
     } catch (error) {
       setStatus(`AI Error: ${error.message}`);
@@ -378,10 +389,10 @@ function StudyApp({ onLogout }) {
   async function saveNote(noteDraft = draft, noteId = editingId, targetRoom = roomId, targetSubroom = subroomId) {
     if (!targetRoom || !targetSubroom) return setStatus("Select a sub-room before saving.");
     if (!clean(noteDraft.title) && !clean(noteDraft.rawNotes) && !noteDraft.attachments.length) return setStatus("Add a title, Raw Notes text, or attachment before saving.");
-    const targetRoomObj = roomById(tree, division, targetRoom);
-    const targetSubroomObj = subroomById(tree, division, targetRoom, targetSubroom);
+    const targetRoomObj = rooms.find(item => item.id === targetRoom);
+    const targetSubroomObj = (targetRoomObj?.children || []).find(item => item.id === targetSubroom);
     const existing = noteId ? notes.find(note => note.id === noteId) : null;
-    const payload = { id: noteId || id("note"), division, roomId: targetRoom, roomName: targetRoomObj?.name || "", subroomId: targetSubroom, subroomName: targetSubroomObj?.name || "", text: packNote(noteDraft), savedAt: existing?.savedAt || new Date().toISOString() };
+    const payload = { id: noteId || makeId("note"), division, roomId: targetRoom, roomName: targetRoomObj?.name || "", subroomId: targetSubroom, subroomName: targetSubroomObj?.name || "", text: packNote(noteDraft), savedAt: existing?.savedAt || new Date().toISOString() };
     const response = await fetch("/api/notes", { method: noteId ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
@@ -417,7 +428,8 @@ function StudyApp({ onLogout }) {
     try {
       setBusy(true);
       setStatus("Re-analyzing saved note Raw Notes text only...");
-      const saved = await saveNote({ title: note.title, rawNotes: note.rawNotes, attachments: note.attachments || [], analysis: await analyzeText(note.rawNotes) }, note.id, note.roomId, note.subroomId);
+      const analysis = await analyzeText(note.rawNotes);
+      const saved = await saveNote({ title: note.title, rawNotes: note.rawNotes, attachments: note.attachments || [], analysis }, note.id, note.roomId, note.subroomId);
       setViewerId(saved.id);
       setStatus("Saved note re-analyzed and card updated.");
     } catch (error) {
@@ -437,11 +449,11 @@ function StudyApp({ onLogout }) {
     setStatus("Saved note deleted.");
   }
 
-  const sidebar = <aside className="sidebar"><div className="brand-card"><div><button className="brand" onClick={() => chooseDivision("")}>ARE Study Vault</button><p>Cloud-synced note cards by ARE room and sub-room.</p></div><button onClick={onLogout}>Logout</button></div><section><h3>Divisions</h3>{DIVISIONS.map(([code, label, name]) => <button key={code} className={division === code ? "active" : ""} onClick={() => chooseDivision(code)}><b>{label}</b><small>{name}</small></button>)}</section>{division ? <section><div className="side-head"><h3>{info.label} Rooms</h3><span><button onClick={addRoom}>+ Room</button><button onClick={addSubroom} disabled={!roomId}>+ Sub</button></span></div>{rooms.map(item => <div className="room-group" key={item.id}><button className={roomId === item.id && !subroomId ? "active" : ""} onClick={() => chooseRoom(item.id)}>{item.name}</button>{item.children?.length ? <div className="subrooms">{item.children.map(child => <button key={child.id} className={subroomId === child.id ? "active" : ""} onClick={() => chooseSubroom(item.id, child.id)}>{child.name}</button>)}</div> : null}</div>)}<button className="danger" disabled={!roomId} onClick={deleteRoomItem}>Delete Selected</button></section> : null}</aside>;
+  const sidebar = <aside className="sidebar"><div className="brand-card"><div><button className="brand" onClick={() => chooseDivision("")}>ARE Study Vault</button><p>Cloud-synced note cards by ARE room and sub-room.</p></div><button onClick={onLogout}>Logout</button></div><section><h3>Divisions</h3>{DIVISIONS.map(([code, label, name]) => <button key={code} className={division === code ? "active" : ""} onClick={() => chooseDivision(code)}><b>{label}</b><small>{name}</small></button>)}</section>{division ? <section><h3>{info.label} Rooms</h3>{rooms.map(item => <div className="room-group" key={item.id}><button className={roomId === item.id && !subroomId ? "active" : ""} onClick={() => chooseRoom(item.id)}>{item.name}</button>{item.children?.length ? <div className="subrooms">{item.children.map(child => <button key={child.id} className={subroomId === child.id ? "active" : ""} onClick={() => chooseSubroom(item.id, child.id)}>{child.name}</button>)}</div> : null}</div>)}</section> : null}</aside>;
 
   function roomDirectory() {
     const children = room?.children || [];
-    return <section className="workspace"><div className="workspace-head"><div><div className="eyebrow">Room Directory</div><h1>{room?.name}</h1></div><p>Sub-rooms and saved note cards only.</p></div>{children.length ? children.map(child => { const cards = divisionNotes.filter(note => note.roomId === roomId && (note.subroomId || "") === child.id); return <section className="subroom-section" key={child.id}><div className="subroom-head"><button onClick={() => chooseSubroom(roomId, child.id)}>{child.name}</button><span>{cards.length} saved cards</span></div>{cards.length ? <div className="cards">{cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}</div> : <div className="empty-soft">No saved note cards in this sub-room yet.</div>}</section>; }) : <div className="empty-soft">No sub-rooms yet. Add one from the sidebar.</div>}</section>;
+    return <section className="workspace"><div className="workspace-head"><div><div className="eyebrow">Room Directory</div><h1>{room?.name}</h1></div><p>Sub-rooms and saved note cards only.</p></div>{children.length ? children.map(child => { const cards = divisionNotes.filter(note => note.roomId === roomId && (note.subroomId || "") === child.id); return <section className="subroom-section" key={child.id}><div className="subroom-head"><button onClick={() => chooseSubroom(roomId, child.id)}>{child.name}</button><span>{cards.length} saved cards</span></div>{cards.length ? <div className="cards">{cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}</div> : <div className="empty-soft">No saved note cards in this sub-room yet.</div>}</section>; }) : <div className="empty-soft">No sub-rooms yet.</div>}</section>;
   }
 
   function subroomView() {
@@ -452,6 +464,6 @@ function StudyApp({ onLogout }) {
     return <section className="workspace"><div className="workspace-head"><div><div className="eyebrow">Division</div><h1>{info.label} - {info.name}</h1></div><p>{divisionNotes.length} saved notes</p></div><div className="directory-grid">{rooms.map(item => <button key={item.id} onClick={() => chooseRoom(item.id)}><b>{item.name}</b><span>{item.children?.length || 0} sub-rooms - {divisionNotes.filter(note => note.roomId === item.id).length} notes</span></button>)}</div></section>;
   }
 
-  let main = !division ? <Dashboard onSelect={chooseDivision} /> : roomId && !subroomId ? roomDirectory() : roomId && subroomId ? subroomView() : divisionView();
+  const main = !division ? <Dashboard onSelect={chooseDivision} /> : roomId && !subroomId ? roomDirectory() : roomId && subroomId ? subroomView() : divisionView();
   return <div className="app-shell">{sidebar}<main>{status && !editorOpen ? <p className="status-banner">{status}</p> : null}{main}</main><Viewer note={viewerNote} busy={busy} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onAnalyze={reanalyze} /></div>;
 }
