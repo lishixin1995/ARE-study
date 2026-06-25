@@ -175,6 +175,102 @@ function normalizeWrongQuestion(card = {}) {
   };
 }
 
+function useDebouncedValue(value, delay = 275) {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebounced(value), delay);
+    return () => window.clearTimeout(timer);
+  }, [value, delay]);
+
+  return debounced;
+}
+
+function searchableText(parts = []) {
+  return parts.flat().filter(Boolean).join("\n").toLowerCase();
+}
+
+function attachmentNames(items = []) {
+  return items.map(item => item?.name || "").filter(Boolean);
+}
+
+function noteSearchText(note = {}) {
+  return searchableText([
+    note.title,
+    note.analysis?.summary,
+    note.analysis?.bulletPoints || [],
+    note.rawNotes,
+    attachmentNames(note.attachments)
+  ]);
+}
+
+function wrongSearchText(card = {}) {
+  return searchableText([
+    card.title,
+    card.text,
+    attachmentNames(card.attachments)
+  ]);
+}
+
+function includesQuery(value, query) {
+  return searchableText([value]).includes(String(query || "").toLowerCase());
+}
+
+function itemPath(item = {}) {
+  return [item.division || item.divisionId, item.roomName, item.subroomName || item.subRoomName].filter(Boolean).join(" / ");
+}
+
+function matchPreview(parts = [], query = "") {
+  const needle = String(query || "").trim().toLowerCase();
+  const text = parts.flat().filter(Boolean).map(value => String(value)).join(" ");
+  if (!text) return "No preview available.";
+  if (!needle) return clean(text).slice(0, 170);
+  const lower = text.toLowerCase();
+  const index = lower.indexOf(needle);
+  if (index < 0) return clean(text).slice(0, 170);
+  const start = Math.max(0, index - 55);
+  const end = Math.min(text.length, index + needle.length + 95);
+  return `${start > 0 ? "..." : ""}${clean(text.slice(start, end))}${end < text.length ? "..." : ""}`;
+}
+
+function SearchBar({ value, onChange, placeholder }) {
+  return (
+    <div className="search-wrap">
+      <span className="search-icon" aria-hidden="true" />
+      <input
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        onKeyDown={event => {
+          if (event.key === "Escape") onChange("");
+        }}
+        placeholder={placeholder}
+      />
+      {value ? <button type="button" onClick={() => onChange("")}>Clear</button> : null}
+    </div>
+  );
+}
+
+function SearchResults({ results, query, loading, emptyText, onOpen }) {
+  if (loading) return <div className="empty-soft">Searching...</div>;
+  if (!query) return null;
+  if (!results.length) return <div className="empty-soft">{emptyText}</div>;
+
+  return (
+    <div className="search-results">
+      {results.map(result => (
+        <button key={`${result.type}-${result.item.id}`} className="search-result" onClick={() => onOpen(result)}>
+          <div>
+            <b>{result.title}</b>
+            <span>{result.typeLabel} · {result.path || "Unassigned"}</span>
+          </div>
+          <p>{result.preview}</p>
+          <small>Updated {formatDate(result.savedAt)}</small>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function downloadAttachment(item) {
   const link = document.createElement("a");
   link.href = item.dataUrl;
@@ -227,7 +323,7 @@ function AuthGate({ onAuthenticated }) {
   );
 }
 
-function Dashboard({ onSelect }) {
+function Dashboard({ onSelect, searchQuery, onSearchChange, searchResults, searchLoading, onOpenSearchResult }) {
   return (
     <section className="workspace dashboard">
       <div className="workspace-head">
@@ -237,6 +333,16 @@ function Dashboard({ onSelect }) {
         </div>
         <p>Select a division to open rooms, sub-rooms, saved note cards, and full note viewers.</p>
       </div>
+      <SearchBar value={searchQuery} onChange={onSearchChange} placeholder="Search all study notes and wrong questions..." />
+      {searchQuery ? (
+        <SearchResults
+          results={searchResults}
+          query={searchQuery}
+          loading={searchLoading}
+          emptyText="No study notes or wrong questions matched this search."
+          onOpen={onOpenSearchResult}
+        />
+      ) : null}
       <div className="division-grid">
         {DIVISIONS.map(([code, label, name]) => <button className="division-card" key={code} onClick={() => onSelect(code)}><strong>{label}</strong><span>{name}</span></button>)}
       </div>
@@ -559,6 +665,12 @@ function StudyApp({ onLogout }) {
   const [wrongStatus, setWrongStatus] = useState("");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [dashboardSearch, setDashboardSearch] = useState("");
+  const [roomSearch, setRoomSearch] = useState("");
+  const [allSearchData, setAllSearchData] = useState({ loaded: false, notes: [], wrongQuestions: [] });
+  const [allSearchLoading, setAllSearchLoading] = useState(false);
+  const debouncedDashboardSearch = useDebouncedValue(dashboardSearch);
+  const debouncedRoomSearch = useDebouncedValue(roomSearch);
 
   const info = divisionInfo(division);
   const rooms = useMemo(() => Array.isArray(tree[division]) ? tree[division] : [], [tree, division]);
@@ -571,6 +683,36 @@ function StudyApp({ onLogout }) {
   const unassignedWrongQuestions = useMemo(() => wrongQuestions.filter(card => !(card.division || card.divisionId) || !card.roomId || !card.subroomId), [wrongQuestions]);
   const viewerNote = notes.find(note => note.id === viewerId) || null;
   const wrongViewerCard = wrongQuestions.find(card => card.id === wrongViewerId) || null;
+  const dashboardSearchResults = useMemo(() => {
+    const query = clean(debouncedDashboardSearch).toLowerCase();
+    if (!query) return [];
+
+    const noteResults = allSearchData.notes
+      .filter(note => noteSearchText(note).includes(query))
+      .map(note => ({
+        type: "note",
+        typeLabel: "Study Note",
+        title: note.title,
+        path: itemPath(note),
+        preview: matchPreview([note.title, note.analysis?.summary, note.analysis?.bulletPoints || [], note.rawNotes, attachmentNames(note.attachments)], query),
+        savedAt: note.savedAt,
+        item: note
+      }));
+
+    const wrongResults = allSearchData.wrongQuestions
+      .filter(card => wrongSearchText(card).includes(query))
+      .map(card => ({
+        type: "wrong",
+        typeLabel: "Wrong Question",
+        title: card.title,
+        path: itemPath(card),
+        preview: matchPreview([card.title, card.text, attachmentNames(card.attachments)], query),
+        savedAt: card.savedAt,
+        item: card
+      }));
+
+    return [...noteResults, ...wrongResults].sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt));
+  }, [allSearchData, debouncedDashboardSearch]);
 
   useEffect(() => {
     if (!division) return;
@@ -582,6 +724,32 @@ function StudyApp({ onLogout }) {
       setWrongStatus("");
     }).catch(() => setWrongStatus("Cloud wrong questions unavailable."));
   }, [division]);
+
+  useEffect(() => {
+    const query = clean(debouncedDashboardSearch);
+    if (division || !query || allSearchData.loaded) return;
+
+    let cancelled = false;
+    async function loadAllSearchData() {
+      try {
+        setAllSearchLoading(true);
+        const noteResponses = await Promise.all(DIVISIONS.map(([code]) => fetch(`/api/notes?division=${encodeURIComponent(code)}`).then(response => response.json().then(data => ({ ok: response.ok, data })))));
+        const wrongResponse = await fetch("/api/wrong-questions").then(response => response.json().then(data => ({ ok: response.ok, data })));
+        if (cancelled) return;
+
+        const allNotes = noteResponses.flatMap(({ ok, data }) => ok && Array.isArray(data.notes) ? data.notes.map(parseNote) : []);
+        const allWrongQuestions = wrongResponse.ok && Array.isArray(wrongResponse.data.flashcards) ? wrongResponse.data.flashcards.map(normalizeWrongQuestion) : [];
+        setAllSearchData({ loaded: true, notes: allNotes, wrongQuestions: allWrongQuestions });
+      } catch {
+        if (!cancelled) setStatus("Dashboard search data unavailable.");
+      } finally {
+        if (!cancelled) setAllSearchLoading(false);
+      }
+    }
+
+    loadAllSearchData();
+    return () => { cancelled = true; };
+  }, [allSearchData.loaded, debouncedDashboardSearch, division]);
 
   function closeEditor() {
     setEditorOpen(false);
@@ -601,6 +769,7 @@ function StudyApp({ onLogout }) {
     setSubroomId("");
     setViewerId("");
     setWrongViewerId("");
+    setRoomSearch("");
     closeEditor();
     closeWrongEditor();
     setStatus("");
@@ -612,6 +781,7 @@ function StudyApp({ onLogout }) {
     setSubroomId("");
     setViewerId("");
     setWrongViewerId("");
+    setRoomSearch("");
     closeEditor();
     closeWrongEditor();
   }
@@ -621,8 +791,24 @@ function StudyApp({ onLogout }) {
     setSubroomId(idValue);
     setViewerId("");
     setWrongViewerId("");
+    setRoomSearch("");
     closeEditor();
     closeWrongEditor();
+  }
+
+  function openSearchResult(result) {
+    if (result.type === "note") {
+      const note = parseNote(result.item);
+      setNotes(prev => [note, ...prev.filter(item => item.id !== note.id)]);
+      setViewerId(note.id);
+      setWrongViewerId("");
+      return;
+    }
+
+    const card = normalizeWrongQuestion(result.item);
+    setWrongQuestions(prev => [card, ...prev.filter(item => item.id !== card.id)]);
+    setWrongViewerId(card.id);
+    setViewerId("");
   }
 
   async function attachFiles(fileList) {
@@ -679,6 +865,7 @@ function StudyApp({ onLogout }) {
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     const saved = parseNote({ ...payload, ...(data.note || {}) });
     setNotes(prev => [saved, ...prev.filter(note => note.id !== saved.id)]);
+    setAllSearchData(prev => prev.loaded ? { ...prev, notes: [saved, ...prev.notes.filter(note => note.id !== saved.id)] } : prev);
     return saved;
   }
 
@@ -725,6 +912,7 @@ function StudyApp({ onLogout }) {
     const response = await fetch(`/api/notes?id=${encodeURIComponent(noteId)}`, { method: "DELETE" });
     if (!response.ok) return setStatus("Cloud delete failed.");
     setNotes(prev => prev.filter(note => note.id !== noteId));
+    setAllSearchData(prev => prev.loaded ? { ...prev, notes: prev.notes.filter(note => note.id !== noteId) } : prev);
     if (viewerId === noteId) setViewerId("");
     if (editingId === noteId) closeEditor();
     setStatus("Saved note deleted.");
@@ -759,6 +947,7 @@ function StudyApp({ onLogout }) {
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
       const saved = normalizeWrongQuestion(data.flashcard || payload);
       setWrongQuestions(prev => [saved, ...prev.filter(card => card.id !== saved.id)]);
+      setAllSearchData(prev => prev.loaded ? { ...prev, wrongQuestions: [saved, ...prev.wrongQuestions.filter(card => card.id !== saved.id)] } : prev);
       closeWrongEditor();
       setWrongStatus(`Saved "${saved.title}" and closed the editor.`);
     } catch (error) {
@@ -786,6 +975,7 @@ function StudyApp({ onLogout }) {
     const response = await fetch(`/api/wrong-questions?id=${encodeURIComponent(cardId)}`, { method: "DELETE" });
     if (!response.ok) return setWrongStatus("Cloud delete failed.");
     setWrongQuestions(prev => prev.filter(card => card.id !== cardId));
+    setAllSearchData(prev => prev.loaded ? { ...prev, wrongQuestions: prev.wrongQuestions.filter(card => card.id !== cardId) } : prev);
     if (wrongViewerId === cardId) setWrongViewerId("");
     if (wrongEditingId === cardId) closeWrongEditor();
     setWrongStatus("Wrong question deleted.");
@@ -795,7 +985,50 @@ function StudyApp({ onLogout }) {
 
   function roomDirectory() {
     const children = room?.children || [];
-    return <section className="workspace"><div className="workspace-head"><div><div className="eyebrow">Room Directory</div><h1>{room?.name}</h1></div><p>Sub-rooms with Study Notes and Wrong Question previews.</p></div>{children.length ? children.map(child => { const cards = divisionNotes.filter(note => note.roomId === roomId && (note.subroomId || "") === child.id); const wrongCards = wrongQuestionsForSubroom(roomId, child.id); return <section className="subroom-section" key={child.id}><div className="subroom-head"><button onClick={() => chooseSubroom(roomId, child.id)}>{child.name}</button><span>{cards.length} notes - {wrongCards.length} wrong questions</span></div><section className="content-section"><h3>Study Notes</h3>{cards.length ? <div className="cards">{cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}</div> : <div className="empty-soft">No saved note cards in this sub-room yet.</div>}</section><section className="content-section"><h3>Wrong Questions</h3>{wrongCards.length ? <div className="wrong-cards">{wrongCards.map(card => <WrongQuestionCard key={card.id} card={card} canManage={false} onOpen={item => setWrongViewerId(item.id)} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />)}</div> : <div className="empty-soft">No wrong question cards in this sub-room yet.</div>}</section></section>; }) : <div className="empty-soft">No sub-rooms yet.</div>}</section>;
+    const query = clean(debouncedRoomSearch).toLowerCase();
+    const groups = children.map(child => {
+      const cards = divisionNotes.filter(note => note.roomId === roomId && (note.subroomId || "") === child.id);
+      const wrongCards = wrongQuestionsForSubroom(roomId, child.id);
+      return {
+        child,
+        cards: query ? cards.filter(note => noteSearchText(note).includes(query)) : cards,
+        wrongCards: query ? wrongCards.filter(card => wrongSearchText(card).includes(query)) : wrongCards,
+        totalCards: cards.length,
+        totalWrongCards: wrongCards.length
+      };
+    });
+    const hasRoomSearchResults = groups.some(group => group.cards.length || group.wrongCards.length);
+
+    return (
+      <section className="workspace">
+        <div className="workspace-head">
+          <div><div className="eyebrow">Room Directory</div><h1>{room?.name}</h1></div>
+          <p>Sub-rooms with Study Notes and Wrong Question previews.</p>
+        </div>
+        <SearchBar value={roomSearch} onChange={setRoomSearch} placeholder="Search in this room..." />
+        {children.length ? (
+          <>
+            {query && !hasRoomSearchResults ? <div className="empty-soft">No cards in this room matched this search.</div> : null}
+            {groups.map(({ child, cards, wrongCards, totalCards, totalWrongCards }) => {
+              if (query && !cards.length && !wrongCards.length) return null;
+              return (
+                <section className="subroom-section" key={child.id}>
+                  <div className="subroom-head"><button onClick={() => chooseSubroom(roomId, child.id)}>{child.name}</button><span>{query ? `${cards.length} matching notes - ${wrongCards.length} matching wrong questions` : `${totalCards} notes - ${totalWrongCards} wrong questions`}</span></div>
+                  <section className="content-section">
+                    <h3>Study Notes</h3>
+                    {cards.length ? <div className="cards">{cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}</div> : <div className="empty-soft">{query ? "No matching study note cards in this sub-room." : "No saved note cards in this sub-room yet."}</div>}
+                  </section>
+                  <section className="content-section">
+                    <h3>Wrong Questions</h3>
+                    {wrongCards.length ? <div className="wrong-cards">{wrongCards.map(card => <WrongQuestionCard key={card.id} card={card} canManage={false} onOpen={item => setWrongViewerId(item.id)} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />)}</div> : <div className="empty-soft">{query ? "No matching wrong question cards in this sub-room." : "No wrong question cards in this sub-room yet."}</div>}
+                  </section>
+                </section>
+              );
+            })}
+          </>
+        ) : <div className="empty-soft">No sub-rooms yet.</div>}
+      </section>
+    );
   }
 
   function subroomView() {
@@ -806,6 +1039,15 @@ function StudyApp({ onLogout }) {
     return <section className="workspace"><div className="workspace-head"><div><div className="eyebrow">Division</div><h1>{info.label} - {info.name}</h1></div><p>{divisionNotes.length} saved notes</p></div><div className="directory-grid">{rooms.map(item => <button key={item.id} onClick={() => chooseRoom(item.id)}><b>{item.name}</b><span>{item.children?.length || 0} sub-rooms - {divisionNotes.filter(note => note.roomId === item.id).length} notes</span></button>)}</div></section>;
   }
 
-  const main = !division ? <Dashboard onSelect={chooseDivision} /> : roomId && !subroomId ? roomDirectory() : roomId && subroomId ? subroomView() : divisionView();
+  const main = !division ? (
+    <Dashboard
+      onSelect={chooseDivision}
+      searchQuery={dashboardSearch}
+      onSearchChange={setDashboardSearch}
+      searchResults={dashboardSearchResults}
+      searchLoading={allSearchLoading || (Boolean(clean(debouncedDashboardSearch)) && !allSearchData.loaded)}
+      onOpenSearchResult={openSearchResult}
+    />
+  ) : roomId && !subroomId ? roomDirectory() : roomId && subroomId ? subroomView() : divisionView();
   return <div className="app-shell">{sidebar}<main>{status && !editorOpen ? <p className="status-banner">{status}</p> : null}{unassignedWrongQuestions.length && division ? <p className="status-banner">{unassignedWrongQuestions.length} legacy wrong question card(s) are preserved without sub-room assignment and are not shown in Sub-room lists.</p> : null}{main}</main><Viewer note={viewerNote} busy={busy} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onAnalyze={reanalyze} /><WrongQuestionViewer card={wrongViewerCard} canManage={Boolean(subroomId)} onClose={() => setWrongViewerId("")} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} /></div>;
 }
