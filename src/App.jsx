@@ -245,23 +245,16 @@ function NoteEditor({ draft, editing, busy, status, setDraft, onFiles, onRemoveF
 }
 
 function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze }) {
-  const [tab, setTab] = useState("overview");
   const [menuOpen, setMenuOpen] = useState(false);
   const [preview, setPreview] = useState(null);
 
   useEffect(() => {
     if (!note) return;
-    setTab("overview");
     setPreview(null);
     setMenuOpen(false);
   }, [note?.id]);
 
   if (!note) return null;
-
-  const tabs = [
-    ["overview", "Overview"],
-    ["attachments", "Attachments"]
-  ];
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -283,30 +276,17 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze }) {
           </div>
         </header>
 
-        <nav className="viewer-tabs">
-          {tabs.map(([key, label]) => <button key={key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>{label}</button>)}
-        </nav>
-
-        <div className="viewer-body">
-          {tab === "overview" ? (
-            <div className="overview-stack">
-              <section>
-                <h3>Summary</h3>
-                <p>{note.analysis?.summary || "No AI summary yet."}</p>
-              </section>
-              <section>
-                <h3>Bullet Points</h3>
-                {note.analysis?.bulletPoints?.length ? <ul>{note.analysis.bulletPoints.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p>No AI bullet points yet.</p>}
-              </section>
-              <section className="overview-raw">
-                <h3>Raw Notes</h3>
-                <div className="raw-note-text">{note.rawNotes || "No raw notes saved."}</div>
-              </section>
-            </div>
-          ) : null}
-
-          {tab === "attachments" ? (
-            <section className="attachments-tab">
+        <div className="viewer-body viewer-two-column">
+          <div className="viewer-left-column">
+            <section className="viewer-panel">
+              <h3>Summary</h3>
+              <p>{note.analysis?.summary || "No AI summary yet."}</p>
+            </section>
+            <section className="viewer-panel">
+              <h3>Bullet Points</h3>
+              {note.analysis?.bulletPoints?.length ? <ul>{note.analysis.bulletPoints.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p>No AI bullet points yet.</p>}
+            </section>
+            <section className="viewer-panel attachments-panel">
               <h3>Attachments</h3>
               {note.attachments?.length ? (
                 <>
@@ -335,7 +315,11 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze }) {
                 </>
               ) : <div className="empty-soft">No attachments saved for this note.</div>}
             </section>
-          ) : null}
+          </div>
+          <section className="viewer-panel raw-notes-panel">
+            <h3>Raw Notes</h3>
+            <div className="raw-note-text">{note.rawNotes || "No raw notes saved."}</div>
+          </section>
         </div>
       </section>
     </div>
