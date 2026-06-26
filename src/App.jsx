@@ -267,6 +267,84 @@ function SearchResults({ results, query, loading, emptyText, onOpen }) {
   );
 }
 
+function CardCarousel({ title, previousLabel, nextLabel, empty, children }) {
+  const scrollRef = useRef(null);
+  const [scrollState, setScrollState] = useState({ canPrevious: false, canNext: false });
+  const hasItems = Array.isArray(children) ? children.length > 0 : Boolean(children);
+
+  function updateScrollState() {
+    const track = scrollRef.current;
+    if (!track) return;
+    const maxScroll = Math.max(0, track.scrollWidth - track.clientWidth);
+    setScrollState({
+      canPrevious: track.scrollLeft > 2,
+      canNext: track.scrollLeft < maxScroll - 2
+    });
+  }
+
+  useEffect(() => {
+    const track = scrollRef.current;
+    if (!track) return undefined;
+    track.scrollLeft = 0;
+    const frame = window.requestAnimationFrame(updateScrollState);
+    const observer = typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateScrollState) : null;
+    observer?.observe(track);
+    Array.from(track.children).forEach(child => observer?.observe(child));
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [children]);
+
+  function scrollCards(direction) {
+    const track = scrollRef.current;
+    if (!track) return;
+    const firstCard = track.querySelector(".note-card, .wrong-card");
+    const cardWidth = firstCard?.getBoundingClientRect().width || 320;
+    track.scrollBy({ left: direction * Math.max(cardWidth + 14, track.clientWidth * 0.82), behavior: "smooth" });
+  }
+
+  function handleWheel(event) {
+    const track = scrollRef.current;
+    if (!track || track.scrollWidth <= track.clientWidth) return;
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+    const maxScroll = Math.max(0, track.scrollWidth - track.clientWidth);
+    if ((event.deltaY < 0 && track.scrollLeft <= 2) || (event.deltaY > 0 && track.scrollLeft >= maxScroll - 2)) return;
+    event.preventDefault();
+    track.scrollBy({ left: event.deltaY, behavior: "auto" });
+  }
+
+  function handleKeyDown(event) {
+    if (event.key === "ArrowLeft") {
+      event.preventDefault();
+      scrollCards(-1);
+    }
+    if (event.key === "ArrowRight") {
+      event.preventDefault();
+      scrollCards(1);
+    }
+  }
+
+  return (
+    <section className="content-section carousel-section">
+      <div className="carousel-head">
+        <h3>{title}</h3>
+        {hasItems ? (
+          <div className="carousel-controls">
+            <button className="carousel-control" aria-label={previousLabel} disabled={!scrollState.canPrevious} onClick={() => scrollCards(-1)}>‹</button>
+            <button className="carousel-control" aria-label={nextLabel} disabled={!scrollState.canNext} onClick={() => scrollCards(1)}>›</button>
+          </div>
+        ) : null}
+      </div>
+      {hasItems ? (
+        <div className="card-carousel-track" ref={scrollRef} onScroll={updateScrollState} onWheel={handleWheel} onKeyDown={handleKeyDown} tabIndex={0} aria-label={`${title} cards`}>
+          {children}
+        </div>
+      ) : empty}
+    </section>
+  );
+}
+
 function downloadAttachment(item) {
   const link = document.createElement("a");
   link.href = item.dataUrl;
@@ -1334,14 +1412,22 @@ function StudyApp({ onLogout }) {
                         </div>
                       </div>
                     </div>
-                    <section className="content-section">
-                      <h3>Study Notes</h3>
-                      {cards.length ? <div className="cards">{cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}</div> : <div className="empty-soft">{query ? "No matching study note cards in this sub-room." : "No saved note cards in this sub-room yet."}</div>}
-                    </section>
-                    <section className="content-section">
-                      <h3>Wrong Questions</h3>
-                      {wrongCards.length ? <div className="wrong-cards">{wrongCards.map(card => <WrongQuestionCard key={card.id} card={card} canManage={false} onOpen={item => setWrongViewerId(item.id)} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />)}</div> : <div className="empty-soft">{query ? "No matching wrong question cards in this sub-room." : "No wrong question cards in this sub-room yet."}</div>}
-                    </section>
+                    <CardCarousel
+                      title="Study Notes"
+                      previousLabel={`Previous study notes in ${child.name}`}
+                      nextLabel={`Next study notes in ${child.name}`}
+                      empty={<div className="empty-soft">{query ? "No matching study note cards in this sub-room." : "No saved note cards in this sub-room yet."}</div>}
+                    >
+                      {cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}
+                    </CardCarousel>
+                    <CardCarousel
+                      title="Wrong Questions"
+                      previousLabel={`Previous wrong questions in ${child.name}`}
+                      nextLabel={`Next wrong questions in ${child.name}`}
+                      empty={<div className="empty-soft">{query ? "No matching wrong question cards in this sub-room." : "No wrong question cards in this sub-room yet."}</div>}
+                    >
+                      {wrongCards.map(card => <WrongQuestionCard key={card.id} card={card} canManage={false} onOpen={item => setWrongViewerId(item.id)} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />)}
+                    </CardCarousel>
                   </section>
                 );
               })}

@@ -535,6 +535,70 @@ main {
   margin: 0;
 }
 
+.carousel-section {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.carousel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.carousel-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.carousel-control {
+  width: 34px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  padding: 0;
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1;
+  color: var(--accent-dark);
+  background: rgba(255, 253, 248, 0.92);
+}
+
+.carousel-control:disabled {
+  opacity: 0.36;
+}
+
+.card-carousel-track {
+  display: flex;
+  gap: 14px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-behavior: smooth;
+  scroll-padding-inline: 8px;
+  scroll-snap-type: x mandatory;
+  padding: 2px 8px 12px;
+  outline: none;
+}
+
+.card-carousel-track:focus-visible {
+  box-shadow: 0 0 0 3px rgba(141, 93, 54, 0.13);
+  border-radius: 16px;
+}
+
+.card-carousel-track > .note-card,
+.card-carousel-track > .wrong-card {
+  flex: 0 0 clamp(280px, 31vw, 360px);
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+}
+
 .content-section-head {
   display: flex;
   align-items: center;
@@ -1161,6 +1225,16 @@ main {
 
   .viewer-actions {
     justify-content: flex-start;
+  }
+
+  .carousel-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .card-carousel-track > .note-card,
+  .card-carousel-track > .wrong-card {
+    flex-basis: min(86vw, 340px);
   }
 
   .wrong-attachment-list > div {
