@@ -668,6 +668,55 @@ function WrongQuestionViewer({ card, onClose, onEdit, onDelete, canManage = true
   );
 }
 
+function SubroomNameModal({ mode, name, status, busy, onNameChange, onSave, onCancel }) {
+  return (
+    <div className="modal-backdrop" onClick={() => { if (!busy) onCancel(); }}>
+      <section className="small-modal" onClick={event => event.stopPropagation()}>
+        <div>
+          <div className="eyebrow">{mode === "rename" ? "Rename Sub-room" : "New Sub-room"}</div>
+          <h2>{mode === "rename" ? "Rename sub-room" : "Create sub-room"}</h2>
+        </div>
+        <label>Sub-room name</label>
+        <input value={name} onChange={event => onNameChange(event.target.value)} autoFocus placeholder="Sub-room name" />
+        {status ? <p className="status-banner">{status}</p> : null}
+        <div className="buttons">
+          <button className="primary" disabled={busy || !clean(name)} onClick={onSave}>{busy ? "Saving..." : "Save"}</button>
+          <button disabled={busy} onClick={onCancel}>Cancel</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function DeleteSubroomModal({ subroom, counts, status, busy, onConfirm, onCancel }) {
+  const hasContent = counts.notes || counts.wrongQuestions || counts.attachments;
+  return (
+    <div className="modal-backdrop" onClick={() => { if (!busy) onCancel(); }}>
+      <section className="small-modal danger-modal" onClick={event => event.stopPropagation()}>
+        <div>
+          <div className="eyebrow">Delete Sub-room</div>
+          <h2>Delete "{subroom?.name}"?</h2>
+        </div>
+        {hasContent ? (
+          <div className="delete-warning">
+            <p>Deleting this sub-room will also delete all notes, wrong questions, and attachments inside it.</p>
+            <div className="card-badges">
+              <span>{counts.notes} Study Notes</span>
+              <span>{counts.wrongQuestions} Wrong Questions</span>
+              <span>{counts.attachments} Attachments</span>
+            </div>
+          </div>
+        ) : <p className="muted-text">This sub-room has no saved notes, wrong questions, or attachments.</p>}
+        {status ? <p className="status-banner">{status}</p> : null}
+        <div className="buttons">
+          <button className="danger-button" disabled={busy} onClick={onConfirm}>{busy ? "Deleting..." : "Delete Sub-room"}</button>
+          <button disabled={busy} onClick={onCancel}>Cancel</button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function App() {
   const [auth, setAuth] = useState({ checking: true, authenticated: false, configured: true });
   useEffect(() => {
@@ -720,6 +769,12 @@ function StudyApp({ onLogout }) {
   const [allSearchLoading, setAllSearchLoading] = useState(false);
   const [quickAction, setQuickAction] = useState({ type: "note", division: "", roomId: "", subroomId: "" });
   const [loadedRoomDivisions, setLoadedRoomDivisions] = useState([]);
+  const [subroomForm, setSubroomForm] = useState(null);
+  const [subroomName, setSubroomName] = useState("");
+  const [deleteSubroomTarget, setDeleteSubroomTarget] = useState(null);
+  const [openSubroomMenuId, setOpenSubroomMenuId] = useState("");
+  const [subroomBusy, setSubroomBusy] = useState(false);
+  const [subroomStatus, setSubroomStatus] = useState("");
   const debouncedDashboardSearch = useDebouncedValue(dashboardSearch);
   const debouncedRoomSearch = useDebouncedValue(roomSearch);
 
@@ -834,6 +889,15 @@ function StudyApp({ onLogout }) {
     setWrongDraft({ title: "", text: "", attachments: [] });
   }
 
+  function closeSubroomPanels() {
+    setSubroomForm(null);
+    setSubroomName("");
+    setDeleteSubroomTarget(null);
+    setOpenSubroomMenuId("");
+    setSubroomBusy(false);
+    setSubroomStatus("");
+  }
+
   function chooseDivision(code) {
     setDivision(code);
     setRoomId("");
@@ -843,6 +907,7 @@ function StudyApp({ onLogout }) {
     setRoomSearch("");
     closeEditor();
     closeWrongEditor();
+    closeSubroomPanels();
     setStatus("");
     setWrongStatus("");
   }
@@ -855,6 +920,7 @@ function StudyApp({ onLogout }) {
     setRoomSearch("");
     closeEditor();
     closeWrongEditor();
+    closeSubroomPanels();
   }
 
   function chooseSubroom(parentId, idValue) {
@@ -865,6 +931,7 @@ function StudyApp({ onLogout }) {
     setRoomSearch("");
     closeEditor();
     closeWrongEditor();
+    closeSubroomPanels();
   }
 
   function openSearchResult(result) {
@@ -1085,6 +1152,127 @@ function StudyApp({ onLogout }) {
     setWrongStatus("Wrong question deleted.");
   }
 
+  function subroomContentCounts(targetRoomId, targetSubroomId) {
+    const noteItems = notes.filter(note => note.division === division && note.roomId === targetRoomId && (note.subroomId || "") === targetSubroomId);
+    const wrongItems = wrongQuestions.filter(card => (card.division || card.divisionId) === division && card.roomId === targetRoomId && (card.subroomId || "") === targetSubroomId);
+    return {
+      notes: noteItems.length,
+      wrongQuestions: wrongItems.length,
+      attachments: noteItems.reduce((sum, note) => sum + (note.attachments?.length || 0), 0) + wrongItems.reduce((sum, card) => sum + (card.attachments?.length || 0), 0)
+    };
+  }
+
+  function updateSubroomInTree(targetRoomId, updater) {
+    setTree(prev => ({
+      ...prev,
+      [division]: (prev[division] || []).map(item => item.id === targetRoomId ? { ...item, children: updater(item.children || []) } : item)
+    }));
+  }
+
+  function openNewSubroom() {
+    setSubroomForm({ mode: "new" });
+    setSubroomName("");
+    setSubroomStatus("");
+    setOpenSubroomMenuId("");
+  }
+
+  function openRenameSubroom(child) {
+    setSubroomForm({ mode: "rename", child });
+    setSubroomName(child.name || "");
+    setSubroomStatus("");
+    setOpenSubroomMenuId("");
+  }
+
+  async function saveSubroom() {
+    const name = clean(subroomName);
+    if (!name || !roomId || !division || !subroomForm) return;
+    try {
+      setSubroomBusy(true);
+      setSubroomStatus("");
+      if (subroomForm.mode === "rename") {
+        const child = subroomForm.child;
+        const response = await fetch("/api/rooms", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: child.id, division, parentId: roomId, name })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+        updateSubroomInTree(roomId, children => children.map(item => item.id === child.id ? { ...item, name } : item));
+        setNotes(prev => prev.map(note => note.division === division && note.roomId === roomId && (note.subroomId || "") === child.id ? { ...note, subroomName: name } : note));
+        setWrongQuestions(prev => prev.map(card => (card.division || card.divisionId) === division && card.roomId === roomId && (card.subroomId || "") === child.id ? { ...card, subroomName: name, subRoomName: name, topicPath: [card.division || card.divisionId || division, card.roomName, name].filter(Boolean).join(" / ") } : card));
+        setAllSearchData(prev => prev.loaded ? {
+          ...prev,
+          notes: prev.notes.map(note => note.division === division && note.roomId === roomId && (note.subroomId || "") === child.id ? { ...note, subroomName: name } : note),
+          wrongQuestions: prev.wrongQuestions.map(card => (card.division || card.divisionId) === division && card.roomId === roomId && (card.subroomId || "") === child.id ? { ...card, subroomName: name, subRoomName: name, topicPath: [card.division || card.divisionId || division, card.roomName, name].filter(Boolean).join(" / ") } : card)
+        } : prev);
+        setStatus(`Renamed sub-room to "${name}".`);
+      } else {
+        const existingChildren = room?.children || [];
+        const payload = {
+          id: makeId("subroom"),
+          division,
+          parentId: roomId,
+          name,
+          roomType: "subroom",
+          sortOrder: existingChildren.length
+        };
+        const response = await fetch("/api/rooms", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+        const saved = data.room || { id: payload.id, name };
+        updateSubroomInTree(roomId, children => [...children, saved]);
+        setStatus(`Created sub-room "${saved.name}".`);
+      }
+      closeSubroomPanels();
+    } catch (error) {
+      setSubroomStatus(`Cloud save failed: ${error.message}`);
+    } finally {
+      setSubroomBusy(false);
+    }
+  }
+
+  function openDeleteSubroom(child) {
+    setDeleteSubroomTarget(child);
+    setSubroomStatus("");
+    setOpenSubroomMenuId("");
+  }
+
+  async function deleteSubroom() {
+    if (!deleteSubroomTarget || !roomId || !division) return;
+    const targetId = deleteSubroomTarget.id;
+    try {
+      setSubroomBusy(true);
+      setSubroomStatus("");
+      const response = await fetch(`/api/rooms?id=${encodeURIComponent(targetId)}&division=${encodeURIComponent(division)}&parentId=${encodeURIComponent(roomId)}`, { method: "DELETE" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      updateSubroomInTree(roomId, children => children.filter(child => child.id !== targetId));
+      setNotes(prev => prev.filter(note => !(note.division === division && note.roomId === roomId && (note.subroomId || "") === targetId)));
+      setWrongQuestions(prev => prev.filter(card => !((card.division || card.divisionId) === division && card.roomId === roomId && (card.subroomId || "") === targetId)));
+      setAllSearchData(prev => prev.loaded ? {
+        ...prev,
+        notes: prev.notes.filter(note => !(note.division === division && note.roomId === roomId && (note.subroomId || "") === targetId)),
+        wrongQuestions: prev.wrongQuestions.filter(card => !((card.division || card.divisionId) === division && card.roomId === roomId && (card.subroomId || "") === targetId))
+      } : prev);
+      if (subroomId === targetId) setSubroomId("");
+      if (viewerNote?.roomId === roomId && (viewerNote.subroomId || "") === targetId) setViewerId("");
+      if (wrongViewerCard?.roomId === roomId && (wrongViewerCard.subroomId || "") === targetId) setWrongViewerId("");
+      if (editingId && notes.some(note => note.id === editingId && note.roomId === roomId && (note.subroomId || "") === targetId)) closeEditor();
+      if (wrongEditingId && wrongQuestions.some(card => card.id === wrongEditingId && card.roomId === roomId && (card.subroomId || "") === targetId)) closeWrongEditor();
+      closeSubroomPanels();
+      setStatus(`Deleted sub-room "${deleteSubroomTarget.name}".`);
+    } catch (error) {
+      setSubroomStatus(`Cloud delete failed: ${error.message}`);
+    } finally {
+      setSubroomBusy(false);
+    }
+  }
+
   const topMenu = (
     <header className="top-menu">
       <nav className="top-nav">
@@ -1102,6 +1290,7 @@ function StudyApp({ onLogout }) {
   function roomDirectory() {
     const children = room?.children || [];
     const query = clean(debouncedRoomSearch).toLowerCase();
+    const deleteCounts = deleteSubroomTarget ? subroomContentCounts(roomId, deleteSubroomTarget.id) : null;
     const groups = children.map(child => {
       const cards = divisionNotes.filter(note => note.roomId === roomId && (note.subroomId || "") === child.id);
       const wrongCards = wrongQuestionsForSubroom(roomId, child.id);
@@ -1116,34 +1305,52 @@ function StudyApp({ onLogout }) {
     const hasRoomSearchResults = groups.some(group => group.cards.length || group.wrongCards.length);
 
     return (
-      <section className="workspace">
-        <div className="workspace-head">
-          <div><div className="eyebrow">Room Directory</div><h1>{room?.name}</h1></div>
-          <p>Sub-rooms with Study Notes and Wrong Question previews.</p>
-        </div>
-        <SearchBar value={roomSearch} onChange={setRoomSearch} placeholder="Search in this room..." />
-        {children.length ? (
-          <>
-            {query && !hasRoomSearchResults ? <div className="empty-soft">No cards in this room matched this search.</div> : null}
-            {groups.map(({ child, cards, wrongCards, totalCards, totalWrongCards }) => {
-              if (query && !cards.length && !wrongCards.length) return null;
-              return (
-                <section className="subroom-section" key={child.id}>
-                  <div className="subroom-head"><button onClick={() => chooseSubroom(roomId, child.id)}>{child.name}</button><span>{query ? `${cards.length} matching notes - ${wrongCards.length} matching wrong questions` : `${totalCards} notes - ${totalWrongCards} wrong questions`}</span></div>
-                  <section className="content-section">
-                    <h3>Study Notes</h3>
-                    {cards.length ? <div className="cards">{cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}</div> : <div className="empty-soft">{query ? "No matching study note cards in this sub-room." : "No saved note cards in this sub-room yet."}</div>}
+      <>
+        <section className="workspace">
+          <div className="workspace-head">
+            <div><div className="eyebrow">Room Directory</div><h1>{room?.name}</h1><p>Sub-rooms with Study Notes and Wrong Question previews.</p></div>
+            <div className="buttons"><button className="primary" onClick={openNewSubroom}>+ New Sub-room</button></div>
+          </div>
+          <SearchBar value={roomSearch} onChange={setRoomSearch} placeholder="Search in this room..." />
+          {children.length ? (
+            <>
+              {query && !hasRoomSearchResults ? <div className="empty-soft">No cards in this room matched this search.</div> : null}
+              {groups.map(({ child, cards, wrongCards, totalCards, totalWrongCards }) => {
+                if (query && !cards.length && !wrongCards.length) return null;
+                return (
+                  <section className="subroom-section" key={child.id}>
+                    <div className="subroom-head">
+                      <button className="subroom-title-button" onClick={() => chooseSubroom(roomId, child.id)}>{child.name}</button>
+                      <div className="subroom-head-actions">
+                        <span>{query ? `${cards.length} matching notes - ${wrongCards.length} matching wrong questions` : `${totalCards} notes - ${totalWrongCards} wrong questions`}</span>
+                        <div className="card-menu-wrap">
+                          <button className="icon-menu-btn" aria-label={`${child.name} actions`} onClick={() => setOpenSubroomMenuId(open => open === child.id ? "" : child.id)}>•••</button>
+                          {openSubroomMenuId === child.id ? (
+                            <div className="card-menu">
+                              <button onClick={() => openRenameSubroom(child)}>Rename</button>
+                              <button className="danger-menu-item" onClick={() => openDeleteSubroom(child)}>Delete</button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                    <section className="content-section">
+                      <h3>Study Notes</h3>
+                      {cards.length ? <div className="cards">{cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}</div> : <div className="empty-soft">{query ? "No matching study note cards in this sub-room." : "No saved note cards in this sub-room yet."}</div>}
+                    </section>
+                    <section className="content-section">
+                      <h3>Wrong Questions</h3>
+                      {wrongCards.length ? <div className="wrong-cards">{wrongCards.map(card => <WrongQuestionCard key={card.id} card={card} canManage={false} onOpen={item => setWrongViewerId(item.id)} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />)}</div> : <div className="empty-soft">{query ? "No matching wrong question cards in this sub-room." : "No wrong question cards in this sub-room yet."}</div>}
+                    </section>
                   </section>
-                  <section className="content-section">
-                    <h3>Wrong Questions</h3>
-                    {wrongCards.length ? <div className="wrong-cards">{wrongCards.map(card => <WrongQuestionCard key={card.id} card={card} canManage={false} onOpen={item => setWrongViewerId(item.id)} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />)}</div> : <div className="empty-soft">{query ? "No matching wrong question cards in this sub-room." : "No wrong question cards in this sub-room yet."}</div>}
-                  </section>
-                </section>
-              );
-            })}
-          </>
-        ) : <div className="empty-soft">No sub-rooms yet.</div>}
-      </section>
+                );
+              })}
+            </>
+          ) : <div className="empty-soft">No sub-rooms yet.</div>}
+        </section>
+        {subroomForm ? <SubroomNameModal mode={subroomForm.mode} name={subroomName} status={subroomStatus} busy={subroomBusy} onNameChange={setSubroomName} onSave={saveSubroom} onCancel={closeSubroomPanels} /> : null}
+        {deleteSubroomTarget ? <DeleteSubroomModal subroom={deleteSubroomTarget} counts={deleteCounts} status={subroomStatus} busy={subroomBusy} onConfirm={deleteSubroom} onCancel={closeSubroomPanels} /> : null}
+      </>
     );
   }
 
