@@ -879,28 +879,53 @@ function RoomCreatePicker({ mode, subrooms, value, onChange, onContinue, onCance
 
 function DivisionRoomCard({ room, noteCount, wrongCount, onOpenRoom, onOpenSubroom, onNewSubroom, onRenameSubroom, onDeleteSubroom }) {
   const subrooms = room.children || [];
+  function openRoomFromKeyboard(event) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onOpenRoom(room.id);
+    }
+  }
+  function openSubroomFromKeyboard(event, childId) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      event.stopPropagation();
+      onOpenSubroom(room.id, childId);
+    }
+  }
   return (
-    <article className="room-card">
+    <article className="room-card" role="button" tabIndex={0} onClick={() => onOpenRoom(room.id)} onKeyDown={openRoomFromKeyboard}>
       <div className="room-card-head">
-        <button className="room-card-title" onClick={() => onOpenRoom(room.id)}>
+        <div className="room-card-title">
           <b>{room.name}</b>
-          <span>{subrooms.length} sub-rooms - {noteCount} notes - {wrongCount} wrong questions</span>
-        </button>
+          <span>{subrooms.length} sub-rooms {"\u00B7"} {noteCount} notes {"\u00B7"} {wrongCount} wrong questions</span>
+        </div>
         <ActionMenu label={`${room.name} actions`}>
           <button onClick={() => onNewSubroom(room.id)}>+ New Sub-room</button>
         </ActionMenu>
       </div>
       <div className="room-card-actions">
-        <button className="primary" onClick={() => onOpenRoom(room.id)}>Open Room</button>
-        <button onClick={() => onNewSubroom(room.id)}>+ New Sub-room</button>
+        <button className="room-card-new-subroom" onClick={event => {
+          event.stopPropagation();
+          onNewSubroom(room.id);
+        }}>+ New Sub-room</button>
       </div>
       <section className="room-subroom-list">
         <div className="eyebrow">Sub-rooms</div>
         {subrooms.length ? (
           <div className="subroom-list">
             {subrooms.map(child => (
-              <div className="subroom-row" key={child.id}>
-                <button onClick={() => onOpenSubroom(room.id, child.id)}>{child.name}</button>
+              <div
+                className="subroom-row"
+                key={child.id}
+                role="button"
+                tabIndex={0}
+                onClick={event => {
+                  event.stopPropagation();
+                  onOpenSubroom(room.id, child.id);
+                }}
+                onKeyDown={event => openSubroomFromKeyboard(event, child.id)}
+              >
+                <span className="subroom-row-name">{child.name}</span>
                 <ActionMenu label={`${child.name} actions`}>
                   <button onClick={() => onRenameSubroom(child, room.id)}>Rename</button>
                   <button className="danger-menu-item" onClick={() => onDeleteSubroom(child, room.id)}>Delete</button>

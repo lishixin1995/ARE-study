@@ -347,7 +347,7 @@ main {
   gap: 14px;
 }
 
-.directory-grid button {
+.directory-grid > button {
   min-height: 120px;
   text-align: left;
   background: rgba(255, 253, 248, 0.78);
@@ -360,64 +360,77 @@ main {
 
 .room-card {
   display: grid;
-  gap: 12px;
-  min-height: 220px;
+  align-content: start;
+  gap: 9px;
   background: rgba(255, 253, 248, 0.78);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 16px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  padding: 13px;
+  cursor: pointer;
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.room-card:hover,
+.room-card:focus-visible {
+  border-color: rgba(137, 91, 43, 0.34);
+  box-shadow: 0 12px 28px rgba(73, 50, 27, 0.1);
+}
+
+.room-card:focus-visible {
+  outline: 2px solid rgba(137, 91, 43, 0.28);
+  outline-offset: 2px;
 }
 
 .room-card-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 
 .room-card-title {
-  min-height: 0;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  text-align: left;
   display: grid;
-  gap: 6px;
+  gap: 3px;
+  min-width: 0;
 }
 
 .room-card-title b {
-  font-size: 20px;
+  font-size: 18px;
+  line-height: 1.25;
 }
 
 .room-card-title span {
   color: var(--muted);
   font-size: 13px;
+  line-height: 1.35;
 }
 
 .room-card-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 7px;
 }
 
-.room-card-actions button {
+.room-card-new-subroom {
   min-height: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 11px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 900;
 }
 
 .room-subroom-list {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   border-top: 1px solid var(--line-soft);
-  padding-top: 12px;
+  padding-top: 9px;
 }
 
 .subroom-list {
   display: grid;
-  gap: 8px;
+  gap: 6px;
 }
 
 .subroom-row {
@@ -425,20 +438,40 @@ main {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border: 1px solid var(--line-soft);
-  border-radius: 12px;
-  padding: 8px 9px;
-  background: rgba(255, 250, 242, 0.72);
+  min-height: 50px;
+  border: 1px solid rgba(145, 102, 57, 0.14);
+  border-radius: 10px;
+  padding: 0 9px 0 12px;
+  background: rgba(255, 250, 242, 0.64);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
 }
 
-.subroom-row > button {
-  min-height: 0;
-  display: block;
-  border: 0;
-  background: transparent;
-  padding: 0;
-  text-align: left;
+.subroom-row:hover,
+.subroom-row:focus-visible {
+  background: rgba(248, 235, 215, 0.72);
+  border-color: rgba(137, 91, 43, 0.28);
+}
+
+.subroom-row:focus-visible {
+  outline: 2px solid rgba(137, 91, 43, 0.22);
+  outline-offset: 2px;
+}
+
+.subroom-row-name {
   font-weight: 800;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.room-card .icon-menu-btn,
+.subroom-row .icon-menu-btn {
+  width: 36px;
+  min-width: 36px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: 10px;
 }
 
 .directory-grid b {
@@ -448,6 +481,10 @@ main {
 .directory-grid,
 .cards {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.directory-grid {
+  align-items: start;
 }
 
 .status-banner {
