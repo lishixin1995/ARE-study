@@ -358,6 +358,89 @@ main {
   border-radius: 16px;
 }
 
+.room-card {
+  display: grid;
+  gap: 12px;
+  min-height: 220px;
+  background: rgba(255, 253, 248, 0.78);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px;
+}
+
+.room-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.room-card-title {
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  display: grid;
+  gap: 6px;
+}
+
+.room-card-title b {
+  font-size: 20px;
+}
+
+.room-card-title span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.room-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.room-card-actions button {
+  min-height: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 11px;
+}
+
+.room-subroom-list {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 12px;
+}
+
+.subroom-list {
+  display: grid;
+  gap: 8px;
+}
+
+.subroom-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  padding: 8px 9px;
+  background: rgba(255, 250, 242, 0.72);
+}
+
+.subroom-row > button {
+  min-height: 0;
+  display: block;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  font-weight: 800;
+}
+
 .directory-grid b {
   font-weight: 900;
 }
@@ -554,6 +637,21 @@ main {
   flex: 0 0 auto;
 }
 
+.carousel-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mini-action {
+  border-radius: 999px;
+  padding: 7px 10px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .carousel-control {
   width: 34px;
   height: 32px;
@@ -727,6 +825,8 @@ main {
 .icon-menu-btn {
   min-width: 34px;
   min-height: 30px;
+  display: inline-grid;
+  place-items: center;
   padding: 4px 8px;
   line-height: 1;
 }
@@ -747,6 +847,8 @@ main {
 }
 
 .card-menu button {
+  min-height: 0;
+  display: block;
   text-align: left;
   border: 0;
   background: transparent;
@@ -1103,6 +1205,17 @@ main {
   margin: 0 0 4px;
   font-size: 18px;
   line-height: 1.25;
+}
+
+.wrong-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.wrong-card-title-block {
+  min-width: 0;
 }
 
 .wrong-card small {
