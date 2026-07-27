@@ -805,16 +805,17 @@ function WrongQuestionViewer({ card, onClose, onEdit, onDelete, canManage = true
   );
 }
 
-function SubroomNameModal({ mode, name, status, busy, onNameChange, onSave, onCancel }) {
+function RoomNameModal({ roomType, mode, name, status, busy, onNameChange, onSave, onCancel }) {
+  const label = roomType === "room" ? "Room" : "Sub-room";
   return (
     <div className="modal-backdrop" onClick={() => { if (!busy) onCancel(); }}>
       <section className="small-modal" onClick={event => event.stopPropagation()}>
         <div>
-          <div className="eyebrow">{mode === "rename" ? "Rename Sub-room" : "New Sub-room"}</div>
-          <h2>{mode === "rename" ? "Rename sub-room" : "Create sub-room"}</h2>
+          <div className="eyebrow">{mode === "rename" ? `Rename ${label}` : `New ${label}`}</div>
+          <h2>{mode === "rename" ? `Rename ${label.toLowerCase()}` : `Create ${label.toLowerCase()}`}</h2>
         </div>
-        <label>Sub-room name</label>
-        <input value={name} onChange={event => onNameChange(event.target.value)} autoFocus placeholder="Sub-room name" />
+        <label>{label} name</label>
+        <input value={name} onChange={event => onNameChange(event.target.value)} autoFocus placeholder={`${label} name`} />
         {status ? <p className="status-banner">{status}</p> : null}
         <div className="buttons">
           <button className="primary" disabled={busy || !clean(name)} onClick={onSave}>{busy ? "Saving..." : "Save"}</button>
@@ -825,28 +826,31 @@ function SubroomNameModal({ mode, name, status, busy, onNameChange, onSave, onCa
   );
 }
 
-function DeleteSubroomModal({ subroom, counts, status, busy, onConfirm, onCancel }) {
-  const hasContent = counts.notes || counts.wrongQuestions || counts.attachments;
+function DeleteRoomModal({ roomType, item, counts, status, busy, onConfirm, onCancel }) {
+  const isRoom = roomType === "room";
+  const label = isRoom ? "Room" : "Sub-room";
+  const hasContent = counts.subrooms || counts.notes || counts.wrongQuestions || counts.attachments;
   return (
     <div className="modal-backdrop" onClick={() => { if (!busy) onCancel(); }}>
       <section className="small-modal danger-modal" onClick={event => event.stopPropagation()}>
         <div>
-          <div className="eyebrow">Delete Sub-room</div>
-          <h2>Delete "{subroom?.name}"?</h2>
+          <div className="eyebrow">Delete {label}</div>
+          <h2>Delete "{item?.name}"?</h2>
         </div>
         {hasContent ? (
           <div className="delete-warning">
-            <p>Deleting this sub-room will also delete all notes, wrong questions, and attachments inside it.</p>
+            <p>Deleting this {label.toLowerCase()} will also delete all {isRoom ? "sub-rooms, " : ""}notes, wrong questions, and attachments inside it.</p>
             <div className="card-badges">
+              {isRoom ? <span>{counts.subrooms} Sub-rooms</span> : null}
               <span>{counts.notes} Study Notes</span>
               <span>{counts.wrongQuestions} Wrong Questions</span>
               <span>{counts.attachments} Attachments</span>
             </div>
           </div>
-        ) : <p className="muted-text">This sub-room has no saved notes, wrong questions, or attachments.</p>}
+        ) : <p className="muted-text">This {label.toLowerCase()} has no saved content.</p>}
         {status ? <p className="status-banner">{status}</p> : null}
         <div className="buttons">
-          <button className="danger-button" disabled={busy} onClick={onConfirm}>{busy ? "Deleting..." : "Delete Sub-room"}</button>
+          <button className="danger-button" disabled={busy} onClick={onConfirm}>{busy ? "Deleting..." : `Delete ${label}`}</button>
           <button disabled={busy} onClick={onCancel}>Cancel</button>
         </div>
       </section>
@@ -877,7 +881,7 @@ function RoomCreatePicker({ mode, subrooms, value, onChange, onContinue, onCance
   );
 }
 
-function DivisionRoomCard({ room, noteCount, wrongCount, onOpenRoom, onOpenSubroom, onNewSubroom, onRenameSubroom, onDeleteSubroom }) {
+function DivisionRoomCard({ room, noteCount, wrongCount, onOpenRoom, onOpenSubroom, onNewSubroom, onRenameRoom, onDeleteRoom, onRenameSubroom, onDeleteSubroom }) {
   const subrooms = room.children || [];
   function openRoomFromKeyboard(event) {
     if (event.key === "Enter" || event.key === " ") {
@@ -901,6 +905,8 @@ function DivisionRoomCard({ room, noteCount, wrongCount, onOpenRoom, onOpenSubro
         </div>
         <ActionMenu label={`${room.name} actions`}>
           <button onClick={() => onNewSubroom(room.id)}>+ New Sub-room</button>
+          <button onClick={() => onRenameRoom(room)}>Rename Room</button>
+          <button className="danger-menu-item" onClick={() => onDeleteRoom(room)}>Delete Room</button>
         </ActionMenu>
       </div>
       <div className="room-card-actions">
@@ -991,6 +997,11 @@ function StudyApp({ onLogout }) {
   const [allSearchLoading, setAllSearchLoading] = useState(false);
   const [quickAction, setQuickAction] = useState({ type: "note", division: "", roomId: "", subroomId: "" });
   const [loadedRoomDivisions, setLoadedRoomDivisions] = useState([]);
+  const [roomForm, setRoomForm] = useState(null);
+  const [roomName, setRoomName] = useState("");
+  const [deleteRoomTarget, setDeleteRoomTarget] = useState(null);
+  const [roomBusy, setRoomBusy] = useState(false);
+  const [roomStatus, setRoomStatus] = useState("");
   const [subroomForm, setSubroomForm] = useState(null);
   const [subroomName, setSubroomName] = useState("");
   const [deleteSubroomTarget, setDeleteSubroomTarget] = useState(null);
@@ -1124,6 +1135,14 @@ function StudyApp({ onLogout }) {
     setSubroomStatus("");
   }
 
+  function closeRoomPanels() {
+    setRoomForm(null);
+    setRoomName("");
+    setDeleteRoomTarget(null);
+    setRoomBusy(false);
+    setRoomStatus("");
+  }
+
   function closeRoomCreatePicker() {
     setRoomCreateMode("");
     setRoomCreateSubroomId("");
@@ -1138,6 +1157,7 @@ function StudyApp({ onLogout }) {
     setRoomSearch("");
     closeEditor();
     closeWrongEditor();
+    closeRoomPanels();
     closeSubroomPanels();
     closeRoomCreatePicker();
     setStatus("");
@@ -1152,6 +1172,7 @@ function StudyApp({ onLogout }) {
     setRoomSearch("");
     closeEditor();
     closeWrongEditor();
+    closeRoomPanels();
     closeSubroomPanels();
     closeRoomCreatePicker();
   }
@@ -1164,6 +1185,7 @@ function StudyApp({ onLogout }) {
     setRoomSearch("");
     closeEditor();
     closeWrongEditor();
+    closeRoomPanels();
     closeSubroomPanels();
     closeRoomCreatePicker();
   }
@@ -1387,6 +1409,127 @@ function StudyApp({ onLogout }) {
     setWrongStatus("Wrong question deleted.");
   }
 
+  function roomContentCounts(targetRoomId) {
+    const targetRoom = rooms.find(item => item.id === targetRoomId);
+    const noteItems = notes.filter(note => note.division === division && note.roomId === targetRoomId);
+    const wrongItems = wrongQuestions.filter(card => (card.division || card.divisionId) === division && card.roomId === targetRoomId);
+    return {
+      subrooms: targetRoom?.children?.length || 0,
+      notes: noteItems.length,
+      wrongQuestions: wrongItems.length,
+      attachments: noteItems.reduce((sum, note) => sum + (note.attachments?.length || 0), 0) + wrongItems.reduce((sum, card) => sum + (card.attachments?.length || 0), 0)
+    };
+  }
+
+  function openNewRoom() {
+    setRoomForm({ mode: "new" });
+    setRoomName("");
+    setRoomStatus("");
+  }
+
+  function openRenameRoom(targetRoom) {
+    setRoomForm({ mode: "rename", room: targetRoom });
+    setRoomName(targetRoom.name || "");
+    setRoomStatus("");
+  }
+
+  async function saveRoom() {
+    const name = clean(roomName);
+    if (!name || !division || !roomForm) return;
+    try {
+      setRoomBusy(true);
+      setRoomStatus("");
+      if (roomForm.mode === "rename") {
+        const targetRoom = roomForm.room;
+        const response = await fetch("/api/rooms", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: targetRoom.id, division, name, roomType: "room" })
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+        setTree(prev => ({
+          ...prev,
+          [division]: (prev[division] || []).map(item => item.id === targetRoom.id ? { ...item, name } : item)
+        }));
+        setNotes(prev => prev.map(note => note.division === division && note.roomId === targetRoom.id ? { ...note, roomName: name } : note));
+        setWrongQuestions(prev => prev.map(card => (card.division || card.divisionId) === division && card.roomId === targetRoom.id ? { ...card, roomName: name, topicPath: [card.division || card.divisionId || division, name, card.subroomName || card.subRoomName].filter(Boolean).join(" / ") } : card));
+        setAllSearchData(prev => prev.loaded ? {
+          ...prev,
+          notes: prev.notes.map(note => note.division === division && note.roomId === targetRoom.id ? { ...note, roomName: name } : note),
+          wrongQuestions: prev.wrongQuestions.map(card => (card.division || card.divisionId) === division && card.roomId === targetRoom.id ? { ...card, roomName: name, topicPath: [card.division || card.divisionId || division, name, card.subroomName || card.subRoomName].filter(Boolean).join(" / ") } : card)
+        } : prev);
+        closeRoomPanels();
+        setStatus(`Renamed room to "${name}".`);
+        return;
+      }
+
+      const payload = {
+        id: makeId("room"),
+        division,
+        parentId: null,
+        name,
+        roomType: "room",
+        sortOrder: rooms.length
+      };
+      const response = await fetch("/api/rooms", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      const saved = { ...(data.room || { id: payload.id, name }), children: [] };
+      setTree(prev => ({ ...prev, [division]: [...(prev[division] || []), saved] }));
+      closeRoomPanels();
+      setStatus(`Created room "${saved.name}".`);
+    } catch (error) {
+      setRoomStatus(`Cloud save failed: ${error.message}`);
+    } finally {
+      setRoomBusy(false);
+    }
+  }
+
+  function openDeleteRoom(targetRoom) {
+    setDeleteRoomTarget(targetRoom);
+    setRoomStatus("");
+  }
+
+  async function deleteRoom() {
+    if (!deleteRoomTarget || !division) return;
+    const targetId = deleteRoomTarget.id;
+    try {
+      setRoomBusy(true);
+      setRoomStatus("");
+      const response = await fetch(`/api/rooms?id=${encodeURIComponent(targetId)}&division=${encodeURIComponent(division)}`, { method: "DELETE" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+      setTree(prev => ({ ...prev, [division]: (prev[division] || []).filter(item => item.id !== targetId) }));
+      setNotes(prev => prev.filter(note => !(note.division === division && note.roomId === targetId)));
+      setWrongQuestions(prev => prev.filter(card => !((card.division || card.divisionId) === division && card.roomId === targetId)));
+      setAllSearchData(prev => prev.loaded ? {
+        ...prev,
+        notes: prev.notes.filter(note => !(note.division === division && note.roomId === targetId)),
+        wrongQuestions: prev.wrongQuestions.filter(card => !((card.division || card.divisionId) === division && card.roomId === targetId))
+      } : prev);
+      setQuickAction(prev => prev.division === division && prev.roomId === targetId ? { ...prev, roomId: "", subroomId: "" } : prev);
+      if (roomId === targetId) {
+        setRoomId("");
+        setSubroomId("");
+      }
+      if (viewerNote?.roomId === targetId) setViewerId("");
+      if (wrongViewerCard?.roomId === targetId) setWrongViewerId("");
+      if (editingId && notes.some(note => note.id === editingId && note.roomId === targetId)) closeEditor();
+      if (wrongEditingId && wrongQuestions.some(card => card.id === wrongEditingId && card.roomId === targetId)) closeWrongEditor();
+      closeRoomPanels();
+      setStatus(`Deleted room "${deleteRoomTarget.name}".`);
+    } catch (error) {
+      setRoomStatus(`Cloud delete failed: ${error.message}`);
+    } finally {
+      setRoomBusy(false);
+    }
+  }
+
   function subroomContentCounts(targetRoomId, targetSubroomId) {
     const noteItems = notes.filter(note => note.division === division && note.roomId === targetRoomId && (note.subroomId || "") === targetSubroomId);
     const wrongItems = wrongQuestions.filter(card => (card.division || card.divisionId) === division && card.roomId === targetRoomId && (card.subroomId || "") === targetSubroomId);
@@ -1428,7 +1571,7 @@ function StudyApp({ onLogout }) {
         const response = await fetch("/api/rooms", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: child.id, division, parentId: targetRoomId, name })
+          body: JSON.stringify({ id: child.id, division, parentId: targetRoomId, name, roomType: "subroom" })
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
@@ -1646,7 +1789,10 @@ function StudyApp({ onLogout }) {
       <section className="workspace">
         <div className="workspace-head">
           <div><div className="eyebrow">Division</div><h1>{info.label} - {info.name}</h1></div>
-          <p>{divisionNotes.length} saved notes</p>
+          <div className="division-head-actions">
+            <p>{divisionNotes.length} saved notes</p>
+            <button className="primary" onClick={openNewRoom}>+ New Room</button>
+          </div>
         </div>
         <div className="directory-grid">
           {rooms.map(item => (
@@ -1658,6 +1804,8 @@ function StudyApp({ onLogout }) {
               onOpenRoom={chooseRoom}
               onOpenSubroom={chooseSubroom}
               onNewSubroom={openNewSubroom}
+              onRenameRoom={openRenameRoom}
+              onDeleteRoom={openDeleteRoom}
               onRenameSubroom={openRenameSubroom}
               onDeleteSubroom={openDeleteSubroom}
             />
@@ -1685,7 +1833,8 @@ function StudyApp({ onLogout }) {
       onOpenWrongQuestion={openDashboardWrongQuestion}
     />
   ) : roomId && !subroomId ? roomDirectory() : roomId && subroomId ? subroomView() : divisionView();
+  const deleteRoomCounts = deleteRoomTarget ? roomContentCounts(deleteRoomTarget.id) : null;
   const deleteSubroomCounts = deleteSubroomTarget ? subroomContentCounts(deleteSubroomTarget.parentId || roomId, deleteSubroomTarget.id) : null;
 
-  return <div className="app-shell">{topMenu}<main>{status && !editorOpen ? <p className="status-banner">{status}</p> : null}{unassignedWrongQuestions.length && division ? <p className="status-banner">{unassignedWrongQuestions.length} legacy wrong question card(s) are preserved without sub-room assignment and are not shown in Sub-room lists.</p> : null}{main}</main><Viewer note={viewerNote} busy={busy} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onAnalyze={reanalyze} /><WrongQuestionViewer card={wrongViewerCard} canManage={Boolean(subroomId || wrongViewerCard?.roomId)} onClose={() => setWrongViewerId("")} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />{subroomForm ? <SubroomNameModal mode={subroomForm.mode} name={subroomName} status={subroomStatus} busy={subroomBusy} onNameChange={setSubroomName} onSave={saveSubroom} onCancel={closeSubroomPanels} /> : null}{deleteSubroomTarget ? <DeleteSubroomModal subroom={deleteSubroomTarget} counts={deleteSubroomCounts} status={subroomStatus} busy={subroomBusy} onConfirm={deleteSubroom} onCancel={closeSubroomPanels} /> : null}</div>;
+  return <div className="app-shell">{topMenu}<main>{status && !editorOpen ? <p className="status-banner">{status}</p> : null}{unassignedWrongQuestions.length && division ? <p className="status-banner">{unassignedWrongQuestions.length} legacy wrong question card(s) are preserved without sub-room assignment and are not shown in Sub-room lists.</p> : null}{main}</main><Viewer note={viewerNote} busy={busy} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onAnalyze={reanalyze} /><WrongQuestionViewer card={wrongViewerCard} canManage={Boolean(subroomId || wrongViewerCard?.roomId)} onClose={() => setWrongViewerId("")} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />{roomForm ? <RoomNameModal roomType="room" mode={roomForm.mode} name={roomName} status={roomStatus} busy={roomBusy} onNameChange={setRoomName} onSave={saveRoom} onCancel={closeRoomPanels} /> : null}{deleteRoomTarget ? <DeleteRoomModal roomType="room" item={deleteRoomTarget} counts={deleteRoomCounts} status={roomStatus} busy={roomBusy} onConfirm={deleteRoom} onCancel={closeRoomPanels} /> : null}{subroomForm ? <RoomNameModal roomType="subroom" mode={subroomForm.mode} name={subroomName} status={subroomStatus} busy={subroomBusy} onNameChange={setSubroomName} onSave={saveSubroom} onCancel={closeSubroomPanels} /> : null}{deleteSubroomTarget ? <DeleteRoomModal roomType="subroom" item={deleteSubroomTarget} counts={deleteSubroomCounts} status={subroomStatus} busy={subroomBusy} onConfirm={deleteSubroom} onCancel={closeSubroomPanels} /> : null}</div>;
 }
