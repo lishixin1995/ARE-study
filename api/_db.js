@@ -41,6 +41,13 @@ export async function ensureTables() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS study_room_divisions (
+      division TEXT PRIMARY KEY,
+      initialized_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS study_notes (
       id TEXT PRIMARY KEY,
       division TEXT NOT NULL,

@@ -213,6 +213,18 @@ main {
   gap: 16px;
 }
 
+.division-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.division-head-actions p {
+  margin: 0;
+}
+
 .dashboard-page {
   display: grid;
   gap: 16px;
@@ -1371,6 +1383,10 @@ main {
   .viewer-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .division-head-actions {
+    justify-content: flex-start;
   }
 
   .viewer-actions {
