@@ -1,7 +1,10 @@
 :root {
-  font-family: Inter, Arial, sans-serif;
-  color: #172033;
-  background: #f3f5fb;
+  --font-sans: "Space Grotesk", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-family: var(--font-sans);
+  color: #e8f0ff;
+  background: #03060d;
+  color-scheme: dark;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -12,8 +15,17 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+  background:
+    radial-gradient(1200px 700px at 50% -10%, rgba(40, 90, 190, 0.22), transparent 60%),
+    radial-gradient(900px 600px at 100% 100%, rgba(90, 60, 190, 0.12), transparent 60%),
+    #03060d;
+  background-attachment: fixed;
 }
 
 #root {
   min-height: 100vh;
+}
+
+::selection {
+  background: rgba(111, 182, 255, 0.35);
 }
