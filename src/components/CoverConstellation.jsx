@@ -20,7 +20,8 @@ function canHover() {
 
 // The cover map: a 3D constellation of divisions, rooms, sub-rooms and notes.
 // divisions: [{ code, label, name, color }]; graph: buildCoverGraph() output.
-// highlightId: a star to light up from outside the map (e.g. hovering the tree menu).
+// highlightId: a star to light up from outside the map (e.g. hovering the tree
+// menu); it gets the ring only, since the tree already shows its name.
 // anchorRef: receives the selected division star's position every frame, so
 // the tree menu's curves can start from it.
 export default function CoverConstellation({ graph, divisions, selectedDivision = "", highlightId = "", anchorRef, panel = null, onSelectNode, onSelectDivision, onBackground, children }) {
@@ -41,6 +42,9 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
   const [hoveredNode, setHoveredNode] = useState(null);
   const hoveredRef = useRef(null);
   hoveredRef.current = hoveredNode;
+  const [ringNode, setRingNode] = useState(null);
+  const ringRef = useRef(null);
+  ringRef.current = ringNode;
   const selectRef = useRef(onSelectNode);
   selectRef.current = onSelectNode;
   const backgroundRef = useRef(onBackground);
@@ -107,6 +111,8 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
     const label = labelRef.current;
     const reticle = reticleRef.current;
     const spot = hovered ? scene.screenPosition(hovered.id) : null;
+    const ringed = ringRef.current || hovered;
+    const ringSpot = ringed ? scene.screenPosition(ringed.id) : null;
     if (label) {
       label.classList.toggle("is-visible", Boolean(spot));
       if (spot) {
@@ -115,12 +121,12 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
       }
     }
     if (reticle) {
-      reticle.classList.toggle("is-visible", Boolean(spot));
-      if (spot) {
-        const ring = spot.extent * 2 + 16;
+      reticle.classList.toggle("is-visible", Boolean(ringSpot));
+      if (ringSpot) {
+        const ring = ringSpot.extent * 2 + 16;
         reticle.style.width = `${ring}px`;
         reticle.style.height = `${ring}px`;
-        reticle.style.transform = `translate(${(spot.x - ring / 2).toFixed(1)}px, ${(spot.y - ring / 2).toFixed(1)}px)`;
+        reticle.style.transform = `translate(${(ringSpot.x - ring / 2).toFixed(1)}px, ${(ringSpot.y - ring / 2).toFixed(1)}px)`;
       }
     }
     if (anchorRef) {
@@ -201,8 +207,13 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
     if (!ready) return;
     const graphNode = highlightId ? graph.nodes.find(node => node.id === highlightId) : null;
     sceneRef.current?.setActive(graphNode ? highlightId : null);
-    if (graphNode) showNode(graphNode);
-    else if (!hoveredRef.current || hoveredRef.current.id.startsWith("room:") || hoveredRef.current.id.startsWith("subroom:")) hideNodeSoon();
+    setRingNode(graphNode || null);
+    if (graphNode) {
+      // Pointing at the tree: no name box on the map, just the ring.
+      window.clearTimeout(hideTimer.current);
+      window.clearTimeout(switchTimer.current);
+      setHoveredNode(null);
+    }
     // Only react to highlight changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [highlightId, ready]);
@@ -232,7 +243,7 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
     <section className={classes} ref={sectionRef} aria-label="ARE study map" onPointerEnter={() => engage(true)} onPointerMove={trackPointer} onPointerLeave={() => { engage(false); hideNodeSoon(); }}>
       {children}
       <div className="cover-canvas" ref={hostRef} />
-      <div className="star-reticle" ref={reticleRef} aria-hidden="true" style={{ "--atom": hoveredNode?.color }} />
+      <div className="star-reticle" ref={reticleRef} aria-hidden="true" style={{ "--atom": (ringNode || hoveredNode)?.color }} />
       <button
         type="button"
         className="star-label"
@@ -275,7 +286,8 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
               sceneRef.current?.setActive(null);
               hideNodeSoon();
             }}
-            onClick={() => onSelectDivision(item.code)}
+            // detail is 0 when Enter or Space pressed the button.
+            onClick={event => onSelectDivision(item.code, { keyboard: event.detail === 0 })}
           />
         ))}
       </div>

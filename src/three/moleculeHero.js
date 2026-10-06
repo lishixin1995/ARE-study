@@ -1,24 +1,25 @@
-// Hero molecule for the cover page (a ring of division atoms) and division
-// pages (a central division atom bonded to its rooms). The React component
-// draws labels and leader lines; this module owns the WebGL scene.
+// Hero constellation for division pages: the division's crystal in the
+// middle, linked to one crystal per room, each room with a few tiny stars
+// for its sub-rooms, all inside a faint haze, in the cover map's style.
+// The React component draws labels and leader lines; this module owns the
+// WebGL scene.
 import * as THREE from "three";
 import {
   createAtom,
-  createBond,
-  createBondMaterial,
-  createGlow,
+  createHaze,
+  createLinks,
   createRenderer,
-  createRing,
   createStarfield,
   disposeObject,
   distanceForScreenRadius,
   prefersReducedMotion,
-  setAtomIntensity
+  setAtomIntensity,
+  spinAtom
 } from "./space.js";
 import { HERO_TILT_X, heroAtomLayout } from "./heroLayout.js";
 
 const RING_RADIUS = 1.65;
-const SATELLITE_DISTANCE = 0.46;
+const SATELLITE_DISTANCE = 0.34;
 
 export function mountMoleculeHero(host, { mode = "ring", centerColor = "#5a8dff", atoms = [], onFrame, onHover, onSelect } = {}) {
   const renderer = createRenderer(host);
@@ -34,68 +35,85 @@ export function mountMoleculeHero(host, { mode = "ring", centerColor = "#5a8dff"
 
   const layout = heroAtomLayout(atoms.length, { zigzag: mode === "center" ? 0.32 : 0 });
   const atomById = new Map();
+  const spinners = [];
   const pickables = [];
-  const electrons = [];
+  const links = [];
+  const faces = [];
+  const linksByAtom = new Map(); // atom id -> link indexes
+  const ORIGIN = new THREE.Vector3();
 
-  function addElectron(from, to, color, offset) {
-    const sprite = createGlow(color, 0.16, 0.95);
-    molecule.add(sprite);
-    electrons.push({ sprite, from, to, offset });
+  function link(a, b, colorA, colorB, alpha, owner) {
+    if (owner) {
+      if (!linksByAtom.has(owner)) linksByAtom.set(owner, []);
+      linksByAtom.get(owner).push(links.length);
+    }
+    links.push({ a, b, colorA, colorB, alpha });
   }
 
   atoms.forEach((data, index) => {
     const spot = layout[index];
-    const radius = 0.17 + Math.min(1, Math.max(0, data.size || 0)) * 0.13;
-    const atom = createAtom({ color: data.color, radius, glow: 4.6, glowOpacity: 0.55 });
+    const radius = 0.1 + Math.min(1, Math.max(0, data.size || 0)) * 0.08;
+    const atom = createAtom({ color: data.color, radius, glow: 5, glowOpacity: 0.55, shape: index % 3 === 2 ? "shard" : "gem", seed: index + 1.37 });
     atom.position.set(spot.x * RING_RADIUS, spot.y * RING_RADIUS, spot.z * RING_RADIUS);
     atom.userData.id = data.id;
     atom.userData.sphere.userData.atomId = data.id;
     molecule.add(atom);
     atomById.set(data.id, atom);
+    spinners.push(atom);
     pickables.push(atom.userData.sphere);
 
-    // Satellites: one small bonded atom per room/sub-room, fanned outward.
+    // Satellites: one tiny star per sub-room, fanned outward and linked
+    // in a little chain so each room reads as its own small constellation.
     const outward = new THREE.Vector3(spot.x, spot.y, 0).normalize();
     const count = Math.min(8, data.satellites || 0);
+    let previous = null;
     for (let s = 0; s < count; s += 1) {
       const spread = count === 1 ? 0 : (s / (count - 1) - 0.5) * 1.9;
       const direction = outward.clone().applyAxisAngle(new THREE.Vector3(0, 0, 1), spread);
       direction.z = (s % 2 ? 0.55 : -0.55) * (count > 1 ? 1 : 0);
       direction.normalize();
-      const position = atom.position.clone().addScaledVector(direction, radius + SATELLITE_DISTANCE);
-      const satellite = createAtom({ color: data.color, radius: 0.055, glow: 5, glowOpacity: 0.35, detail: 12 });
+      const position = atom.position.clone().addScaledVector(direction, radius + SATELLITE_DISTANCE * (0.85 + (s % 3) * 0.12));
+      const satellite = createAtom({ color: data.color, radius: 0.026, glow: 6, glowOpacity: 0.45, shape: "star" });
       satellite.position.copy(position);
       molecule.add(satellite);
-      molecule.add(createBond(atom.position, position, createBondMaterial(data.color, data.color, { opacity: 0.35 }), 0.012));
+      link(atom.position, position, data.color, data.color, 0.32, data.id);
+      if (previous) {
+        link(previous, position, data.color, data.color, 0.12, data.id);
+        faces.push({ points: [atom.position, previous, position], colors: [data.color, data.color, data.color], alpha: 0.035 });
+      }
+      previous = position;
     }
   });
 
+  const ordered = layout.map((_, index) => atomById.get(atoms[index].id));
   if (mode === "center") {
-    const core = createAtom({ color: centerColor, radius: 0.62, glow: 3.6, glowOpacity: 0.45, detail: 48 });
-    setAtomIntensity(core, 0.6);
+    const core = createAtom({ color: centerColor, radius: 0.36, glow: 3.2, glowOpacity: 0.4, seed: 0.77 });
+    setAtomIntensity(core, 0.38);
     molecule.add(core);
-    for (const atom of atomById.values()) {
-      molecule.add(createBond(core.position, atom.position, createBondMaterial(centerColor, atom.userData.material.uniforms.uColor.value, { opacity: 0.5 }), 0.03));
-      addElectron(core.position, atom.position, "#e6f2ff", Math.random());
-    }
-    for (const [tiltX, tiltY] of [[1.2, 0.3], [1.9, -0.6]]) {
-      const orbit = createRing(0.98, centerColor, 0.22);
-      orbit.rotation.set(tiltX, tiltY, 0);
-      molecule.add(orbit);
-    }
-  } else {
-    const ordered = layout.map((_, index) => atomById.get(atoms[index].id));
-    ordered.forEach((atom, index) => {
-      const next = ordered[(index + 1) % ordered.length];
-      if (ordered.length < 2 || atom === next) return;
-      const colorA = atom.userData.material.uniforms.uColor.value;
-      const colorB = next.userData.material.uniforms.uColor.value;
-      molecule.add(createBond(atom.position, next.position, createBondMaterial(colorA, colorB, { opacity: 0.6 }), 0.035));
-      addElectron(atom.position, next.position, "#e6f2ff", index / ordered.length);
-    });
-    molecule.add(createRing(RING_RADIUS * 0.62, "#8fc4ff", 0.28));
-    molecule.add(createRing(RING_RADIUS * 0.66, "#8fc4ff", 0.1));
+    spinners.push(core);
+    for (const atom of ordered) link(ORIGIN, atom.position, centerColor, atom.userData.color, 0.34, atom.userData.id);
   }
+  // Neighbouring rooms are linked too, and the core with each pair spans a
+  // faint triangle, like the faces of the cover's mesh.
+  ordered.forEach((atom, index) => {
+    const next = ordered[(index + 1) % ordered.length];
+    if (ordered.length < 2 || atom === next || (ordered.length === 2 && index === 1)) return;
+    link(atom.position, next.position, atom.userData.color, next.userData.color, mode === "center" ? 0.14 : 0.4);
+    if (mode === "center") faces.push({ points: [ORIGIN, atom.position, next.position], colors: [centerColor, atom.userData.color, next.userData.color], alpha: 0.03 });
+  });
+  const network = createLinks(links, faces);
+  molecule.add(network.group);
+
+  const haze = createHaze({
+    radius: RING_RADIUS * 1.35,
+    scale: [1.15, 0.72, 0.8],
+    count: 170,
+    colors: [centerColor, ...atoms.map(atom => atom.color)],
+    seed: atoms.length + 3,
+    lineAlpha: 0.07,
+    faceAlpha: 0.022
+  });
+  molecule.add(haze.group);
 
   const size = { width: 1, height: 1, distance: 8 };
   const pointer = { x: 0, y: 0, tx: 0, ty: 0 };
@@ -108,6 +126,7 @@ export function mountMoleculeHero(host, { mode = "ring", centerColor = "#5a8dff"
   let visible = true;
   let disposed = false;
   let downAt = null;
+  let last = 0;
 
   function placeCamera() {
     camera.position.set(pointer.x * size.distance * 0.08, pointer.y * size.distance * 0.06, size.distance);
@@ -116,25 +135,26 @@ export function mountMoleculeHero(host, { mode = "ring", centerColor = "#5a8dff"
   }
 
   function refreshHighlight() {
-    for (const [id, atom] of atomById) setAtomIntensity(atom, id === hovered || id === active ? 1.6 : 1);
+    for (const [id, atom] of atomById) {
+      const on = id === hovered || id === active;
+      setAtomIntensity(atom, on ? 1.7 : 1);
+      for (const index of linksByAtom.get(id) || []) network.setLevel(index, on ? 2.4 : 1);
+    }
   }
 
   function render(time) {
     const t = time / 1000;
+    const dt = Math.min(0.1, last ? t - last : 0);
+    last = t;
     if (!reduced) {
       molecule.rotation.y = Math.sin(t * 0.22) * 0.2;
       molecule.rotation.x = HERO_TILT_X + Math.sin(t * 0.16) * 0.05;
       pointer.x += (pointer.tx - pointer.x) * 0.05;
       pointer.y += (pointer.ty - pointer.y) * 0.05;
-      for (const electron of electrons) {
-        const p = (t * 0.16 + electron.offset) % 1;
-        electron.sprite.position.lerpVectors(electron.from, electron.to, p);
-        electron.sprite.material.opacity = Math.sin(p * Math.PI) * 0.95;
-      }
-    } else {
-      for (const electron of electrons) electron.sprite.visible = false;
+      for (const atom of spinners) spinAtom(atom, dt);
     }
     stars.update(t);
+    haze.update(reduced ? 0 : t, size.distance);
     placeCamera();
     renderer.render(scene, camera);
     onFrame?.();
@@ -206,7 +226,7 @@ export function mountMoleculeHero(host, { mode = "ring", centerColor = "#5a8dff"
       return {
         x: ((temp.x + 1) / 2) * size.width,
         y: ((1 - temp.y) / 2) * size.height,
-        r: (atom.userData.radius / (distance * Math.tan(halfFov))) * (size.height / 2)
+        r: ((atom.userData.radius * 1.3) / (distance * Math.tan(halfFov))) * (size.height / 2)
       };
     },
     setPointer(x, y) {

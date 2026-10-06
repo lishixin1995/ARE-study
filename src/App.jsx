@@ -2,7 +2,7 @@ import { Children, cloneElement, isValidElement, useCallback, useEffect, useMemo
 import MoleculeHero from "./components/MoleculeHero.jsx";
 import CoverConstellation from "./components/CoverConstellation.jsx";
 import DivisionTree from "./components/DivisionTree.jsx";
-import { buildCoverGraph } from "./lib/coverGraph.js";
+import { buildCoverGraph, shiftColor } from "./lib/coverGraph.js";
 import LogicMap from "./components/LogicMap.jsx";
 import WrongReview from "./components/WrongReview.jsx";
 import { MISS_REASONS, isDue, missReasonLabel, nextDueLabel, normalizeReviewState, reviewStatus, sortForReview } from "./lib/wrongReview.js";
@@ -28,7 +28,10 @@ const DIVISION_COLORS = {
 };
 const NO_COVER_FOCUS = { division: "", roomId: "", subroomId: "" };
 const COVER_RING_ORDER = ["PA", "PPD", "PDD", "CE", "PJM", "PCM"];
-const ROOM_COLORS = ["#6fd6ff", "#8fb6ff", "#a99bff", "#5fe0d0", "#7fc8ff", "#c4a8ff"];
+// Rooms on a division page: siblings of the division's colour.
+function roomColor(divisionColor, index) {
+  return shiftColor(divisionColor, ((index * 37) % 60) - 30, index % 2 ? 0.06 : -0.02);
+}
 const MAX_HERO_ROOMS = 12;
 const EMPTY_WRONG_DRAFT = { title: "", text: "", answer: "", explanation: "", missReason: "", attachments: [] };
 
@@ -623,6 +626,7 @@ function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, 
       notes={notes.filter(note => note.division === focusInfo.code)}
       focusRoomId={coverFocus.roomId}
       focusSubroomId={coverFocus.subroomId}
+      autoFocus={Boolean(coverFocus.keyboard)}
       onClose={() => setCoverFocus(NO_COVER_FOCUS)}
       onEnter={() => onSelectDivision(focusInfo.code)}
       onOpenRoom={roomId => onOpenRoom(focusInfo.code, roomId)}
@@ -643,7 +647,7 @@ function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, 
         anchorRef={treeAnchorRef}
         panel={panel}
         onSelectNode={onCoverNode}
-        onSelectDivision={code => setCoverFocus({ ...NO_COVER_FOCUS, division: code })}
+        onSelectDivision={(code, how) => setCoverFocus({ ...NO_COVER_FOCUS, division: code, keyboard: Boolean(how?.keyboard) })}
         onBackground={() => setCoverFocus(NO_COVER_FOCUS)}
       >
         <h1 className="sr-only">ARE Study Vault</h1>
@@ -2098,7 +2102,7 @@ function StudyApp({ onLogout }) {
           </div>
           <LogicMap
             roomName={room?.name || "Room"}
-            color={DIVISION_COLORS[division] || "#5a8dff"}
+            color={roomColor(DIVISION_COLORS[division] || "#5a8dff", Math.max(0, rooms.findIndex(item => item.id === roomId)))}
             subrooms={children}
             notes={roomNotes}
             wrongQuestions={roomWrong}
@@ -2232,7 +2236,7 @@ function StudyApp({ onLogout }) {
       const dueCount = dueCards(divisionWrong.filter(card => card.roomId === item.id)).length;
       return {
         id: item.id,
-        color: ROOM_COLORS[index % ROOM_COLORS.length],
+        color: roomColor(DIVISION_COLORS[division], index),
         size: Math.min(1, noteCount / 12),
         satellites: item.children?.length || 0,
         eyebrow: plural(item.children?.length || 0, "sub-room"),

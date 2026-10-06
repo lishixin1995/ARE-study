@@ -25,7 +25,7 @@ function setRef(map, key) {
 // the chosen room fans out to its sub-rooms. Beside the map on wide screens;
 // a vertical branch list under the map on narrow ones.
 // anchorRef holds the division star's live screen position.
-export default function DivisionTree({ code, label, name, color, rooms = [], status = "ready", notes = [], focusRoomId = "", focusSubroomId = "", anchorRef, onClose, onEnter, onOpenRoom, onOpenSubroom, onRetry, onHighlight }) {
+export default function DivisionTree({ code, label, name, color, rooms = [], status = "ready", notes = [], focusRoomId = "", focusSubroomId = "", autoFocus = false, anchorRef, onClose, onEnter, onOpenRoom, onOpenSubroom, onRetry, onHighlight }) {
   const rootRef = useRef(null);
   const rootLabelRef = useRef(null);
   const columnRef = useRef(null);
@@ -74,8 +74,9 @@ export default function DivisionTree({ code, label, name, color, rooms = [], sta
     return () => observer.disconnect();
   }, [measure]);
 
+  // Opened from the keyboard: move focus into the menu.
   useEffect(() => {
-    itemRefs.current.get(activeRoomId)?.querySelector(".tree-node")?.focus({ preventScroll: true });
+    if (autoFocus) itemRefs.current.get(activeRoomId)?.querySelector(".tree-node")?.focus({ preventScroll: true });
     // Only when the menu opens for a division.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [code, status]);

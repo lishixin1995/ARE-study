@@ -1,11 +1,75 @@
-// Shared three.js pieces for the molecule maps: renderer setup, glowing atom
-// and bond materials, a dust/starfield backdrop and cleanup helpers.
+// Shared three.js pieces for the 3D maps, all in the cover's constellation
+// style: crystal "atoms", stars, thin bonds, a haze of linked points, a
+// starfield backdrop and cleanup helpers.
 import * as THREE from "three";
+import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 
 export { hasWebGL, prefersReducedMotion } from "./support.js";
 
-// Light direction in view space, so highlights stay put while the user orbits.
-const LIGHT_VIEW = "normalize(vec3(-0.45, 0.6, 0.65))";
+function additive(material) {
+  material.transparent = true;
+  material.depthWrite = false;
+  material.blending = THREE.AdditiveBlending;
+  return material;
+}
+
+// Stars: round soft points whose pixel size stays the same at any zoom.
+// aLevel brightens (>1) or dims (<1) a point.
+const POINT_SHADER = {
+  vertexShader: `
+    attribute vec3 aColor;
+    attribute float aSize;
+    attribute float aLevel;
+    attribute float aPhase;
+    uniform float uTime;
+    uniform float uPixelRatio;
+    uniform float uRefDistance;
+    varying vec3 vColor;
+    varying float vLevel;
+    void main() {
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      vColor = aColor;
+      vLevel = aLevel * (0.86 + 0.14 * sin(uTime * 1.7 + aPhase));
+      gl_PointSize = aSize * 2.2 * uPixelRatio * (uRefDistance / -mv.z) * (0.72 + 0.3 * min(aLevel, 1.9));
+      gl_Position = projectionMatrix * mv;
+    }
+  `,
+  fragmentShader: `
+    varying vec3 vColor;
+    varying float vLevel;
+    void main() {
+      float d = length(gl_PointCoord - 0.5);
+      float core = smoothstep(0.2, 0.02, d);
+      float halo = smoothstep(0.5, 0.04, d);
+      float alpha = (core + halo * 0.3) * clamp(vLevel, 0.0, 1.0) + core * max(vLevel - 1.0, 0.0) * 0.5;
+      if (alpha < 0.01) discard;
+      gl_FragColor = vec4(mix(vColor, vec3(1.0), core * 0.5), alpha);
+    }
+  `
+};
+
+// Lines and faces with a colour and an alpha per vertex.
+const LINE_SHADER = {
+  vertexShader: `
+    attribute vec3 aColor;
+    attribute float aAlpha;
+    varying vec3 vColor;
+    varying float vAlpha;
+    void main() {
+      vColor = aColor;
+      vAlpha = aAlpha;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    varying vec3 vColor;
+    varying float vAlpha;
+    void main() {
+      if (vAlpha < 0.003) discard;
+      gl_FragColor = vec4(vColor, vAlpha);
+    }
+  `
+};
 
 export function createRenderer(host) {
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
@@ -47,38 +111,6 @@ export function fibonacciDirections(count) {
     directions.push(new THREE.Vector3(Math.cos(golden * i) * r, y, Math.sin(golden * i) * r));
   }
   return directions;
-}
-
-// Glassy atom: dark core, bright fresnel rim, small specular glint.
-export function createAtomMaterial(color) {
-  return new THREE.ShaderMaterial({
-    uniforms: { uColor: { value: new THREE.Color(color) }, uIntensity: { value: 1 } },
-    vertexShader: `
-      varying vec3 vNormalV;
-      varying vec3 vViewV;
-      void main() {
-        vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        vNormalV = normalize(normalMatrix * normal);
-        vViewV = normalize(-mv.xyz);
-        gl_Position = projectionMatrix * mv;
-      }
-    `,
-    fragmentShader: `
-      uniform vec3 uColor;
-      uniform float uIntensity;
-      varying vec3 vNormalV;
-      varying vec3 vViewV;
-      void main() {
-        vec3 light = ${LIGHT_VIEW};
-        float facing = clamp(dot(vNormalV, vViewV), 0.0, 1.0);
-        float rim = pow(1.0 - facing, 2.0);
-        float diffuse = clamp(dot(vNormalV, light), 0.0, 1.0);
-        float spec = pow(max(dot(vNormalV, normalize(light + vViewV)), 0.0), 70.0);
-        vec3 color = uColor * (0.1 + 0.5 * diffuse) + uColor * rim * 1.5 + vec3(1.0) * spec * 0.9;
-        gl_FragColor = vec4(color * uIntensity, 1.0);
-      }
-    `
-  });
 }
 
 // Bond: a thin cylinder fading between the two atom colors. With uDash > 0 it
@@ -174,34 +206,185 @@ export function createGlow(color, scale, opacity = 0.55) {
   return sprite;
 }
 
-// An atom: glassy sphere (or faceted crystal) plus a soft glow halo.
-export function createAtom({ color, radius, glow = 4.2, glowOpacity = 0.5, detail = 32, shape = "sphere" }) {
+// Irregular polyhedron: each corner nudged so no two crystals look alike.
+function crystalGeometry(shape, radius, random) {
+  const base = shape === "crystal"
+    ? new THREE.OctahedronGeometry(radius * 1.25, 0)
+    : shape === "shard"
+      ? new THREE.TetrahedronGeometry(radius * 1.3, 0)
+      : new THREE.IcosahedronGeometry(radius * 1.15, 0);
+  const geometry = mergeVertices(base);
+  base.dispose();
+  const positions = geometry.attributes.position;
+  for (let i = 0; i < positions.count; i += 1) {
+    const scale = 0.72 + random() * 0.58;
+    positions.setXYZ(i, positions.getX(i) * scale, positions.getY(i) * scale * (0.85 + random() * 0.4), positions.getZ(i) * scale);
+  }
+  return geometry;
+}
+
+let atomSeed = 1;
+
+// An atom in the constellation style: a bright star at the centre, a soft
+// glow, and (unless shape is "star") an irregular wireframe crystal around it.
+// shape: "gem" (icosahedron), "shard" (tetrahedron), "crystal" (octahedron)
+// or "star". userData.sphere is an invisible mesh used for picking.
+export function createAtom({ color, radius, glow = 4.2, glowOpacity = 0.5, shape = "gem", seed, hitRadius }) {
   const group = new THREE.Group();
-  const material = createAtomMaterial(color);
-  const geometry = shape === "crystal" ? new THREE.OctahedronGeometry(radius * 1.3, 0) : new THREE.SphereGeometry(radius, detail, detail);
-  const sphere = new THREE.Mesh(geometry, material);
-  const halo = createGlow(color, radius * glow, glowOpacity);
-  group.add(halo, sphere);
-  group.userData = { sphere, halo, material, radius, baseGlow: glowOpacity };
+  const random = seededRandom(seed ?? (atomSeed += 1) * 0.6180339);
+  const tint = new THREE.Color(color);
+  const star = shape === "star";
+  const halo = createGlow(color, radius * glow, glowOpacity * 0.55);
+  const core = createGlow(tint.clone().lerp(new THREE.Color("#ffffff"), 0.55), radius * (star ? 3.4 : 1.4), 0.95);
+  group.add(halo, core);
+  let body = null;
+  let edges = null;
+  let fill = null;
+  if (!star) {
+    const geometry = crystalGeometry(shape, radius, random);
+    edges = new THREE.LineSegments(new THREE.EdgesGeometry(geometry), additive(new THREE.LineBasicMaterial({ color: tint, opacity: 0.85 })));
+    fill = new THREE.Mesh(geometry, additive(new THREE.MeshBasicMaterial({ color: tint, opacity: 0.07, side: THREE.DoubleSide })));
+    body = new THREE.Group();
+    body.add(fill, edges);
+    body.rotation.set(random() * Math.PI, random() * Math.PI, 0);
+    group.add(body);
+  }
+  const hit = new THREE.Mesh(new THREE.SphereGeometry(hitRadius ?? Math.max(radius * 1.5, 0.08), 10, 10), new THREE.MeshBasicMaterial({ visible: false }));
+  group.add(hit);
+  group.userData = { sphere: hit, halo, core, body, edges, fill, color: tint, radius, baseGlow: glowOpacity * 0.55, spin: 0.15 + random() * 0.25 };
   return group;
 }
 
 export function setAtomIntensity(atom, intensity) {
-  atom.userData.material.uniforms.uIntensity.value = intensity;
-  atom.userData.halo.material.opacity = atom.userData.baseGlow * Math.min(1.6, intensity);
+  const data = atom.userData;
+  data.halo.material.opacity = data.baseGlow * Math.min(1.6, intensity);
+  data.core.material.opacity = Math.min(1, 0.95 * intensity);
+  if (data.edges) data.edges.material.opacity = Math.min(1, 0.72 * intensity);
+  if (data.fill) data.fill.material.opacity = 0.07 * Math.min(1.6, intensity);
 }
 
-// Thin circle (electron orbit / aromatic ring) in the XY plane.
-export function createRing(radius, color, opacity = 0.2, segments = 160) {
-  const points = [];
-  for (let i = 0; i <= segments; i += 1) {
-    const angle = (i / segments) * Math.PI * 2;
-    points.push(new THREE.Vector3(Math.cos(angle) * radius, Math.sin(angle) * radius, 0));
+// Slow tumble for an atom's crystal; dt in seconds.
+export function spinAtom(atom, dt) {
+  const { body, spin } = atom.userData;
+  if (!body) return;
+  body.rotation.y += spin * dt;
+  body.rotation.x += spin * 0.6 * dt;
+}
+
+// Hairline links like the cover's plexus: one LineSegments for many links.
+// links: [{ a, b, colorA, colorB, alpha }] with a/b as Vector3.
+// faces (optional): [{ points: [p, q, r], colors: [c1, c2, c3], alpha }].
+// setLevel(index, level) scales one link's brightness (1 = as given).
+export function createLinks(links, faces = []) {
+  const group = new THREE.Group();
+  const base = new Float32Array(links.length * 2);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(links.flatMap(link => [...link.a.toArray(), ...link.b.toArray()])), 3));
+  geometry.setAttribute("aColor", new THREE.BufferAttribute(new Float32Array(links.flatMap(link => [...new THREE.Color(link.colorA).toArray(), ...new THREE.Color(link.colorB ?? link.colorA).toArray()])), 3));
+  links.forEach((link, index) => {
+    base[index * 2] = link.alpha;
+    base[index * 2 + 1] = link.alpha;
+  });
+  const alpha = new THREE.BufferAttribute(base.slice(), 1);
+  geometry.setAttribute("aAlpha", alpha);
+  const lines = new THREE.LineSegments(geometry, additive(new THREE.ShaderMaterial({ ...LINE_SHADER })));
+  group.add(lines);
+  if (faces.length) {
+    const faceGeometry = new THREE.BufferGeometry();
+    faceGeometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(faces.flatMap(face => face.points.flatMap(point => point.toArray()))), 3));
+    faceGeometry.setAttribute("aColor", new THREE.BufferAttribute(new Float32Array(faces.flatMap(face => face.colors.flatMap(color => new THREE.Color(color).toArray()))), 3));
+    faceGeometry.setAttribute("aAlpha", new THREE.BufferAttribute(new Float32Array(faces.flatMap(face => [face.alpha, face.alpha, face.alpha])), 1));
+    group.add(new THREE.Mesh(faceGeometry, additive(new THREE.ShaderMaterial({ ...LINE_SHADER, side: THREE.DoubleSide }))));
   }
-  return new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(points),
-    new THREE.LineBasicMaterial({ color: new THREE.Color(color), transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending })
+  return {
+    group,
+    setLevel(index, level) {
+      alpha.array[index * 2] = base[index * 2] * level;
+      alpha.array[index * 2 + 1] = base[index * 2 + 1] * level;
+      alpha.needsUpdate = true;
+    }
+  };
+}
+
+// A haze of small stars filling an ellipsoid, linked to their nearest
+// neighbours with faint lines and triangles: the cover's nebula look.
+export function createHaze({ radius = 2.5, scale = [1, 0.75, 0.85], count = 160, colors = ["#9fc2ff"], seed = 5, lineAlpha = 0.08, faceAlpha = 0.03 } = {}) {
+  const random = seededRandom(seed);
+  const palette = colors.map(color => new THREE.Color(color));
+  const points = [];
+  for (let i = 0; i < count; i += 1) {
+    const u = random() * 2 - 1;
+    const theta = random() * Math.PI * 2;
+    const s = Math.sqrt(1 - u * u);
+    const r = radius * Math.cbrt(random());
+    points.push({
+      position: new THREE.Vector3(Math.cos(theta) * s * r * scale[0], u * r * scale[1], Math.sin(theta) * s * r * scale[2]),
+      color: palette[Math.floor(random() * palette.length)],
+      size: 1.3 + random() * 1.2
+    });
+  }
+
+  const pointGeometry = new THREE.BufferGeometry();
+  pointGeometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(points.flatMap(p => p.position.toArray())), 3));
+  pointGeometry.setAttribute("aColor", new THREE.BufferAttribute(new Float32Array(points.flatMap(p => p.color.toArray())), 3));
+  pointGeometry.setAttribute("aSize", new THREE.BufferAttribute(new Float32Array(points.map(p => p.size)), 1));
+  pointGeometry.setAttribute("aLevel", new THREE.BufferAttribute(new Float32Array(count).fill(0.6), 1));
+  pointGeometry.setAttribute("aPhase", new THREE.BufferAttribute(new Float32Array(points.map(() => random() * Math.PI * 2)), 1));
+  const pointMaterial = additive(new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uPixelRatio: { value: Math.min(window.devicePixelRatio || 1, 2) }, uRefDistance: { value: 10 } },
+    ...POINT_SHADER
+  }));
+
+  // Two nearest neighbours each, then every closed triangle among them.
+  const maxDistance = radius * 0.5;
+  const neighbours = points.map(() => new Set());
+  points.forEach((point, i) => {
+    points
+      .map((other, j) => ({ j, d: point.position.distanceTo(other.position) }))
+      .filter(item => item.j !== i && item.d <= maxDistance)
+      .sort((a, b) => a.d - b.d)
+      .slice(0, 2)
+      .forEach(({ j }) => {
+        neighbours[i].add(j);
+        neighbours[j].add(i);
+      });
+  });
+  const pairs = [];
+  const triangles = [];
+  neighbours.forEach((set, i) => {
+    for (const j of set) {
+      if (j < i) continue;
+      pairs.push([i, j]);
+      for (const k of set) if (k > j && neighbours[j].has(k)) triangles.push([i, j, k]);
+    }
+  });
+
+  const lineGeometry = new THREE.BufferGeometry();
+  lineGeometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(pairs.flatMap(([a, b]) => [...points[a].position.toArray(), ...points[b].position.toArray()])), 3));
+  lineGeometry.setAttribute("aColor", new THREE.BufferAttribute(new Float32Array(pairs.flatMap(([a, b]) => [...points[a].color.toArray(), ...points[b].color.toArray()])), 3));
+  lineGeometry.setAttribute("aAlpha", new THREE.BufferAttribute(new Float32Array(pairs.length * 2).fill(lineAlpha), 1));
+  const faceGeometry = new THREE.BufferGeometry();
+  faceGeometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(triangles.flatMap(t => t.flatMap(index => points[index].position.toArray()))), 3));
+  faceGeometry.setAttribute("aColor", new THREE.BufferAttribute(new Float32Array(triangles.flatMap(t => t.flatMap(index => points[index].color.toArray()))), 3));
+  faceGeometry.setAttribute("aAlpha", new THREE.BufferAttribute(new Float32Array(triangles.length * 3).fill(faceAlpha), 1));
+
+  const group = new THREE.Group();
+  group.add(
+    new THREE.Mesh(faceGeometry, additive(new THREE.ShaderMaterial({ ...LINE_SHADER, side: THREE.DoubleSide }))),
+    new THREE.LineSegments(lineGeometry, additive(new THREE.ShaderMaterial({ ...LINE_SHADER }))),
+    new THREE.Points(pointGeometry, pointMaterial)
   );
+  group.children.forEach(child => {
+    child.frustumCulled = false;
+  });
+  return {
+    group,
+    // refDistance: camera distance, so stars keep their pixel size.
+    update(time, refDistance) {
+      pointMaterial.uniforms.uTime.value = time;
+      pointMaterial.uniforms.uRefDistance.value = refDistance;
+    }
+  };
 }
 
 export function createStarfield({ count = 1400, inner = 25, outer = 70, seed = 3 } = {}) {

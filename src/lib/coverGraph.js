@@ -104,6 +104,12 @@ function hslToHex([h, s, l]) {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 
+// A sibling of a color: hue turned by `hue` degrees, lightness nudged.
+export function shiftColor(hex, hue = 0, lightness = 0) {
+  const [h, s, l] = hexToHsl(hex);
+  return hslToHex([(((h + hue) % 360) + 360) % 360, s, Math.min(0.85, Math.max(0.35, l + lightness))]);
+}
+
 // Weighted blend of colors on the hue circle.
 export function blendColors(entries) {
   let x = 0;
