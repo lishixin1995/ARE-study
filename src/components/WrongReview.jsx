@@ -21,6 +21,9 @@ export default function WrongReview({ cards, scopeLabel, practice = false, onRes
   const [byId, setById] = useState(() => new Map(cards.map(card => [card.id, card])));
   const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
+  // Blocks a second answer to the same question (fast double press): set when
+  // an answer starts, cleared once the next question is on screen.
+  const busyRef = useRef(false);
   const [error, setError] = useState("");
   const [stats, setStats] = useState({ got: 0, missed: new Set() });
   const total = cards.length;
@@ -32,8 +35,13 @@ export default function WrongReview({ cards, scopeLabel, practice = false, onRes
     panelRef.current?.focus();
   }, []);
 
+  useEffect(() => {
+    busyRef.current = false;
+  }, [queue, revealed]);
+
   async function answer(result) {
-    if (!current || busy || !revealed) return;
+    if (!current || busyRef.current || !revealed) return;
+    busyRef.current = true;
     try {
       setBusy(true);
       setError("");
@@ -48,6 +56,7 @@ export default function WrongReview({ cards, scopeLabel, practice = false, onRes
       }
       setRevealed(false);
     } catch (reason) {
+      busyRef.current = false;
       setError(`Couldn't save that result: ${reason.message}`);
     } finally {
       setBusy(false);
@@ -56,6 +65,8 @@ export default function WrongReview({ cards, scopeLabel, practice = false, onRes
 
   function handleKey(event) {
     if (event.key === "Escape") return onClose();
+    // A held-down key repeats; only the first press counts.
+    if (event.repeat) return;
     if (event.target.closest?.("input, textarea, select")) return;
     const onButton = Boolean(event.target.closest?.("button, a"));
     if (!revealed && !onButton && (event.key === " " || event.key === "Enter")) {

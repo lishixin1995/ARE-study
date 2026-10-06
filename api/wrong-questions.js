@@ -89,8 +89,10 @@ function normalizeCard(card = {}) {
     text,
     questionText: card.questionText || text,
     attachments,
-    answer: normalizeString(card.answerText) || legacyText(card.legacyCorrectAnswer),
-    explanation: normalizeString(card.explanationText) || [
+    // NULL means the new editor never saved this field, so show what the old
+    // flashcard version stored; an empty string is a deliberate clear.
+    answer: card.answerText != null ? normalizeString(card.answerText) : legacyText(card.legacyCorrectAnswer),
+    explanation: card.explanationText != null ? normalizeString(card.explanationText) : [
       legacyText(card.legacyTrapPoint),
       normalizeString(card.legacyMemoryHook) === LEGACY_DEFAULT_HOOK ? "" : normalizeString(card.legacyMemoryHook)
     ].filter(Boolean).join("\n"),
@@ -197,15 +199,29 @@ export default async function handler(request, response) {
         return response.status(400).json({ error: 'Result must be "got" or "missed".' });
       }
 
-      const current = await pool.query("SELECT review_state FROM wrong_question_flashcards WHERE id = $1", [id]);
-      if (!current.rowCount) return response.status(404).json({ error: "Wrong question not found." });
-
-      const reviewState = nextReviewState(current.rows[0].review_state, body.result);
-      const result = await pool.query(
-        `UPDATE wrong_question_flashcards SET review_state = $2::jsonb WHERE id = $1 RETURNING ${cardSelectSql()}`,
-        [id, JSON.stringify(reviewState)]
-      );
-      return response.status(200).json({ flashcard: normalizeCard(result.rows[0]) });
+      // Lock the row so simultaneous results for one question apply one after
+      // another instead of overwriting each other.
+      const client = await pool.connect();
+      try {
+        await client.query("BEGIN");
+        const current = await client.query("SELECT review_state FROM wrong_question_flashcards WHERE id = $1 FOR UPDATE", [id]);
+        if (!current.rowCount) {
+          await client.query("ROLLBACK");
+          return response.status(404).json({ error: "Wrong question not found." });
+        }
+        const reviewState = nextReviewState(current.rows[0].review_state, body.result);
+        const result = await client.query(
+          `UPDATE wrong_question_flashcards SET review_state = $2::jsonb WHERE id = $1 RETURNING ${cardSelectSql()}`,
+          [id, JSON.stringify(reviewState)]
+        );
+        await client.query("COMMIT");
+        return response.status(200).json({ flashcard: normalizeCard(result.rows[0]) });
+      } catch (error) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw error;
+      } finally {
+        client.release();
+      }
     }
 
     if (request.method === "DELETE") {
