@@ -837,7 +837,7 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze }) {
   );
 }
 
-function WrongQuestionCard({ card, onOpen, onEdit, onDelete, canManage = true }) {
+function WrongQuestionCard({ card, path = "", unfiled = false, onOpen, onEdit, onDelete, canManage = true }) {
   const counts = countWrongAttachments(card.attachments);
   const status = reviewStatus(card.reviewState);
   return (
@@ -845,6 +845,7 @@ function WrongQuestionCard({ card, onOpen, onEdit, onDelete, canManage = true })
       <div className="wrong-card-head">
         <div className="wrong-card-title-block">
           <h3>{card.title}</h3>
+          {path ? <span className={`wrong-card-path${unfiled ? " is-unfiled" : ""}`}>{path}</span> : null}
           <small>Updated {formatDate(card.savedAt)}</small>
         </div>
         {canManage ? (
@@ -869,8 +870,12 @@ function WrongQuestionCard({ card, onOpen, onEdit, onDelete, canManage = true })
   );
 }
 
-function WrongQuestionEditor({ draft, editing, status, setDraft, onFiles, onRemoveFile, onSave, onCancel }) {
+// placement (optional): { rooms, roomId, subroomId, onChange } lets the user
+// choose which sub-room the question is filed under.
+function WrongQuestionEditor({ draft, editing, status, setDraft, onFiles, onRemoveFile, onSave, onCancel, placement = null }) {
   const inputRef = useRef(null);
+  const placeRoom = placement ? placement.rooms.find(item => item.id === placement.roomId) : null;
+  const placeSubrooms = placeRoom?.children || [];
   return (
     <section className="editor wrong-editor">
       <div className="workspace-head">
@@ -880,6 +885,24 @@ function WrongQuestionEditor({ draft, editing, status, setDraft, onFiles, onRemo
         </div>
         <button onClick={onCancel}>Cancel</button>
       </div>
+      {placement ? (
+        <div className="editor-columns placement-row">
+          <div>
+            <label htmlFor="wrong-place-room">Room</label>
+            <select id="wrong-place-room" value={placement.roomId} onChange={event => placement.onChange({ roomId: event.target.value, subroomId: "" })}>
+              <option value="">Choose a room</option>
+              {placement.rooms.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="wrong-place-subroom">Sub-room</label>
+            <select id="wrong-place-subroom" value={placement.subroomId} disabled={!placeSubrooms.length} onChange={event => placement.onChange({ roomId: placement.roomId, subroomId: event.target.value })}>
+              <option value="">{!placeRoom ? "Choose a room first" : placeSubrooms.length ? "Choose a sub-room" : "This room has no sub-rooms yet"}</option>
+              {placeSubrooms.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </div>
+        </div>
+      ) : null}
       <label>Title</label>
       <input value={draft.title} onChange={event => setDraft({ ...draft, title: event.target.value })} placeholder="Give this wrong question a title" />
       <label>Question</label>
@@ -1091,6 +1114,238 @@ function RoomCreatePicker({ mode, subrooms, value, onChange, onContinue, onCance
   );
 }
 
+const WRONG_PAGE_SIZE = 6;
+const ROOM_PAGE_SIZE = 8;
+const WRONG_STATUS_FILTERS = [["due", "Due now"], ["learning", "Learning"], ["mastered", "Mastered"], ["missing", "Missing an answer"]];
+const UNFILED = "unfiled"; // room filter value for questions not in a sub-room
+const WRONG_SORTS = [["newest", "Newest first"], ["oldest", "Oldest first"], ["due", "Due first"], ["title", "Title A–Z"]];
+
+// One page of a list. Goes back to the first page when resetKey changes and
+// stays in range when the list shrinks.
+function usePaged(items, pageSize, resetKey = "") {
+  const [page, setPage] = useState(0);
+  useEffect(() => setPage(0), [resetKey]);
+  const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
+  const current = Math.min(page, pageCount - 1);
+  const start = current * pageSize;
+  return { page: current, pageCount, setPage, start, total: items.length, items: items.slice(start, start + pageSize) };
+}
+
+// Page numbers to show: all of them when there are few, otherwise the ends
+// and the neighbours of the current page.
+function pageWindow(page, pageCount) {
+  if (pageCount <= 7) return Array.from({ length: pageCount }, (_, index) => index);
+  const keep = new Set([0, pageCount - 1, page - 1, page, page + 1].filter(index => index >= 0 && index < pageCount));
+  const sorted = [...keep].sort((a, b) => a - b);
+  return sorted.flatMap((index, i) => (i && index - sorted[i - 1] > 1 ? ["gap" + index, index] : [index]));
+}
+
+function Pager({ paged, label, onTurn }) {
+  if (paged.pageCount <= 1) return null;
+  const turn = page => {
+    paged.setPage(page);
+    onTurn?.();
+  };
+  return (
+    <nav className="pager" aria-label={label}>
+      <button type="button" className="pager-step" disabled={paged.page === 0} onClick={() => turn(paged.page - 1)}>‹ Prev</button>
+      <div className="pager-pages">
+        {pageWindow(paged.page, paged.pageCount).map(item => typeof item === "string" ? (
+          <span key={item} className="pager-gap" aria-hidden="true">…</span>
+        ) : (
+          <button type="button" key={item} className={item === paged.page ? "is-current" : ""} aria-current={item === paged.page ? "page" : undefined} aria-label={`Page ${item + 1}`} onClick={() => turn(item)}>{item + 1}</button>
+        ))}
+      </div>
+      <span className="pager-range">{paged.start + 1}–{paged.start + paged.items.length} of {paged.total}</span>
+      <button type="button" className="pager-step" disabled={paged.page >= paged.pageCount - 1} onClick={() => turn(paged.page + 1)}>Next ›</button>
+    </nav>
+  );
+}
+
+// Keep the top of a section in view after turning a page from below it.
+function revealTop(ref) {
+  const element = ref.current;
+  if (element && element.getBoundingClientRect().top < 0) element.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+function wrongStatusMatches(card, filter, now) {
+  if (!filter) return true;
+  if (filter === "missing") return !clean(card.answer);
+  if (filter === "due") return isDue(card.reviewState, now);
+  return reviewStatus(card.reviewState, now) === filter;
+}
+
+// Every wrong question in a division, wherever it was filed: search, filter,
+// page through, review, and add new ones to any sub-room.
+function DivisionWrongPanel({ info, rooms, cards, editor, status, onStartReview, onNew, onOpen, onEdit, onDelete }) {
+  const sectionRef = useRef(null);
+  const editorRef = useRef(null);
+  const editorOpen = Boolean(editor);
+  // Editing a card from further down the list: bring the editor into view.
+  useEffect(() => {
+    if (editorOpen) editorRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [editorOpen]);
+  const [query, setQuery] = useState("");
+  const [roomFilter, setRoomFilter] = useState("");
+  const [subroomFilter, setSubroomFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [reasonFilter, setReasonFilter] = useState("");
+  const [sort, setSort] = useState("newest");
+  const debouncedQuery = useDebouncedValue(query, 200);
+  const needle = clean(debouncedQuery).toLowerCase();
+  const now = new Date();
+
+  const filterRoom = rooms.find(item => item.id === roomFilter) || null;
+  // A question is filed when its sub-room still exists in this division.
+  const placeOf = card => {
+    const cardRoom = rooms.find(item => item.id === card.roomId);
+    const cardSubroom = (cardRoom?.children || []).find(item => item.id === card.subroomId);
+    return cardSubroom ? { room: cardRoom, subroom: cardSubroom } : null;
+  };
+  const pathOf = card => {
+    const place = placeOf(card);
+    return place ? `${place.room.name} / ${place.subroom.name}` : "Not in a sub-room yet";
+  };
+  const unfiledCount = cards.filter(card => !placeOf(card)).length;
+  const counts = { due: 0, learning: 0, mastered: 0, missing: 0 };
+  for (const card of cards) {
+    if (isDue(card.reviewState, now)) counts.due += 1;
+    const state = reviewStatus(card.reviewState, now);
+    if (state === "learning" || state === "mastered") counts[state] += 1;
+    if (!clean(card.answer)) counts.missing += 1;
+  }
+
+  const matches = cards.filter(card =>
+    (!roomFilter || (roomFilter === UNFILED ? !placeOf(card) : card.roomId === roomFilter)) &&
+    (!subroomFilter || card.subroomId === subroomFilter) &&
+    (!reasonFilter || card.missReason === reasonFilter) &&
+    wrongStatusMatches(card, statusFilter, now) &&
+    (!needle || `${wrongSearchText(card)}\n${pathOf(card).toLowerCase()}`.includes(needle))
+  );
+  const sorted = sort === "due"
+    ? sortForReview(matches)
+    : [...matches].sort((a, b) => {
+      if (sort === "title") return a.title.localeCompare(b.title);
+      const difference = new Date(a.savedAt) - new Date(b.savedAt);
+      return sort === "oldest" ? difference : -difference;
+    });
+  const filtered = Boolean(needle || roomFilter || subroomFilter || statusFilter || reasonFilter);
+  const paged = usePaged(sorted, WRONG_PAGE_SIZE, [needle, roomFilter, subroomFilter, statusFilter, reasonFilter, sort].join("|"));
+
+  function clearFilters() {
+    setQuery("");
+    setRoomFilter("");
+    setSubroomFilter("");
+    setStatusFilter("");
+    setReasonFilter("");
+  }
+
+  return (
+    <section className="workspace wrong-session" ref={sectionRef}>
+      <div className="workspace-head">
+        <div>
+          <div className="eyebrow">Wrong Questions</div>
+          <h2>{info.label} wrong questions</h2>
+          <p>{cards.length ? "Every wrong question in this division, from all its rooms and sub-rooms. Review them here; missed ones come back sooner." : "No wrong questions yet. Add one and choose the sub-room it belongs to."}</p>
+        </div>
+        <div className="buttons">
+          {cards.length ? <button className="ghost-button" onClick={onStartReview}>{counts.due ? `Start session · ${counts.due} due` : "Practice all"}</button> : null}
+          <button className="primary" onClick={() => onNew({ roomId: roomFilter === UNFILED ? "" : roomFilter, subroomId: subroomFilter })}>+ New Wrong Question</button>
+        </div>
+      </div>
+      {editor ? <div className="wrong-editor-slot" ref={editorRef}>{editor}</div> : null}
+      {!editor && status ? <p className="status-banner">{status}</p> : null}
+      {cards.length ? (
+        <>
+          <div className="session-stats" role="group" aria-label="Filter by status">
+            {WRONG_STATUS_FILTERS.map(([key, label]) => (
+              <button
+                type="button"
+                key={key}
+                className={[statusFilter === key ? "is-active" : "", key === "missing" && counts.missing ? "is-warn" : ""].filter(Boolean).join(" ")}
+                aria-pressed={statusFilter === key}
+                onClick={() => setStatusFilter(statusFilter === key ? "" : key)}
+              >
+                <b>{counts[key]}</b>{label}
+              </button>
+            ))}
+          </div>
+          <div className="wrong-toolbar">
+            <SearchBar value={query} onChange={setQuery} placeholder={`Search ${info.label} wrong questions...`} />
+            <div className="wrong-filters">
+              <label>
+                <span>Room</span>
+                <select value={roomFilter} onChange={event => { setRoomFilter(event.target.value); setSubroomFilter(""); }}>
+                  <option value="">All rooms</option>
+                  {rooms.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                  {unfiledCount ? <option value={UNFILED}>Not in a sub-room ({unfiledCount})</option> : null}
+                </select>
+              </label>
+              <label>
+                <span>Sub-room</span>
+                <select value={subroomFilter} disabled={!filterRoom?.children?.length} onChange={event => setSubroomFilter(event.target.value)}>
+                  <option value="">{filterRoom ? "All sub-rooms" : "Pick a room first"}</option>
+                  {(filterRoom?.children || []).map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>Status</span>
+                <select value={statusFilter} onChange={event => setStatusFilter(event.target.value)}>
+                  <option value="">Any status</option>
+                  {WRONG_STATUS_FILTERS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>Why missed</span>
+                <select value={reasonFilter} onChange={event => setReasonFilter(event.target.value)}>
+                  <option value="">Any reason</option>
+                  {MISS_REASONS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                </select>
+              </label>
+              <label>
+                <span>Sort</span>
+                <select value={sort} onChange={event => setSort(event.target.value)}>
+                  {WRONG_SORTS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                </select>
+              </label>
+            </div>
+          </div>
+          <div className="wrong-results-head">
+            <span>{filtered ? `${sorted.length} of ${plural(cards.length, "wrong question")} match` : plural(cards.length, "wrong question")}</span>
+            {filtered ? <button type="button" className="mini-action" onClick={clearFilters}>Clear filters</button> : null}
+          </div>
+          {paged.items.length ? (
+            <div className="wrong-cards wrong-cards--paged">
+              {paged.items.map(card => <WrongQuestionCard key={card.id} card={card} path={pathOf(card)} unfiled={!placeOf(card)} onOpen={onOpen} onEdit={onEdit} onDelete={onDelete} />)}
+            </div>
+          ) : <div className="empty-soft">No wrong questions match these filters.</div>}
+          <Pager paged={paged} label={`${info.label} wrong question pages`} onTurn={() => revealTop(sectionRef)} />
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+// The division's rooms, a page at a time.
+function RoomDirectory({ info, rooms, noteCount, renderRoom, children }) {
+  const sectionRef = useRef(null);
+  const paged = usePaged(rooms, ROOM_PAGE_SIZE, info.label);
+  return (
+    <section className="workspace" ref={sectionRef}>
+      <div className="workspace-head">
+        <div><div className="eyebrow">Room Directory</div><h2>{info.label} rooms</h2></div>
+        <div className="division-head-actions">
+          <p>{plural(rooms.length, "room")} · {plural(noteCount, "saved note")}</p>
+          {children}
+        </div>
+      </div>
+      {rooms.length ? null : <div className="empty-soft">No rooms yet. Use + New Room to add a chapter or topic.</div>}
+      <div className="directory-grid">{paged.items.map(renderRoom)}</div>
+      <Pager paged={paged} label={`${info.label} room pages`} onTurn={() => revealTop(sectionRef)} />
+    </section>
+  );
+}
+
 function DivisionRoomCard({ room, noteCount, wrongCount, onOpenRoom, onOpenSubroom, onNewSubroom, onRenameRoom, onDeleteRoom, onRenameSubroom, onDeleteSubroom }) {
   const subrooms = room.children || [];
   function openRoomFromKeyboard(event) {
@@ -1224,6 +1479,8 @@ function StudyApp({ onLogout }) {
   const [roomCreateSubroomId, setRoomCreateSubroomId] = useState("");
   const [editorTargetSubroomId, setEditorTargetSubroomId] = useState("");
   const [wrongEditorTargetSubroomId, setWrongEditorTargetSubroomId] = useState("");
+  // Set while the division page's editor is open: where the question is filed.
+  const [wrongPlacement, setWrongPlacement] = useState(null);
   const [review, setReview] = useState(null);
   const [roomLinks, setRoomLinks] = useState({ key: "", links: [], status: "" });
   const debouncedDashboardSearch = useDebouncedValue(dashboardSearch);
@@ -1386,6 +1643,7 @@ function StudyApp({ onLogout }) {
     setWrongEditorOpen(false);
     setWrongEditingId("");
     setWrongEditorTargetSubroomId("");
+    setWrongPlacement(null);
     setWrongDraft({ ...EMPTY_WRONG_DRAFT });
   }
 
@@ -1633,11 +1891,13 @@ function StudyApp({ onLogout }) {
 
   async function saveWrongQuestion() {
     try {
-      if (!roomId || !(wrongEditorTargetSubroomId || subroomId || wrongEditingId)) return setWrongStatus("Select a sub-room before saving a wrong question.");
+      const placed = wrongPlacement;
+      if (placed && !placed.subroomId) return setWrongStatus("Choose the room and sub-room this wrong question belongs to.");
+      if (!placed && (!roomId || !(wrongEditorTargetSubroomId || subroomId || wrongEditingId))) return setWrongStatus("Select a sub-room before saving a wrong question.");
       if (!clean(wrongDraft.title) && !clean(wrongDraft.text) && !wrongDraft.attachments.length) return setWrongStatus("Add a title, wrong question text, or attachment before saving.");
       const existing = wrongEditingId ? wrongQuestions.find(card => card.id === wrongEditingId) : null;
-      const targetRoomId = existing?.roomId || roomId;
-      const targetSubroomId = existing?.subroomId || wrongEditorTargetSubroomId || subroomId;
+      const targetRoomId = placed?.roomId || existing?.roomId || roomId;
+      const targetSubroomId = placed?.subroomId || existing?.subroomId || wrongEditorTargetSubroomId || subroomId;
       if (!targetRoomId || !targetSubroomId) return setWrongStatus("Select a sub-room before saving a wrong question.");
       const targetRoom = rooms.find(item => item.id === targetRoomId);
       const targetSubroom = (targetRoom?.children || []).find(item => item.id === targetSubroomId);
@@ -1646,11 +1906,11 @@ function StudyApp({ onLogout }) {
         division: existing?.division || existing?.divisionId || division,
         divisionId: existing?.divisionId || existing?.division || division,
         roomId: targetRoomId,
-        roomName: existing?.roomName || targetRoom?.name || "",
+        roomName: targetRoom?.name || existing?.roomName || "",
         subroomId: targetSubroomId,
         subRoomId: targetSubroomId,
-        subroomName: existing?.subroomName || targetSubroom?.name || "",
-        subRoomName: existing?.subRoomName || existing?.subroomName || targetSubroom?.name || "",
+        subroomName: targetSubroom?.name || existing?.subroomName || "",
+        subRoomName: targetSubroom?.name || existing?.subRoomName || existing?.subroomName || "",
         title: clean(wrongDraft.title) || "Untitled Wrong Question",
         text: String(wrongDraft.text || "").trim(),
         answer: String(wrongDraft.answer || "").trim(),
@@ -1666,7 +1926,7 @@ function StudyApp({ onLogout }) {
       setWrongQuestions(prev => [saved, ...prev.filter(card => card.id !== saved.id)]);
       setAllSearchData(prev => prev.loaded ? { ...prev, wrongQuestions: [saved, ...prev.wrongQuestions.filter(card => card.id !== saved.id)] } : prev);
       closeWrongEditor();
-      setWrongStatus(`Saved "${saved.title}" and closed the editor.`);
+      setWrongStatus(placed ? `Saved "${saved.title}" to ${[saved.roomName, saved.subroomName].filter(Boolean).join(" / ")}.` : `Saved "${saved.title}" and closed the editor.`);
     } catch (error) {
       setWrongStatus(`Cloud save failed: ${error.message}`);
     }
@@ -1674,14 +1934,26 @@ function StudyApp({ onLogout }) {
 
   function editWrongQuestion(card) {
     const parsed = normalizeWrongQuestion(card);
-    if (!parsed.roomId || !parsed.subroomId) {
-      setWrongStatus("This legacy wrong question has no sub-room assignment yet, so it is preserved but cannot be edited from a sub-room.");
+    const cardDivision = parsed.division || parsed.divisionId;
+    // On the division page, edit in place; the editor there can also move it,
+    // or file an older question that was never put in a sub-room.
+    const inPlace = Boolean(division) && !roomId && cardDivision === division;
+    if (!inPlace && (!parsed.roomId || !parsed.subroomId)) {
+      setWrongStatus(`This older wrong question isn't in a sub-room yet. Open it from the ${cardDivision || "division"} page to file it in one.`);
       return;
     }
-    const cardDivision = parsed.division || parsed.divisionId;
-    if (cardDivision && cardDivision !== division) setDivision(cardDivision);
-    setRoomId(parsed.roomId);
-    setSubroomId(parsed.subroomId);
+    if (inPlace) {
+      closeEditor();
+      // Start from where it is filed; if those ids are gone, from a room and
+      // sub-room with the saved names, so re-filing it is one Save.
+      const placeRoom = rooms.find(item => item.id === parsed.roomId) || rooms.find(item => parsed.roomName && item.name === parsed.roomName);
+      const placeSubroom = (placeRoom?.children || []).find(item => item.id === parsed.subroomId) || (placeRoom?.children || []).find(item => parsed.subroomName && item.name === parsed.subroomName);
+      setWrongPlacement({ roomId: placeRoom ? placeRoom.id : "", subroomId: placeSubroom ? placeSubroom.id : "" });
+    } else {
+      if (cardDivision && cardDivision !== division) setDivision(cardDivision);
+      setRoomId(parsed.roomId);
+      setSubroomId(parsed.subroomId);
+    }
     setWrongViewerId("");
     setReview(null);
     setWrongEditingId(parsed.id);
@@ -2017,6 +2289,17 @@ function StudyApp({ onLogout }) {
     setStatus("");
   }
 
+  // Division page: new question, filed wherever the user picks (starting
+  // from the room / sub-room filters if set).
+  function openDivisionWrongEditor({ roomId: presetRoom = "", subroomId: presetSubroom = "" } = {}) {
+    closeEditor();
+    setWrongEditingId("");
+    setWrongDraft({ ...EMPTY_WRONG_DRAFT });
+    setWrongPlacement({ roomId: presetRoom || (rooms.length === 1 ? rooms[0].id : ""), subroomId: presetSubroom });
+    setWrongEditorOpen(true);
+    setWrongStatus("");
+  }
+
   function openWrongQuestionForSubroom(targetSubroomId) {
     closeEditor();
     closeRoomCreatePicker();
@@ -2187,46 +2470,6 @@ function StudyApp({ onLogout }) {
     );
   }
 
-  function wrongSessionPanel(divisionWrong) {
-    const now = new Date();
-    const counts = { due: 0, learning: 0, mastered: 0, new: 0 };
-    for (const card of divisionWrong) counts[reviewStatus(card.reviewState, now)] += 1;
-    const dueList = sortForReview(dueCards(divisionWrong)).slice(0, 6);
-    const missingAnswer = divisionWrong.filter(card => !clean(card.answer)).length;
-    return (
-      <section className="workspace wrong-session">
-        <div className="workspace-head">
-          <div>
-            <div className="eyebrow">Wrong Question Session</div>
-            <h2>{info.label} wrong questions</h2>
-            <p>{divisionWrong.length ? "Try each question, reveal the answer, and mark it. Missed ones come back sooner." : "Add wrong questions inside a sub-room; they collect here for review."}</p>
-          </div>
-          {divisionWrong.length ? (
-            <button className="primary" onClick={() => startReview({ type: "division" })}>{counts.due + counts.new ? `Start session · ${counts.due + counts.new} due` : "Practice all"}</button>
-          ) : null}
-        </div>
-        {divisionWrong.length ? (
-          <>
-            <div className="session-stats">
-              <span><b>{counts.due + counts.new}</b>Due now</span>
-              <span><b>{counts.learning}</b>Learning</span>
-              <span><b>{counts.mastered}</b>Mastered</span>
-              <span className={missingAnswer ? "is-warn" : ""}><b>{missingAnswer}</b>Missing an answer</span>
-            </div>
-            {dueList.length ? (
-              <div className="dashboard-mini-grid">
-                {dueList.map(card => {
-                  const status = reviewStatus(card.reviewState, now);
-                  return <button className="mini-card wrong-mini" key={card.id} onClick={() => setWrongViewerId(card.id)}><b>{card.title}</b><span>{[card.roomName, card.subroomName].filter(Boolean).join(" / ")}</span><p>{matchPreview([card.text], "")}</p><small><i className={`status-chip status-${status}`}>{STATUS_LABELS[status]}</i> {card.answer ? "" : "No answer yet"}</small></button>;
-                })}
-              </div>
-            ) : <div className="empty-soft">Nothing due. Every question is scheduled for later.</div>}
-          </>
-        ) : null}
-      </section>
-    );
-  }
-
   function divisionView() {
     const divisionWrong = wrongQuestions.filter(card => (card.division || card.divisionId) === division);
     const heroRooms = rooms.slice(0, MAX_HERO_ROOMS);
@@ -2256,33 +2499,62 @@ function StudyApp({ onLogout }) {
           </div>
           {!rooms.length ? <p className="hero-note">No rooms yet. Create your first room (a chapter or topic) and it appears here as an atom.</p> : null}
         </MoleculeHero>
-        {wrongSessionPanel(divisionWrong)}
-        <section className="workspace">
-          <div className="workspace-head">
-            <div><div className="eyebrow">Room Directory</div><h2>{info.label} rooms</h2></div>
-            <div className="division-head-actions">
-              <p>{plural(divisionNotes.length, "saved note")}{rooms.length > MAX_HERO_ROOMS ? ` · ${rooms.length - MAX_HERO_ROOMS} more rooms below` : ""}</p>
-              <button className="primary" onClick={openNewRoom}>+ New Room</button>
-            </div>
-          </div>
-          <div className="directory-grid">
-            {rooms.map(item => (
-              <DivisionRoomCard
-                key={item.id}
-                room={item}
-                noteCount={divisionNotes.filter(note => note.roomId === item.id).length}
-                wrongCount={divisionWrong.filter(card => card.roomId === item.id).length}
-                onOpenRoom={chooseRoom}
-                onOpenSubroom={chooseSubroom}
-                onNewSubroom={openNewSubroom}
-                onRenameRoom={openRenameRoom}
-                onDeleteRoom={openDeleteRoom}
-                onRenameSubroom={openRenameSubroom}
-                onDeleteSubroom={openDeleteSubroom}
-              />
-            ))}
-          </div>
-        </section>
+        <DivisionWrongPanel
+          key={division}
+          info={info}
+          rooms={rooms}
+          cards={divisionWrong}
+          status={wrongStatus}
+          editor={wrongEditorOpen && wrongPlacement ? (
+            <WrongQuestionEditor
+              draft={wrongDraft}
+              editing={wrongEditingId}
+              status={wrongStatus}
+              setDraft={setWrongDraft}
+              placement={{
+                rooms,
+                roomId: wrongPlacement.roomId,
+                subroomId: wrongPlacement.subroomId,
+                onChange: place => {
+                  setWrongPlacement(place);
+                  setWrongStatus("");
+                }
+              }}
+              onFiles={attachWrongFiles}
+              onRemoveFile={fileId => setWrongDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))}
+              onSave={saveWrongQuestion}
+              onCancel={closeWrongEditor}
+            />
+          ) : null}
+          onStartReview={() => startReview({ type: "division" })}
+          onNew={openDivisionWrongEditor}
+          onOpen={card => setWrongViewerId(card.id)}
+          onEdit={editWrongQuestion}
+          onDelete={deleteWrongQuestion}
+        />
+        <RoomDirectory
+          key={`rooms-${division}`}
+          info={info}
+          rooms={rooms}
+          noteCount={divisionNotes.length}
+          renderRoom={item => (
+            <DivisionRoomCard
+              key={item.id}
+              room={item}
+              noteCount={divisionNotes.filter(note => note.roomId === item.id).length}
+              wrongCount={divisionWrong.filter(card => card.roomId === item.id).length}
+              onOpenRoom={chooseRoom}
+              onOpenSubroom={chooseSubroom}
+              onNewSubroom={openNewSubroom}
+              onRenameRoom={openRenameRoom}
+              onDeleteRoom={openDeleteRoom}
+              onRenameSubroom={openRenameSubroom}
+              onDeleteSubroom={openDeleteSubroom}
+            />
+          )}
+        >
+          <button className="primary" onClick={openNewRoom}>+ New Room</button>
+        </RoomDirectory>
       </section>
     );
   }
@@ -2324,7 +2596,7 @@ function StudyApp({ onLogout }) {
         {main}
       </main>
       <Viewer note={viewerNote} busy={busy} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onAnalyze={reanalyze} />
-      <WrongQuestionViewer card={wrongViewerCard} canManage={Boolean(subroomId || wrongViewerCard?.roomId)} onClose={() => setWrongViewerId("")} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />
+      <WrongQuestionViewer card={wrongViewerCard} canManage={Boolean(subroomId || wrongViewerCard?.roomId || (division && !roomId))} onClose={() => setWrongViewerId("")} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />
       {review ? <WrongReview cards={review.cards} practice={review.practice} scopeLabel={review.scopeLabel} onResult={recordReview} onEdit={editWrongQuestion} onClose={() => setReview(null)} /> : null}
       {roomForm ? <RoomNameModal roomType="room" mode={roomForm.mode} name={roomName} status={roomStatus} busy={roomBusy} onNameChange={setRoomName} onSave={saveRoom} onCancel={closeRoomPanels} /> : null}
       {deleteRoomTarget ? <DeleteRoomModal roomType="room" item={deleteRoomTarget} counts={deleteRoomCounts} status={roomStatus} busy={roomBusy} onConfirm={deleteRoom} onCancel={closeRoomPanels} /> : null}
