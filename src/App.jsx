@@ -608,6 +608,8 @@ function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, 
 
   const focusInfo = mapDivisions.find(item => item.code === coverFocus.division);
   const [treeHighlight, setTreeHighlight] = useState("");
+  // The selected division star's live screen position, shared by the map and the tree.
+  const treeAnchorRef = useRef(null);
   useEffect(() => setTreeHighlight(""), [coverFocus.division]);
   const panel = focusInfo ? (
     <DivisionTree
@@ -627,6 +629,7 @@ function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, 
       onOpenSubroom={(roomId, subroomId) => onOpenSubroom(focusInfo.code, roomId, subroomId)}
       onRetry={() => onRetryRooms(focusInfo.code)}
       onHighlight={setTreeHighlight}
+      anchorRef={treeAnchorRef}
     />
   ) : null;
 
@@ -637,6 +640,7 @@ function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, 
         divisions={mapDivisions}
         selectedDivision={coverFocus.division}
         highlightId={treeHighlight}
+        anchorRef={treeAnchorRef}
         panel={panel}
         onSelectNode={onCoverNode}
         onSelectDivision={code => setCoverFocus({ ...NO_COVER_FOCUS, division: code })}

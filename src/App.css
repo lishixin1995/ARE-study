@@ -849,27 +849,6 @@ main.main--cover {
   line-height: 1.35;
 }
 
-.star-tag {
-  position: absolute;
-  top: 0;
-  left: 0;
-  padding: 2px 8px;
-  border-radius: 6px;
-  border: 1px solid color-mix(in srgb, var(--atom, #fff) 55%, transparent);
-  background: rgba(4, 8, 18, 0.7);
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-  color: var(--atom, #fff);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.25s;
-}
-
-.star-tag.is-visible {
-  opacity: 1;
-}
-
 .hub-buttons button {
   position: absolute;
   top: 0;
@@ -949,277 +928,365 @@ main.main--cover {
   padding: 24px clamp(16px, 6vw, 80px);
 }
 
-.cover-panel {
+.cover-overlay {
   position: absolute;
-  top: 50%;
-  right: clamp(16px, 3vw, 48px);
+  inset: 0;
   z-index: 3;
-  width: min(440px, 38vw);
-  max-height: 86%;
-  display: flex;
-  transform: translateY(-50%);
-  animation: panel-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+  pointer-events: none;
 }
 
-@keyframes panel-in {
-  from {
-    opacity: 0;
-    transform: translate(28px, -50%);
+/* ---------- Division tree (branches out of the selected star) ---------- */
+
+.tree-map {
+  --curve: color-mix(in srgb, var(--atom) 55%, #dbe8ff);
+}
+
+.tree-map.is-beside {
+  position: absolute;
+  inset: 0;
+}
+
+.tree-map button {
+  pointer-events: auto;
+}
+
+.tree-curves {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.tree-curve {
+  fill: none;
+  stroke: var(--curve);
+  stroke-width: 1;
+  stroke-opacity: 0.32;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: branch-draw 0.9s cubic-bezier(0.3, 0.7, 0.2, 1) forwards;
+  animation-delay: calc(var(--i, 0) * 60ms + 120ms);
+}
+
+.tree-curve.is-active {
+  stroke: var(--atom);
+  stroke-opacity: 0.95;
+  stroke-width: 1.4;
+  filter: drop-shadow(0 0 4px var(--atom));
+}
+
+.tree-curve--leaf {
+  stroke: var(--atom);
+  stroke-opacity: 0.6;
+  animation-duration: 0.7s;
+  animation-delay: calc(var(--i, 0) * 45ms + 80ms);
+}
+
+@keyframes branch-draw {
+  to {
+    stroke-dashoffset: 0;
   }
 }
 
-/* ---------- Division tree menu ---------- */
-
-.division-tree {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  width: 100%;
-  max-height: 100%;
-  padding: 20px;
-  border-radius: 20px;
-  border: 1px solid rgba(160, 200, 255, 0.2);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--atom) 10%, transparent), transparent 140px),
-    rgba(6, 11, 22, 0.88);
-  backdrop-filter: blur(16px);
-  box-shadow: var(--shadow), 0 0 50px color-mix(in srgb, var(--atom) 12%, transparent);
+/* Root label: follows the star, sits just below it. */
+.tree-root {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  min-width: 220px;
+  text-align: center;
+  pointer-events: none;
+  animation: tree-fade 0.5s ease both;
 }
 
-.tree-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: flex-start;
+@keyframes tree-fade {
+  from {
+    opacity: 0;
+  }
 }
 
-.tree-head .eyebrow {
+.tree-root .eyebrow {
   color: var(--atom);
 }
 
-.tree-head h2 {
-  margin-top: 6px;
-  font-size: 21px;
-  line-height: 1.25;
+.tree-root h2 {
+  font-family: var(--font-mono);
+  font-size: 30px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 0 22px color-mix(in srgb, var(--atom) 70%, transparent), 0 2px 10px rgba(0, 0, 0, 0.9);
 }
 
-.tree-code {
-  font-family: var(--font-mono);
-  font-size: 16px;
-  letter-spacing: 0.04em;
-  color: var(--atom);
-  margin-right: 4px;
+.tree-root-name {
+  font-size: 15px;
+  color: var(--text);
+  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.95);
 }
 
-.tree-head p {
-  margin-top: 6px;
+.tree-root-stats {
   font-family: var(--font-mono);
-  font-size: 11.5px;
-  letter-spacing: 0.04em;
-  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--text-soft);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.95);
+}
+
+.tree-root-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.tree-root-actions .ghost-button {
+  padding: 8px 16px;
+  font-size: 13px;
+  border-color: color-mix(in srgb, var(--atom) 55%, rgba(220, 235, 255, 0.4));
 }
 
 .tree-close {
-  flex: none;
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   padding: 0;
-  font-size: 18px;
+  font-size: 17px;
   line-height: 1;
+  background: rgba(6, 12, 26, 0.5);
+  backdrop-filter: blur(8px);
 }
 
-.tree,
-.tree ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.tree {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
+/* Column of room cards. */
+.tree-column {
+  position: absolute;
+  top: 50%;
+  left: 53%;
+  width: min(270px, 22vw);
+  max-height: 84%;
   display: grid;
-  align-content: start;
-  gap: 4px;
-  margin: 0 -6px;
-  padding: 0 6px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(150, 190, 255, 0.25) transparent;
+  gap: 12px;
+  padding: 4px 6px 4px 10px;
+  margin-left: -10px;
+  overflow-y: auto;
+  transform: translateY(-50%);
+  scrollbar-width: none;
+  pointer-events: auto;
+  mask-image: linear-gradient(transparent, black 4%, black 96%, transparent);
 }
 
-.tree-room {
-  animation: tree-row-in 0.4s ease both;
-  animation-delay: calc(var(--i, 0) * 45ms + 120ms);
+.tree-column::-webkit-scrollbar {
+  display: none;
 }
 
-@keyframes tree-row-in {
-  from {
-    opacity: 0;
-    transform: translateX(10px);
-  }
-}
-
-.tree-row {
+/* A room on the tree: dot, name and details, no box. */
+.tree-room-item {
   display: flex;
   align-items: center;
   gap: 4px;
-  border-radius: 12px;
-  transition: background 0.18s;
+  width: fit-content;
+  max-width: 100%;
+  animation: card-in 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 55ms + 200ms);
 }
 
-.tree-row:hover,
-.tree-room.is-focus > .tree-row {
-  background: rgba(40, 70, 120, 0.28);
+@keyframes card-in {
+  from {
+    opacity: 0;
+    translate: -18px 0;
+  }
 }
 
-.tree-room.is-focus > .tree-row {
-  box-shadow: inset 2px 0 0 var(--atom);
-}
-
-.tree-toggle {
-  flex: 1;
+.tree-map .tree-node {
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
+  padding: 5px 4px 5px 0;
   border: 0;
+  border-radius: 10px;
   background: none;
-  border-radius: 12px;
-  padding: 10px 8px;
   text-align: left;
 }
 
-.tree-toggle:hover:not(:disabled),
-.tree-open:hover:not(:disabled),
-.tree-sub:hover:not(:disabled) {
+.tree-map .tree-node:hover:not(:disabled),
+.tree-map .tree-open-link:hover:not(:disabled),
+.tree-map .tree-leaf:hover:not(:disabled) {
   background: none;
   box-shadow: none;
 }
 
-.tree-chevron {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  border-right: 1.5px solid var(--text-soft);
-  border-bottom: 1.5px solid var(--text-soft);
-  transform: rotate(-45deg);
-  transition: transform 0.2s;
+.tree-node .tree-leaf-dot {
+  border-color: var(--curve);
+  box-shadow: none;
 }
 
-.tree-room.is-open .tree-chevron {
-  transform: rotate(45deg);
+.tree-room-item.is-active .tree-leaf-dot,
+.tree-map .tree-node:hover .tree-leaf-dot,
+.tree-map .tree-node:focus-visible .tree-leaf-dot {
   border-color: var(--atom);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--atom) 80%, transparent);
 }
 
-.tree-name {
-  flex: 1;
+.tree-room-item.is-active .tree-leaf-dot {
+  background: var(--atom);
+  transform: scale(1.2);
+}
+
+.tree-node .tree-leaf-text b {
+  color: var(--text-soft);
+  transition: color 0.2s, text-shadow 0.2s;
+}
+
+.tree-room-item.is-active .tree-leaf-text b,
+.tree-map .tree-node:hover .tree-leaf-text b {
+  color: #fff;
+}
+
+.tree-room-item.is-active .tree-leaf-text b {
+  font-size: 15.5px;
+  text-shadow: 0 0 16px color-mix(in srgb, var(--atom) 60%, transparent), 0 1px 8px rgba(0, 0, 0, 0.95);
+}
+
+.tree-map .tree-node:focus-visible {
+  outline: none;
+}
+
+.tree-map .tree-node:focus-visible .tree-leaf-text b {
+  text-decoration: underline;
+  text-decoration-color: var(--atom);
+  text-underline-offset: 4px;
+}
+
+/* Small arrow that opens the room; shows on hover, focus and the chosen room. */
+.tree-map .tree-open-link {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--atom);
+  font-size: 14px;
+  opacity: 0;
+  transition: opacity 0.2s, translate 0.2s;
+}
+
+.tree-room-item:hover .tree-open-link,
+.tree-room-item.is-active .tree-open-link,
+.tree-map .tree-open-link:focus-visible {
+  opacity: 1;
+}
+
+.tree-map .tree-open-link:hover:not(:disabled) {
+  translate: 3px 0;
+}
+
+/* Sub-rooms fanned on an arc. */
+.tree-fan {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.tree-map .tree-leaf {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 240px;
+  padding: 4px 10px 4px 0;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  text-align: left;
+  transform: translate(-5px, -50%);
+  opacity: var(--fade, 1);
+  animation: leaf-in 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation-delay: calc(var(--i, 0) * 45ms + 380ms);
+}
+
+@keyframes leaf-in {
+  from {
+    opacity: 0;
+    translate: -14px 0;
+  }
+}
+
+.tree-leaf-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1.5px solid var(--atom);
+  background: #050a16;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--atom) 70%, transparent);
+  transition: background 0.2s, transform 0.2s;
+}
+
+.tree-leaf-text {
+  display: grid;
+  gap: 2px;
   min-width: 0;
+}
+
+.tree-leaf-text b {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 15px;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.95);
 }
 
-.tree-count {
-  flex: none;
+.tree-leaf-text small {
   font-family: var(--font-mono);
   font-size: 10.5px;
   letter-spacing: 0.04em;
   color: var(--muted);
 }
 
-.tree-open {
-  flex: none;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border-color: transparent;
-  background: none;
+.tree-map .tree-leaf:hover .tree-leaf-dot,
+.tree-map .tree-leaf:focus-visible .tree-leaf-dot,
+.tree-leaf.is-focus .tree-leaf-dot {
+  background: var(--atom);
+  transform: scale(1.25);
+}
+
+.tree-map .tree-leaf:hover .tree-leaf-text b,
+.tree-leaf.is-focus .tree-leaf-text b {
+  color: #fff;
+}
+
+.tree-leaf--empty .tree-leaf-dot,
+.tree-leaf--more .tree-leaf-dot {
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.tree-leaf--empty .tree-leaf-text b {
   color: var(--text-soft);
-  font-size: 15px;
-}
-
-.tree-row:hover .tree-open,
-.tree-open:focus-visible {
-  border-color: var(--line-strong);
-  color: var(--text);
-}
-
-.tree-children {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows 0.28s ease;
-}
-
-.tree-room.is-open > .tree-children {
-  grid-template-rows: 1fr;
-}
-
-.tree-children > ul {
-  min-height: 0;
-  overflow: hidden;
-  margin-left: 20px;
-  padding-left: 14px;
-  border-left: 1px solid color-mix(in srgb, var(--atom) 35%, transparent);
-}
-
-.tree-children li {
-  position: relative;
-}
-
-.tree-children li::before {
-  content: "";
-  position: absolute;
-  left: -14px;
-  top: 50%;
-  width: 10px;
-  height: 1px;
-  background: color-mix(in srgb, var(--atom) 35%, transparent);
-}
-
-.tree-sub {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border: 0;
-  background: none;
-  border-radius: 10px;
-  padding: 8px 10px;
-  text-align: left;
-  color: var(--text-soft);
-}
-
-.tree-sub .tree-name {
-  font-size: 14px;
-}
-
-.tree-sub:hover,
-.tree-sub:focus-visible,
-.tree-sub.is-focus {
-  background: rgba(40, 70, 120, 0.3);
-  color: var(--text);
-}
-
-.tree-sub.is-focus {
-  box-shadow: inset 2px 0 0 var(--atom);
+  font-weight: 400;
 }
 
 .tree-empty {
-  padding: 8px 10px;
+  padding: 8px 4px;
   color: var(--muted);
   font-size: 13px;
 }
 
-.tree-loading {
+.tree-skeleton {
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
-.tree-loading span {
-  height: 38px;
-  border-radius: 12px;
+.tree-skeleton span {
+  height: 56px;
+  border-radius: 14px;
   background: linear-gradient(90deg, rgba(40, 70, 120, 0.15), rgba(80, 120, 190, 0.28), rgba(40, 70, 120, 0.15));
   background-size: 200% 100%;
   animation: shimmer 1.2s linear infinite;
@@ -1231,14 +1298,82 @@ main.main--cover {
   }
 }
 
-.tree-foot {
-  padding-top: 4px;
-  border-top: 1px solid var(--line);
+/* Narrow screens: the same tree, stacked under the map with a glowing spine. */
+.tree-map.is-stacked {
+  display: grid;
+  gap: 18px;
+  padding: 4px 4px 8px;
 }
 
-.tree-foot .primary {
+.tree-map.is-stacked .tree-root {
+  position: static;
+  justify-items: start;
+  text-align: left;
+  min-width: 0;
+}
+
+.tree-map.is-stacked .tree-root-actions {
+  flex-wrap: wrap;
+}
+
+.tree-branches,
+.tree-twigs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tree-branches {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  padding-left: 22px;
+}
+
+.tree-branches::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: -14px;
+  bottom: 26px;
+  width: 1px;
+  background: linear-gradient(var(--atom), color-mix(in srgb, var(--atom) 15%, transparent));
+  box-shadow: 0 0 8px color-mix(in srgb, var(--atom) 60%, transparent);
+}
+
+.tree-branches > li {
+  position: relative;
+}
+
+.tree-branches > li::before {
+  content: "";
+  position: absolute;
+  left: -18px;
+  top: 28px;
+  width: 14px;
+  height: 14px;
+  border-left: 1px solid var(--curve);
+  border-bottom: 1px solid var(--curve);
+  border-bottom-left-radius: 12px;
+  transform: translateY(-13px);
+  opacity: 0.7;
+}
+
+.tree-twigs {
+  display: grid;
+  gap: 2px;
+  margin: 8px 0 4px 26px;
+  padding-left: 16px;
+  border-left: 1px solid color-mix(in srgb, var(--atom) 45%, transparent);
+}
+
+.tree-map.is-stacked .tree-leaf {
+  position: relative;
+  transform: none;
+  max-width: none;
   width: 100%;
-  margin-top: 10px;
+  padding: 8px 6px;
+  animation-delay: calc(var(--i, 0) * 45ms);
 }
 
 /* ---------- Dashboard body ---------- */
@@ -3095,6 +3230,31 @@ button.map-label:hover:not(:disabled) {
   }
 }
 
+/* Below the tree breakpoint (src/lib/coverLayout.js) the cover map sits on
+   top and the division tree opens underneath it. */
+@media (max-width: 999px) {
+  .cover-map {
+    height: auto;
+    display: grid;
+    /* minmax(0, 1fr) keeps the scrolling chip row from widening the column. */
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    padding-bottom: 16px;
+  }
+
+  .cover-canvas {
+    position: relative;
+    inset: auto;
+    height: 62vh;
+    min-height: 380px;
+  }
+
+  .cover-overlay {
+    position: static;
+    margin: 0 16px;
+  }
+}
+
 /* Narrow screens: the molecule sits on top, labels form a grid below it. */
 @media (max-width: 759px) {
   .top-menu {
@@ -3130,22 +3290,6 @@ button.map-label:hover:not(:disabled) {
     display: none;
   }
 
-  .cover-map {
-    height: auto;
-    display: grid;
-    /* minmax(0, 1fr) keeps the scrolling chip row from widening the column. */
-    grid-template-columns: minmax(0, 1fr);
-    gap: 14px;
-    padding-bottom: 16px;
-  }
-
-  .cover-canvas {
-    position: relative;
-    inset: auto;
-    height: 62vh;
-    min-height: 380px;
-  }
-
   .cover-chips,
   .cover-map.no-webgl .cover-chips {
     position: static;
@@ -3158,14 +3302,6 @@ button.map-label:hover:not(:disabled) {
     display: none;
   }
 
-  .cover-panel {
-    position: static;
-    width: auto;
-    max-height: none;
-    margin: 0 16px;
-    transform: none;
-    animation: none;
-  }
 
   .molecule-hero,
   .division-page .molecule-hero {

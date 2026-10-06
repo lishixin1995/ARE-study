@@ -138,8 +138,10 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
 
   const size = { width: 1, height: 1 };
   const engaged = { value: 0, target: 0 };
-  // Selecting a division flies the camera to its cluster, shifted left of the panel.
-  const focus = { value: 0, target: 0, shift: 0, center: new THREE.Vector3(), centerTarget: new THREE.Vector3(), radius: 1.5, radiusTarget: 1.5 };
+  // Selecting a division slides the whole nebula aside (view shift + pull
+  // back) and turns it so the division's star faces the tree menu.
+  const focus = { value: 0, target: 0, shift: 0, available: 1, present: false, roll: 0, hub: null };
+  let cloudRadius = 3; // furthest star from the centre in the x/y plane
   const drag = { x: 0, y: 0, down: null, moved: false };
   const world = new THREE.Vector3();
   let hovered = null;
@@ -257,6 +259,7 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
       }
     }
 
+    cloudRadius = Math.max(1, ...nodes.map(node => Math.hypot(node.position[0], node.position[1])));
     screen = new Float32Array(nodes.length * 5);
     fitCamera();
   }
@@ -286,31 +289,17 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
     network.rotation.copy(saved);
   }
 
-  function clusterBounds(code) {
-    const members = graph.nodes.filter(node => node.division === code);
-    if (!members.length) return null;
-    const center = new THREE.Vector3();
-    for (const node of members) center.add(world.set(...node.position));
-    center.divideScalar(members.length);
-    let radius = 0.9;
-    for (const node of members) radius = Math.max(radius, center.distanceTo(world.set(...node.position)) + 0.35);
-    return { center, radius };
-  }
-
-  // Distance that fits a cluster of `radius` in the space left of the panel.
-  function clusterDistance(radius) {
+  // Distance that fits the whole nebula, at any roll, inside `available`
+  // (a share of the width) and the full height.
+  function slideDistance() {
     const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
-    const available = Math.max(0.3, 1 - 2 * focus.shift);
-    const vertical = radius / (tanV * 0.52);
-    const horizontal = radius / (tanV * camera.aspect * available * 0.72);
-    return THREE.MathUtils.clamp(Math.max(vertical, horizontal), 2.2, fitDistance);
+    const horizontal = cloudRadius / (tanV * camera.aspect * focus.available * 0.86);
+    const vertical = cloudRadius / (tanV * 0.84);
+    return Math.max(fitDistance, horizontal, vertical);
   }
 
   function placeCamera() {
-    const distance = THREE.MathUtils.lerp(fitDistance, clusterDistance(focus.radius), focus.value);
-    // Slide the focused cluster to the middle of the view.
-    world.copy(focus.center).applyEuler(network.rotation);
-    network.position.copy(world).multiplyScalar(-focus.value);
+    const distance = focus.present ? THREE.MathUtils.lerp(fitDistance, slideDistance(), focus.value) : fitDistance;
     camera.position.set(0, 0, distance);
     camera.lookAt(0, 0, 0);
     const offset = focus.value * focus.shift * size.width;
@@ -320,13 +309,19 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
     pointMaterial.uniforms.uRefDistance.value = distance;
   }
 
-  function step(snap) {
-    const rate = snap ? 1 : 0.14;
+  // Move every animated value toward its target. Rates are per second, so
+  // motion takes the same time whatever the frame rate.
+  function step(dt, snap) {
+    const per = speed => (snap ? 1 : 1 - Math.exp(-speed * dt));
+    const rate = per(9);
     const { nodes, links, triangles, neighbors } = graph;
-    engaged.value = ease(engaged.value, engaged.target, snap ? 1 : 0.08);
-    focus.value = ease(focus.value, focus.target, snap ? 1 : 0.07);
-    focus.center.lerp(focus.centerTarget, snap ? 1 : 0.08);
-    focus.radius = ease(focus.radius, focus.radiusTarget, snap ? 1 : 0.08);
+    engaged.value = ease(engaged.value, engaged.target, per(5));
+    focus.value = ease(focus.value, focus.target, per(4.5));
+    // Turn the shortest way toward the target roll.
+    const rollTarget = focus.present && focus.target && focus.hub ? -Math.atan2(focus.hub[1], focus.hub[0]) : 0;
+    let delta = rollTarget - focus.roll;
+    delta = Math.atan2(Math.sin(delta), Math.cos(delta));
+    focus.roll = snap ? rollTarget : focus.roll + delta * per(4);
     const spotlight = hovered || active;
     const near = spotlight ? neighbors.get(spotlight) : null;
     const reveal = engaged.value;
@@ -377,7 +372,7 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
 
     for (const glow of glows) {
       const target = glow.base * (selected ? (glow.region === selected ? 1.7 : 0.45) : 1);
-      glow.level = ease(glow.level, target, snap ? 1 : 0.05);
+      glow.level = ease(glow.level, target, per(3));
       glow.sprite.material.opacity = glow.level;
     }
 
@@ -392,7 +387,7 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
       if (crystal.fill) crystal.fill.material.opacity = crystal.level * 0.08;
       crystal.group.visible = crystal.level > 0.01;
       const scaleTarget = node.id === spotlight || (inSelected && node.kind === "division") ? 1.35 : 1;
-      crystal.scale = ease(crystal.scale, scaleTarget, snap ? 1 : 0.12);
+      crystal.scale = ease(crystal.scale, scaleTarget, per(8));
       crystal.group.scale.setScalar(crystal.scale);
       if (!reduced) {
         crystal.group.rotation.y += crystal.spin;
@@ -423,14 +418,16 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
 
   function render(time, snap = false) {
     const t = time / 1000;
-    const delta = lastTime ? Math.min(0.1, t - lastTime) : 0;
+    // Cap the step so a stalled tab doesn't jump, but keep slow frames on time.
+    const delta = lastTime ? Math.min(0.25, Math.max(0, t - lastTime)) : 0;
     lastTime = t;
     // The sway pauses while a star is hovered or dragged, so it stays under the pointer.
     if (!reduced && !hovered && !drag.moved) swayTime += delta;
-    step(snap || reduced);
-    const swayScale = selected ? 0.35 : 1;
+    step(delta, snap || reduced);
+    const swayScale = selected ? 0.15 : 1;
     network.rotation.y = (reduced ? 0 : Math.sin(swayTime * 0.11) * 0.34 * swayScale) + drag.y;
     network.rotation.x = (reduced ? 0 : Math.sin(swayTime * 0.08) * 0.08 * swayScale) + drag.x;
+    network.rotation.z = focus.roll;
     pointMaterial.uniforms.uTime.value = reduced ? 0 : t;
     stars.update(t);
     placeCamera();
@@ -546,23 +543,17 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
     },
     setSelected(code) {
       selected = code || "";
-      const bounds = selected ? clusterBounds(selected) : null;
-      if (!bounds) return;
-      focus.centerTarget.copy(bounds.center);
-      focus.radiusTarget = bounds.radius;
-      // Coming from the overview, start at the target instead of sweeping across.
-      if (focus.value < 0.02) {
-        focus.center.copy(bounds.center);
-        focus.radius = bounds.radius;
-      }
+      const hub = selected ? graph.nodes.find(node => node.id === `division:${selected}`) : null;
+      if (hub) focus.hub = hub.position;
     },
     setEngaged(on) {
       engaged.target = on ? 1 : 0;
     },
-    // shift: share of the width the view moves left to make room for the panel.
-    setFocus(on, shift = 0) {
+    // shift: share of the width the view moves left; available: share of the
+    // width the nebula must fit in; present: turn the division toward the right.
+    setFocus(on, { shift = 0, available = 1, present = false } = {}) {
       focus.target = on ? 1 : 0;
-      if (on) focus.shift = shift;
+      if (on) Object.assign(focus, { shift, available, present });
     },
     setVisible(value) {
       visible = value;

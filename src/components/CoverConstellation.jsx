@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { hasWebGL } from "../three/support.js";
+import { TREE_BESIDE_BREAKPOINT } from "../lib/coverLayout.js";
 
-// Below this width the tree menu opens under the map instead of beside it.
-const SIDE_PANEL_BREAKPOINT = 760;
+// Where the nebula goes while the tree is open: the view shifts left by this
+// share of the width, and the nebula shrinks to fit this share.
+const SLIDE_SHIFT = 0.2;
+const SLIDE_SPACE = 0.34;
 // How long a name stays up after the pointer leaves both its star and the
 // path to its name.
 const HOVER_GRACE_MS = 450;
@@ -11,12 +14,6 @@ const HOVER_GRACE_MS = 450;
 const HOVER_SWITCH_MS = 160;
 const KIND_LABELS = { division: "Division", room: "Room", subroom: "Sub-room", note: "Study note" };
 
-// Width the tree menu takes beside the map (matches .cover-panel in CSS).
-function panelSpace(width) {
-  const margin = Math.min(48, Math.max(16, width * 0.03));
-  return Math.min(440, width * 0.38) + margin * 2;
-}
-
 function canHover() {
   return typeof window !== "undefined" && Boolean(window.matchMedia?.("(hover: hover)").matches);
 }
@@ -24,13 +21,14 @@ function canHover() {
 // The cover map: a 3D constellation of divisions, rooms, sub-rooms and notes.
 // divisions: [{ code, label, name, color }]; graph: buildCoverGraph() output.
 // highlightId: a star to light up from outside the map (e.g. hovering the tree menu).
-export default function CoverConstellation({ graph, divisions, selectedDivision = "", highlightId = "", panel = null, onSelectNode, onSelectDivision, onBackground, children }) {
+// anchorRef: receives the selected division star's position every frame, so
+// the tree menu's curves can start from it.
+export default function CoverConstellation({ graph, divisions, selectedDivision = "", highlightId = "", anchorRef, panel = null, onSelectNode, onSelectDivision, onBackground, children }) {
   const sectionRef = useRef(null);
   const hostRef = useRef(null);
   const sceneRef = useRef(null);
   const labelRef = useRef(null);
   const reticleRef = useRef(null);
-  const tagRef = useRef(null);
   const hubButtons = useRef(new Map());
   const hideTimer = useRef(0);
   const switchTimer = useRef(0);
@@ -125,25 +123,20 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
         reticle.style.transform = `translate(${(spot.x - ring / 2).toFixed(1)}px, ${(spot.y - ring / 2).toFixed(1)}px)`;
       }
     }
-    const tag = tagRef.current;
-    const selected = selectedRef.current;
-    const hub = selected ? scene.screenPosition(`division:${selected}`) : null;
-    if (tag) {
-      tag.classList.toggle("is-visible", Boolean(hub) && hovered?.id !== `division:${selected}`);
-      if (hub) tag.style.transform = `translate(${(hub.x + hub.extent + 10).toFixed(1)}px, ${(hub.y - hub.extent - 10).toFixed(1)}px)`;
+    if (anchorRef) {
+      const selected = selectedRef.current;
+      anchorRef.current = selected ? scene.screenPosition(`division:${selected}`) : null;
     }
     for (const [code, button] of hubButtons.current) {
       const point = scene.screenPosition(`division:${code}`);
       if (point) button.style.transform = `translate(${(point.x - 16).toFixed(1)}px, ${(point.y - 16).toFixed(1)}px)`;
     }
-  }, []);
+  }, [anchorRef]);
 
   const applyFocus = useCallback(() => {
-    const width = widthRef.current;
-    const beside = width >= SIDE_PANEL_BREAKPOINT;
-    const shift = beside ? panelSpace(width) / 2 / width : 0;
-    // On narrow screens the panel sits under the map, so just center the cluster.
-    sceneRef.current?.setFocus(Boolean(selectedDivision), shift);
+    const beside = widthRef.current >= TREE_BESIDE_BREAKPOINT;
+    // On narrow screens the tree sits under the map, so the map stays put.
+    sceneRef.current?.setFocus(Boolean(selectedDivision), beside ? { shift: SLIDE_SHIFT, available: SLIDE_SPACE, present: true } : {});
   }, [selectedDivision]);
 
   const applyFocusRef = useRef(applyFocus);
@@ -234,7 +227,6 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
   }
 
   const classes = ["cover-map", ready ? "is-ready" : "", selectedDivision ? "has-selection" : "", webgl ? "" : "no-webgl"].filter(Boolean).join(" ");
-  const selectedInfo = divisions.find(item => item.code === selectedDivision);
 
   return (
     <section className={classes} ref={sectionRef} aria-label="ARE study map" onPointerEnter={() => engage(true)} onPointerMove={trackPointer} onPointerLeave={() => { engage(false); hideNodeSoon(); }}>
@@ -263,7 +255,6 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
           </>
         ) : null}
       </button>
-      <div className="star-tag" ref={tagRef} aria-hidden="true" style={{ "--atom": selectedInfo?.color }}>{selectedInfo?.label}</div>
 
       {/* Keyboard access: one invisible button per division, sitting on its star. */}
       <div className="hub-buttons">
@@ -299,7 +290,7 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
         ))}
       </div>
 
-      {panel ? <div className="cover-panel">{panel}</div> : null}
+      {panel ? <div className="cover-overlay">{panel}</div> : null}
     </section>
   );
 }
