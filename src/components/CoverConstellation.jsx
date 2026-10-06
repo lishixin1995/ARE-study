@@ -12,7 +12,6 @@ const HOVER_GRACE_MS = 450;
 // While a name is showing, another star must be hovered this long to take
 // over, so passing over stars on the way to the name doesn't swap it.
 const HOVER_SWITCH_MS = 160;
-const KIND_LABELS = { division: "Division", room: "Room", subroom: "Sub-room", note: "Study note" };
 
 function canHover() {
   return typeof window !== "undefined" && Boolean(window.matchMedia?.("(hover: hover)").matches);
@@ -117,7 +116,7 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
       label.classList.toggle("is-visible", Boolean(spot));
       if (spot) {
         const x = Math.min(Math.max(spot.x, 90), Math.max(90, width - 90));
-        label.style.transform = `translate(${x.toFixed(1)}px, ${(spot.y + spot.extent + 12).toFixed(1)}px) translateX(-50%)`;
+        label.style.transform = `translate(${x.toFixed(1)}px, ${(spot.y + spot.extent + 6).toFixed(1)}px) translateX(-50%)`;
       }
     }
     if (reticle) {
@@ -258,11 +257,11 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
         onMouseLeave={hideNodeSoon}
         onClick={() => hoveredNode && onSelectNode(hoveredNode)}
       >
+        {/* Just the name; a division also gets its full name underneath. */}
         {hoveredNode ? (
           <>
-            <small>{KIND_LABELS[hoveredNode.kind]}</small>
             <b>{hoveredNode.label}</b>
-            {hoveredNode.sublabel ? <span>{hoveredNode.sublabel}</span> : null}
+            {hoveredNode.kind === "division" ? <span>{divisions.find(item => `division:${item.code}` === hoveredNode.id)?.name}</span> : null}
           </>
         ) : null}
       </button>

@@ -798,20 +798,22 @@ main.main--cover {
   }
 }
 
+/* Just the star's name: small text floating under the star, no box. */
 .cover-map button.star-label {
   position: absolute;
   top: 0;
   left: 0;
   display: grid;
   justify-items: center;
-  gap: 2px;
-  max-width: 280px;
-  padding: 6px 12px 7px;
-  border: 1px solid rgba(160, 200, 255, 0.18);
-  border-radius: 10px;
-  background: rgba(4, 8, 18, 0.72);
-  backdrop-filter: blur(8px);
+  gap: 1px;
+  max-width: 220px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
   text-align: center;
+  text-shadow: 0 0 6px rgba(2, 5, 12, 0.95), 0 0 12px rgba(2, 5, 12, 0.8);
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.18s;
@@ -823,30 +825,29 @@ main.main--cover {
 }
 
 .cover-map button.star-label:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--atom, #fff) 60%, transparent);
-  background: rgba(8, 16, 32, 0.85);
+  border: 0;
+  background: none;
   box-shadow: none;
 }
 
-.star-label small {
-  font-family: var(--font-mono);
-  font-size: 9.5px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--atom, var(--accent));
-}
-
 .star-label b {
-  font-size: 15px;
+  font-size: 12.5px;
   font-weight: 500;
   line-height: 1.25;
-  color: #f2f6ff;
+  color: #eef3ff;
+  transition: color 0.15s;
+}
+
+.cover-map button.star-label:hover b {
+  color: var(--atom, #fff);
 }
 
 .star-label span {
-  font-size: 11.5px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
   color: var(--text-soft);
-  line-height: 1.35;
+  line-height: 1.3;
 }
 
 .hub-buttons button {

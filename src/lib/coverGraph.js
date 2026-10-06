@@ -159,10 +159,6 @@ function roomsFor(code, trees, notes) {
   return [...rooms.values()];
 }
 
-function plural(count, word) {
-  return `${count} ${word}${count === 1 ? "" : "s"}`;
-}
-
 // divisions: [{ code, label, name, color }] in display order.
 export function buildCoverGraph({ divisions = [], trees = {}, notes = [] }) {
   const nodes = [];
@@ -197,7 +193,6 @@ export function buildCoverGraph({ divisions = [], trees = {}, notes = [] }) {
       kind: "division",
       division: code,
       label,
-      sublabel: `${name} · ${plural(rooms.length, "room")} · ${plural(divisionNotes.length, "note")}`,
       baseColor: color,
       size: 10 + Math.min(4, Math.sqrt(divisionNotes.length)),
       position: center
@@ -217,14 +212,12 @@ export function buildCoverGraph({ divisions = [], trees = {}, notes = [] }) {
         division: code,
         roomId: room.id,
         label: room.name,
-        sublabel: `${label} · ${plural(children.length, "sub-room")} · ${plural(roomNotes, "note")}`,
         baseColor: color,
         size: 5.5 + Math.min(2.5, Math.sqrt(roomNotes) * 0.7),
         position: roomPosition
       });
       addLink(hubId, roomId, "tree");
       for (const child of children) {
-        const subNotes = divisionNotes.filter(note => note.roomId === room.id && (note.subroomId || "") === child.id).length;
         const subPosition = scatter(`sub:${child.id}`, roomPosition, center, 0.34, 0.55, 0.7);
         subroomPositions.set(child.id, subPosition);
         const subId = `subroom:${child.id}`;
@@ -235,7 +228,6 @@ export function buildCoverGraph({ divisions = [], trees = {}, notes = [] }) {
           roomId: room.id,
           subroomId: child.id,
           label: child.name,
-          sublabel: `${label} / ${room.name} · ${plural(subNotes, "note")}`,
           baseColor: color,
           size: 4,
           position: subPosition
@@ -259,7 +251,6 @@ export function buildCoverGraph({ divisions = [], trees = {}, notes = [] }) {
         subroomId: note.subroomId || "",
         noteId: note.id,
         label: note.title || "Untitled Note",
-        sublabel: [label, note.roomName, note.subroomName].filter(Boolean).join(" / "),
         baseColor: color,
         size: 2.8,
         position: scatter(`note:${note.id}`, parentPosition, grandparent, 0.16, 0.3, 0.8)
