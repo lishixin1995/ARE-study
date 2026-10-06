@@ -304,6 +304,98 @@ function SearchResults({ results, query, loading, emptyText, onOpen }) {
   );
 }
 
+// One "Divisions" dropdown in the top menu; each option shows the code and
+// the division's full name.
+function DivisionMenu({ current, onSelect }) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef(null);
+  const buttonRef = useRef(null);
+  const itemRefs = useRef([]);
+  const active = current ? divisionInfo(current) : null;
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const currentIndex = Math.max(0, DIVISIONS.findIndex(([code]) => code === current));
+    itemRefs.current[currentIndex]?.focus();
+    function handlePointer(event) {
+      if (!wrapRef.current?.contains(event.target)) setOpen(false);
+    }
+    function handleKey(event) {
+      if (event.key === "Escape") {
+        setOpen(false);
+        buttonRef.current?.focus();
+      }
+    }
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [open, current]);
+
+  function moveFocus(event) {
+    const items = itemRefs.current.filter(Boolean);
+    const index = items.indexOf(document.activeElement);
+    let next = -1;
+    if (event.key === "ArrowDown") next = (index + 1) % items.length;
+    else if (event.key === "ArrowUp") next = (index - 1 + items.length) % items.length;
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = items.length - 1;
+    else if (event.key === "Tab") setOpen(false);
+    if (next >= 0) {
+      event.preventDefault();
+      items[next].focus();
+    }
+  }
+
+  function choose(code) {
+    setOpen(false);
+    onSelect(code);
+  }
+
+  return (
+    <div className="division-menu" ref={wrapRef}>
+      <button
+        ref={buttonRef}
+        className={`division-menu-trigger${active ? " active" : ""}`}
+        style={active ? { "--atom": DIVISION_COLORS[active.code] } : undefined}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(value => !value)}
+        onKeyDown={event => {
+          if (event.key === "ArrowDown" && !open) {
+            event.preventDefault();
+            setOpen(true);
+          }
+        }}
+      >
+        {active ? active.label : "Divisions"}
+        <span className="division-menu-chevron" aria-hidden="true" />
+      </button>
+      {open ? (
+        <div className="division-menu-list" role="menu" aria-label="Divisions" onKeyDown={moveFocus}>
+          {DIVISIONS.map(([code, label, name], index) => (
+            <button
+              key={code}
+              ref={element => { itemRefs.current[index] = element; }}
+              role="menuitem"
+              className={code === current ? "is-current" : ""}
+              aria-current={code === current ? "page" : undefined}
+              style={{ "--atom": DIVISION_COLORS[code] }}
+              onClick={() => choose(code)}
+            >
+              <span className="division-menu-dot" aria-hidden="true" />
+              <span className="division-menu-code">{label}</span>
+              <span className="division-menu-name">{name}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ActionMenu({ label, children }) {
   const [open, setOpen] = useState(false);
   const menuRef = useRef(null);
@@ -1856,10 +1948,10 @@ function StudyApp({ onLogout }) {
 
   const topMenu = (
     <header className="top-menu">
-      <nav className="top-nav" aria-label="Divisions">
+      <nav className="top-nav" aria-label="Main">
         <button className="top-brand" onClick={() => chooseDivision("")}><span className="brand-mark" aria-hidden="true" />ARE Study Vault</button>
         <button className={!division ? "active" : ""} onClick={() => chooseDivision("")}>Map</button>
-        {DIVISIONS.map(([code, label]) => <button key={code} className={division === code ? "active" : ""} style={{ "--atom": DIVISION_COLORS[code] }} onClick={() => chooseDivision(code)}>{label}</button>)}
+        <DivisionMenu current={division} onSelect={chooseDivision} />
       </nav>
       <div className="top-actions">
         <button onClick={() => chooseDivision("")}>Search</button>

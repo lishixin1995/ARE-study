@@ -300,6 +300,122 @@ kbd {
   margin-right: 10px;
 }
 
+/* Divisions dropdown */
+
+.division-menu {
+  position: relative;
+}
+
+.top-nav .division-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.top-nav .division-menu-trigger[aria-expanded="true"] {
+  color: var(--text);
+  background: rgba(40, 70, 120, 0.3);
+}
+
+.division-menu-chevron {
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 0.18s;
+}
+
+.division-menu-trigger[aria-expanded="true"] .division-menu-chevron {
+  transform: translateY(1px) rotate(225deg);
+}
+
+.division-menu-list {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  z-index: 40;
+  width: 410px;
+  display: grid;
+  gap: 2px;
+  padding: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  background: rgba(8, 14, 28, 0.97);
+  backdrop-filter: blur(16px);
+  box-shadow: var(--shadow), 0 0 40px rgba(60, 120, 255, 0.1);
+  animation: menu-in 0.16s ease;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+.top-nav .division-menu-list button {
+  display: grid;
+  grid-template-columns: 10px 44px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--font-sans);
+  font-size: 14.5px;
+  color: var(--text-soft);
+}
+
+.top-nav .division-menu-list button:hover:not(:disabled),
+.top-nav .division-menu-list button:focus-visible {
+  background: rgba(40, 70, 120, 0.4);
+  color: var(--text);
+  outline: none;
+}
+
+.top-nav .division-menu-list button.is-current {
+  background: rgba(40, 70, 120, 0.28);
+  color: var(--text);
+}
+
+.division-menu-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--atom);
+  box-shadow: 0 0 8px var(--atom);
+}
+
+.division-menu-code {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--atom);
+}
+
+.division-menu-name {
+  line-height: 1.3;
+}
+
+.is-current .division-menu-name::after {
+  content: "Current";
+  margin-left: 8px;
+  padding: 1px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  vertical-align: 2px;
+}
+
 .brand-mark {
   width: 18px;
   height: 18px;
@@ -2470,12 +2586,18 @@ button.map-label:hover:not(:disabled) {
     flex: 1;
     min-width: 0;
     flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: none;
   }
 
-  .top-nav::-webkit-scrollbar {
-    display: none;
+  /* Drop the list full-width under the header instead of under the button. */
+  .division-menu {
+    position: static;
+  }
+
+  .division-menu-list {
+    left: 12px;
+    right: 12px;
+    width: auto;
+    top: calc(100% + 6px);
   }
 
   .top-nav .top-brand {
