@@ -95,7 +95,11 @@ export async function ensureTables() {
       ADD COLUMN IF NOT EXISTS title TEXT,
       ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
       ADD COLUMN IF NOT EXISTS notes_text TEXT,
-      ADD COLUMN IF NOT EXISTS analysis_source_text TEXT;
+      ADD COLUMN IF NOT EXISTS analysis_source_text TEXT,
+      ADD COLUMN IF NOT EXISTS answer_text TEXT,
+      ADD COLUMN IF NOT EXISTS explanation_text TEXT,
+      ADD COLUMN IF NOT EXISTS miss_reason TEXT,
+      ADD COLUMN IF NOT EXISTS review_state JSONB NOT NULL DEFAULT '{}'::jsonb;
   `);
 
   await pool.query(`
