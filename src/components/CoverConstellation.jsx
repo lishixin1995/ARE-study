@@ -1,0 +1,247 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { hasWebGL } from "../three/support.js";
+
+// Below this width the tree menu opens under the map instead of beside it.
+const SIDE_PANEL_BREAKPOINT = 760;
+// How long a name stays up after the pointer leaves its star, so the pointer
+// can travel to the name and click it.
+const HOVER_GRACE_MS = 450;
+const KIND_LABELS = { core: "Study Vault", division: "Division", room: "Room", subroom: "Sub-room", note: "Study note" };
+
+// Width the tree menu takes beside the map (matches .cover-panel in CSS).
+function panelSpace(width) {
+  const margin = Math.min(48, Math.max(16, width * 0.03));
+  return Math.min(440, width * 0.38) + margin * 2;
+}
+
+function canHover() {
+  return typeof window !== "undefined" && Boolean(window.matchMedia?.("(hover: hover)").matches);
+}
+
+// The cover map: a 3D constellation of divisions, rooms, sub-rooms and notes.
+// divisions: [{ code, label, name, color }]; graph: buildCoverGraph() output.
+// highlightId: a star to light up from outside the map (e.g. hovering the tree menu).
+export default function CoverConstellation({ graph, divisions, selectedDivision = "", highlightId = "", panel = null, onSelectNode, onSelectDivision, onBackground, children }) {
+  const sectionRef = useRef(null);
+  const hostRef = useRef(null);
+  const sceneRef = useRef(null);
+  const labelRef = useRef(null);
+  const reticleRef = useRef(null);
+  const tagRef = useRef(null);
+  const hubButtons = useRef(new Map());
+  const hideTimer = useRef(0);
+  const widthRef = useRef(0);
+  const engagedRef = useRef(false);
+  const [webgl] = useState(() => hasWebGL());
+  const [ready, setReady] = useState(false);
+  const [hoveredNode, setHoveredNode] = useState(null);
+  const hoveredRef = useRef(null);
+  hoveredRef.current = hoveredNode;
+  const selectRef = useRef(onSelectNode);
+  selectRef.current = onSelectNode;
+  const backgroundRef = useRef(onBackground);
+  backgroundRef.current = onBackground;
+  const selectedRef = useRef(selectedDivision);
+  selectedRef.current = selectedDivision;
+
+  const graphKey = useMemo(() => graph.nodes.map(node => `${node.id}:${node.label}:${node.size.toFixed(1)}:${node.color}`).join("|") + `#${graph.links.length}`, [graph]);
+
+  const showNode = useCallback(node => {
+    window.clearTimeout(hideTimer.current);
+    setHoveredNode(node || null);
+  }, []);
+  const hideNodeSoon = useCallback(() => {
+    window.clearTimeout(hideTimer.current);
+    hideTimer.current = window.setTimeout(() => setHoveredNode(null), HOVER_GRACE_MS);
+  }, []);
+  useEffect(() => () => window.clearTimeout(hideTimer.current), []);
+
+  // Runs every frame: keep the name, ring and keyboard targets on their stars.
+  const placeOverlays = useCallback(() => {
+    const scene = sceneRef.current;
+    if (!scene) return;
+    const width = widthRef.current;
+    const hovered = hoveredRef.current;
+    const label = labelRef.current;
+    const reticle = reticleRef.current;
+    const spot = hovered ? scene.screenPosition(hovered.id) : null;
+    if (label) {
+      label.classList.toggle("is-visible", Boolean(spot));
+      if (spot) {
+        const x = Math.min(Math.max(spot.x, 90), Math.max(90, width - 90));
+        label.style.transform = `translate(${x.toFixed(1)}px, ${(spot.y + spot.extent + 12).toFixed(1)}px) translateX(-50%)`;
+      }
+    }
+    if (reticle) {
+      reticle.classList.toggle("is-visible", Boolean(spot));
+      if (spot) {
+        const ring = spot.extent * 2 + 16;
+        reticle.style.width = `${ring}px`;
+        reticle.style.height = `${ring}px`;
+        reticle.style.transform = `translate(${(spot.x - ring / 2).toFixed(1)}px, ${(spot.y - ring / 2).toFixed(1)}px)`;
+      }
+    }
+    const tag = tagRef.current;
+    const selected = selectedRef.current;
+    const hub = selected ? scene.screenPosition(`division:${selected}`) : null;
+    if (tag) {
+      tag.classList.toggle("is-visible", Boolean(hub) && hovered?.id !== `division:${selected}`);
+      if (hub) tag.style.transform = `translate(${(hub.x + hub.extent + 10).toFixed(1)}px, ${(hub.y - hub.extent - 10).toFixed(1)}px)`;
+    }
+    for (const [code, button] of hubButtons.current) {
+      const point = scene.screenPosition(`division:${code}`);
+      if (point) button.style.transform = `translate(${(point.x - 16).toFixed(1)}px, ${(point.y - 16).toFixed(1)}px)`;
+    }
+  }, []);
+
+  const applyFocus = useCallback(() => {
+    const width = widthRef.current;
+    const beside = width >= SIDE_PANEL_BREAKPOINT;
+    const shift = beside ? panelSpace(width) / 2 / width : 0;
+    // On narrow screens the panel sits under the map, so just center the cluster.
+    sceneRef.current?.setFocus(Boolean(selectedDivision), shift);
+  }, [selectedDivision]);
+
+  const applyFocusRef = useRef(applyFocus);
+  applyFocusRef.current = applyFocus;
+
+  useEffect(() => {
+    if (!webgl) return undefined;
+    let cancelled = false;
+    let scene = null;
+    let resizeObserver = null;
+    let visibility = null;
+    import("../three/constellation.js")
+      .then(({ mountConstellation }) => {
+        const host = hostRef.current;
+        if (cancelled || !host) return;
+        scene = mountConstellation(host, {
+          onHover: node => (node ? showNode(node) : hideNodeSoon()),
+          onSelect: node => selectRef.current?.(node),
+          onBackground: () => backgroundRef.current?.(),
+          onFrame: placeOverlays
+        });
+        sceneRef.current = scene;
+        const resize = () => {
+          const box = host.getBoundingClientRect();
+          widthRef.current = box.width;
+          scene.resize(box.width, box.height);
+        };
+        resize();
+        resizeObserver = new ResizeObserver(() => {
+          resize();
+          applyFocusRef.current();
+        });
+        resizeObserver.observe(host);
+        visibility = new IntersectionObserver(([entry]) => scene.setVisible(entry.isIntersecting));
+        visibility.observe(host);
+        scene.setEngaged(engagedRef.current || !canHover());
+        setReady(true);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      resizeObserver?.disconnect();
+      visibility?.disconnect();
+      scene?.dispose();
+      sceneRef.current = null;
+      setReady(false);
+    };
+  }, [webgl, showNode, hideNodeSoon, placeOverlays]);
+
+  useEffect(() => {
+    if (ready) sceneRef.current?.setGraph(graph);
+    // graphKey changes whenever anything drawn changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, graphKey]);
+
+  useEffect(() => {
+    sceneRef.current?.setSelected(selectedDivision);
+    applyFocus();
+  }, [selectedDivision, applyFocus, ready]);
+
+  useEffect(() => {
+    if (!ready) return;
+    const graphNode = highlightId ? graph.nodes.find(node => node.id === highlightId) : null;
+    sceneRef.current?.setActive(graphNode ? highlightId : null);
+    if (graphNode) showNode(graphNode);
+    else if (!hoveredRef.current || hoveredRef.current.id.startsWith("room:") || hoveredRef.current.id.startsWith("subroom:")) hideNodeSoon();
+    // Only react to highlight changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [highlightId, ready]);
+
+  // Lines and triangles show while the pointer is over the map. Pointer moves
+  // also count, in case the pointer was already there when the map loaded.
+  function engage(on) {
+    if (!canHover() || engagedRef.current === on) return;
+    engagedRef.current = on;
+    sceneRef.current?.setEngaged(on);
+  }
+
+  const classes = ["cover-map", ready ? "is-ready" : "", selectedDivision ? "has-selection" : "", webgl ? "" : "no-webgl"].filter(Boolean).join(" ");
+  const selectedInfo = divisions.find(item => item.code === selectedDivision);
+
+  return (
+    <section className={classes} ref={sectionRef} aria-label="ARE study map" onPointerEnter={() => engage(true)} onPointerMove={() => engage(true)} onPointerLeave={() => engage(false)}>
+      {children}
+      <div className="cover-canvas" ref={hostRef} />
+      <div className="star-reticle" ref={reticleRef} aria-hidden="true" style={{ "--atom": hoveredNode?.color }} />
+      <button
+        type="button"
+        className="star-label"
+        ref={labelRef}
+        tabIndex={-1}
+        aria-hidden="true"
+        style={{ "--atom": hoveredNode?.color }}
+        onMouseEnter={() => window.clearTimeout(hideTimer.current)}
+        onMouseLeave={hideNodeSoon}
+        onClick={() => hoveredNode && onSelectNode(hoveredNode)}
+      >
+        {hoveredNode ? (
+          <>
+            <small>{KIND_LABELS[hoveredNode.kind]}</small>
+            <b>{hoveredNode.label}</b>
+            {hoveredNode.sublabel ? <span>{hoveredNode.sublabel}</span> : null}
+          </>
+        ) : null}
+      </button>
+      <div className="star-tag" ref={tagRef} aria-hidden="true" style={{ "--atom": selectedInfo?.color }}>{selectedInfo?.label}</div>
+
+      {/* Keyboard access: one invisible button per division, sitting on its star. */}
+      <div className="hub-buttons">
+        {divisions.map(item => (
+          <button
+            key={item.code}
+            type="button"
+            ref={element => {
+              if (element) hubButtons.current.set(item.code, element);
+              else hubButtons.current.delete(item.code);
+            }}
+            aria-label={`${item.label} — ${item.name}`}
+            onFocus={() => {
+              sceneRef.current?.setActive(`division:${item.code}`);
+              showNode(graph.nodes.find(node => node.id === `division:${item.code}`));
+            }}
+            onBlur={() => {
+              sceneRef.current?.setActive(null);
+              hideNodeSoon();
+            }}
+            onClick={() => onSelectDivision(item.code)}
+          />
+        ))}
+      </div>
+
+      {/* Touch screens can't hover, and some browsers have no WebGL: list the divisions. */}
+      <div className="cover-chips">
+        {divisions.map(item => (
+          <button key={item.code} type="button" className={item.code === selectedDivision ? "is-current" : ""} style={{ "--atom": item.color }} onClick={() => onSelectDivision(item.code)}>
+            <b>{item.label}</b>
+            <span>{item.name}</span>
+          </button>
+        ))}
+      </div>
+
+      {panel ? <div className="cover-panel">{panel}</div> : null}
+    </section>
+  );
+}

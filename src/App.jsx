@@ -1,5 +1,8 @@
-import { Children, cloneElement, isValidElement, useEffect, useMemo, useRef, useState } from "react";
+import { Children, cloneElement, isValidElement, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import MoleculeHero from "./components/MoleculeHero.jsx";
+import CoverConstellation from "./components/CoverConstellation.jsx";
+import DivisionTree from "./components/DivisionTree.jsx";
+import { buildCoverGraph } from "./lib/coverGraph.js";
 import LogicMap from "./components/LogicMap.jsx";
 import WrongReview from "./components/WrongReview.jsx";
 import { MISS_REASONS, isDue, missReasonLabel, nextDueLabel, normalizeReviewState, reviewStatus, sortForReview } from "./lib/wrongReview.js";
@@ -14,16 +17,16 @@ const DIVISIONS = [
   ["CE", "CE", "Construction & Evaluation"]
 ];
 
-// Atom colors on the maps; the cover ring lists divisions in this order so the
-// left labels read PA, PPD, PDD and the right ones PcM, PjM, CE.
+// One color per division, distinct enough to tell the cover map's clusters apart.
 const DIVISION_COLORS = {
-  PA: "#46c8ff",
-  PPD: "#5a8dff",
-  PDD: "#8d8bff",
-  PCM: "#3fd6c6",
-  PJM: "#6fb6ff",
-  CE: "#b08cff"
+  PA: "#5fd8c8",
+  PPD: "#e8c26a",
+  PDD: "#f08a8a",
+  PCM: "#b39dfa",
+  PJM: "#6fb2ff",
+  CE: "#f29ac4"
 };
+const NO_COVER_FOCUS = { division: "", roomId: "", subroomId: "" };
 const COVER_RING_ORDER = ["PA", "PPD", "PDD", "CE", "PJM", "PCM"];
 const ROOM_COLORS = ["#6fd6ff", "#8fb6ff", "#a99bff", "#5fe0d0", "#7fc8ff", "#c4a8ff"];
 const MAX_HERO_ROOMS = 12;
@@ -584,9 +587,10 @@ function AuthGate({ onAuthenticated }) {
   );
 }
 
-// Cover page: pick a division. Wrong questions live in each division's own
-// session, so they aren't shown here.
-function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, onOpenSearchResult, notes, loaded, quickAction, setQuickAction, quickRooms, onQuickStart, onOpenNote, onSelectDivision }) {
+// Cover page: a constellation map of every division, room, sub-room and note.
+// Clicking a division (or anything in it) opens its room tree beside the map.
+// Wrong questions live in each division's own session, so they aren't shown here.
+function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, onOpenSearchResult, notes, quickAction, setQuickAction, quickRooms, loadedRoomDivisions, roomErrors, onRetryRooms, coverFocus, setCoverFocus, onCoverNode, onOpenRoom, onOpenSubroom, onQuickStart, onOpenNote, onSelectDivision }) {
   const recentNotes = [...notes].sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt)).slice(0, 6);
   const continueNote = recentNotes[0] || null;
   const attachmentCount = notes.reduce((sum, note) => sum + (note.attachments?.length || 0), 0);
@@ -594,30 +598,52 @@ function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, 
   const selectedRoom = selectedRooms.find(item => item.id === quickAction.roomId) || null;
   const selectedSubrooms = selectedRoom?.children || [];
 
-  const atoms = COVER_RING_ORDER.map(code => {
+  const mapDivisions = useMemo(() => COVER_RING_ORDER.map(code => {
     const info = divisionInfo(code);
-    const divisionNotes = notes.filter(note => note.division === code);
-    const rooms = new Set(divisionNotes.map(item => item.roomId).filter(Boolean));
-    const latest = divisionNotes.reduce((max, note) => Math.max(max, Date.parse(note.savedAt) || 0), 0);
-    return {
-      id: code,
-      color: DIVISION_COLORS[code],
-      size: Math.min(1, divisionNotes.length / 25),
-      satellites: rooms.size,
-      eyebrow: info.name,
-      title: info.label,
-      meta: !loaded ? "Loading…" : latest ? `${plural(divisionNotes.length, "note")} · updated ${new Date(latest).toLocaleDateString([], { month: "short", day: "numeric" })}` : "No notes yet",
-      onSelect: () => onSelectDivision(code)
-    };
-  });
+    return { code, label: info.label, name: info.name, color: DIVISION_COLORS[code] };
+  }), []);
+  // Only rooms confirmed by the server; until then the map uses the rooms notes mention.
+  const loadedTrees = useMemo(() => Object.fromEntries(loadedRoomDivisions.map(code => [code, quickRooms[code] || []])), [loadedRoomDivisions, quickRooms]);
+  const graph = useMemo(() => buildCoverGraph({ divisions: mapDivisions, trees: loadedTrees, notes }), [mapDivisions, loadedTrees, notes]);
+
+  const focusInfo = mapDivisions.find(item => item.code === coverFocus.division);
+  const [treeHighlight, setTreeHighlight] = useState("");
+  useEffect(() => setTreeHighlight(""), [coverFocus.division]);
+  const panel = focusInfo ? (
+    <DivisionTree
+      key={focusInfo.code}
+      code={focusInfo.code}
+      label={focusInfo.label}
+      name={focusInfo.name}
+      color={focusInfo.color}
+      rooms={loadedTrees[focusInfo.code] || []}
+      status={loadedRoomDivisions.includes(focusInfo.code) ? "ready" : roomErrors.includes(focusInfo.code) ? "error" : "loading"}
+      notes={notes.filter(note => note.division === focusInfo.code)}
+      focusRoomId={coverFocus.roomId}
+      focusSubroomId={coverFocus.subroomId}
+      onClose={() => setCoverFocus(NO_COVER_FOCUS)}
+      onEnter={() => onSelectDivision(focusInfo.code)}
+      onOpenRoom={roomId => onOpenRoom(focusInfo.code, roomId)}
+      onOpenSubroom={(roomId, subroomId) => onOpenSubroom(focusInfo.code, roomId, subroomId)}
+      onRetry={() => onRetryRooms(focusInfo.code)}
+      onHighlight={setTreeHighlight}
+    />
+  ) : null;
 
   return (
     <section className="dashboard-page">
-      <MoleculeHero mode="ring" atoms={atoms} label="ARE divisions">
-        <div className="eyebrow">ARE 5.0 · Study Vault</div>
-        <h1 className="hero-title">ARE Study Vault</h1>
-        <p className="hero-subtitle">Pick a division to enter its map. Every room and note you save becomes part of the structure.</p>
-      </MoleculeHero>
+      <CoverConstellation
+        graph={graph}
+        divisions={mapDivisions}
+        selectedDivision={coverFocus.division}
+        highlightId={treeHighlight}
+        panel={panel}
+        onSelectNode={onCoverNode}
+        onSelectDivision={code => setCoverFocus({ ...NO_COVER_FOCUS, division: code })}
+        onBackground={() => setCoverFocus(NO_COVER_FOCUS)}
+      >
+        <h1 className="sr-only">ARE Study Vault</h1>
+      </CoverConstellation>
 
       <div className="dashboard-body">
         <SearchBar value={searchQuery} onChange={onSearchChange} placeholder="Search all study notes and wrong questions..." />
@@ -1173,6 +1199,9 @@ function StudyApp({ onLogout }) {
   const [allSearchLoading, setAllSearchLoading] = useState(false);
   const [quickAction, setQuickAction] = useState({ division: "", roomId: "", subroomId: "" });
   const [loadedRoomDivisions, setLoadedRoomDivisions] = useState([]);
+  const [roomErrors, setRoomErrors] = useState([]);
+  const [coverFocus, setCoverFocus] = useState(NO_COVER_FOCUS);
+  const roomRequests = useRef(new Set());
   const [roomForm, setRoomForm] = useState(null);
   const [roomName, setRoomName] = useState("");
   const [deleteRoomTarget, setDeleteRoomTarget] = useState(null);
@@ -1291,6 +1320,38 @@ function StudyApp({ onLogout }) {
     return () => { cancelled = true; };
   }, [division, roomId]);
 
+  const loadRooms = useCallback(code => {
+    if (!code || roomRequests.current.has(code)) return;
+    roomRequests.current.add(code);
+    setRoomErrors(prev => prev.filter(item => item !== code));
+    fetch(`/api/rooms?division=${encodeURIComponent(code)}`)
+      .then(response => response.json().then(data => ({ ok: response.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) throw new Error(data.error || "Rooms unavailable");
+        setTree(prev => ({ ...prev, [code]: Array.isArray(data.rooms) ? data.rooms : [] }));
+        setLoadedRoomDivisions(prev => prev.includes(code) ? prev : [...prev, code]);
+      })
+      .catch(() => setRoomErrors(prev => prev.includes(code) ? prev : [...prev, code]))
+      .finally(() => roomRequests.current.delete(code));
+  }, []);
+
+  // The cover map shows every division's rooms.
+  useEffect(() => {
+    if (division) return;
+    for (const [code] of DIVISIONS) {
+      if (!loadedRoomDivisions.includes(code)) loadRooms(code);
+    }
+  }, [division, loadedRoomDivisions, loadRooms]);
+
+  useEffect(() => {
+    if (!coverFocus.division) return undefined;
+    function handleKey(event) {
+      if (event.key === "Escape" && !event.defaultPrevented) setCoverFocus(NO_COVER_FOCUS);
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [coverFocus.division]);
+
   useEffect(() => {
     if (!quickAction.division || loadedRoomDivisions.includes(quickAction.division)) return;
     let cancelled = false;
@@ -1343,6 +1404,7 @@ function StudyApp({ onLogout }) {
 
   function chooseDivision(code) {
     setDivision(code);
+    setCoverFocus(NO_COVER_FOCUS);
     setRoomId("");
     setSubroomId("");
     setViewerId("");
@@ -1392,6 +1454,27 @@ function StudyApp({ onLogout }) {
 
     const card = normalizeWrongQuestion(result.item);
     openDashboardWrongQuestion(card);
+  }
+
+  function handleCoverNode(node) {
+    if (node.kind === "note") {
+      const note = allSearchData.notes.find(item => item.id === node.noteId);
+      if (note) openDashboardNote(note);
+      return;
+    }
+    if (node.kind === "core") return setCoverFocus(NO_COVER_FOCUS);
+    setCoverFocus({ division: node.division, roomId: node.roomId || "", subroomId: node.subroomId || "" });
+  }
+
+  function openRoomFromCover(code, targetRoomId) {
+    chooseDivision(code);
+    setRoomId(targetRoomId);
+  }
+
+  function openSubroomFromCover(code, targetRoomId, targetSubroomId) {
+    chooseDivision(code);
+    setRoomId(targetRoomId);
+    setSubroomId(targetSubroomId);
   }
 
   function openDashboardNote(note) {
@@ -2205,10 +2288,17 @@ function StudyApp({ onLogout }) {
       searchLoading={allSearchLoading || (Boolean(clean(debouncedDashboardSearch)) && !allSearchData.loaded)}
       onOpenSearchResult={openSearchResult}
       notes={dashboardNotes}
-      loaded={allSearchData.loaded}
       quickAction={quickAction}
       setQuickAction={setQuickAction}
       quickRooms={tree}
+      loadedRoomDivisions={loadedRoomDivisions}
+      roomErrors={roomErrors}
+      onRetryRooms={loadRooms}
+      coverFocus={coverFocus}
+      setCoverFocus={setCoverFocus}
+      onCoverNode={handleCoverNode}
+      onOpenRoom={openRoomFromCover}
+      onOpenSubroom={openSubroomFromCover}
       onQuickStart={startQuickAction}
       onOpenNote={openDashboardNote}
       onSelectDivision={chooseDivision}
