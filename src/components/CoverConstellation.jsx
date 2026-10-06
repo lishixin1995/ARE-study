@@ -3,10 +3,13 @@ import { hasWebGL } from "../three/support.js";
 
 // Below this width the tree menu opens under the map instead of beside it.
 const SIDE_PANEL_BREAKPOINT = 760;
-// How long a name stays up after the pointer leaves its star, so the pointer
-// can travel to the name and click it.
+// How long a name stays up after the pointer leaves both its star and the
+// path to its name.
 const HOVER_GRACE_MS = 450;
-const KIND_LABELS = { core: "Study Vault", division: "Division", room: "Room", subroom: "Sub-room", note: "Study note" };
+// While a name is showing, another star must be hovered this long to take
+// over, so passing over stars on the way to the name doesn't swap it.
+const HOVER_SWITCH_MS = 160;
+const KIND_LABELS = { division: "Division", room: "Room", subroom: "Sub-room", note: "Study note" };
 
 // Width the tree menu takes beside the map (matches .cover-panel in CSS).
 function panelSpace(width) {
@@ -30,6 +33,9 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
   const tagRef = useRef(null);
   const hubButtons = useRef(new Map());
   const hideTimer = useRef(0);
+  const switchTimer = useRef(0);
+  const pointerRef = useRef(null); // last pointer position (client coords)
+  const sceneHoverRef = useRef(null); // star currently under the pointer
   const widthRef = useRef(0);
   const engagedRef = useRef(false);
   const [webgl] = useState(() => hasWebGL());
@@ -48,13 +54,51 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
 
   const showNode = useCallback(node => {
     window.clearTimeout(hideTimer.current);
+    window.clearTimeout(switchTimer.current);
     setHoveredNode(node || null);
   }, []);
   const hideNodeSoon = useCallback(() => {
     window.clearTimeout(hideTimer.current);
+    window.clearTimeout(switchTimer.current);
     hideTimer.current = window.setTimeout(() => setHoveredNode(null), HOVER_GRACE_MS);
   }, []);
-  useEffect(() => () => window.clearTimeout(hideTimer.current), []);
+  // Is the pointer on the shown star, its name, or the stretch between them?
+  // Then the name stays, however slowly the pointer travels.
+  const nearShownName = useCallback(() => {
+    const point = pointerRef.current;
+    const shown = hoveredRef.current;
+    const label = labelRef.current;
+    const host = hostRef.current;
+    const spot = shown && sceneRef.current?.screenPosition(shown.id);
+    if (!point || !label || !host || !spot) return false;
+    const box = host.getBoundingClientRect();
+    const name = label.getBoundingClientRect();
+    const reach = spot.extent + 14;
+    const left = Math.min(name.left, box.left + spot.x - reach) - 12;
+    const right = Math.max(name.right, box.left + spot.x + reach) + 12;
+    const top = Math.min(name.top, box.top + spot.y - reach) - 12;
+    const bottom = Math.max(name.bottom, box.top + spot.y + reach) + 12;
+    return point.x >= left && point.x <= right && point.y >= top && point.y <= bottom;
+  }, []);
+
+  // Hover from the map: show at once when nothing is showing, otherwise only
+  // after the pointer rests on the new star.
+  const hoverFromMap = useCallback(node => {
+    sceneHoverRef.current = node || null;
+    if (!node) {
+      window.clearTimeout(switchTimer.current);
+      if (!nearShownName()) hideNodeSoon();
+      return;
+    }
+    const current = hoveredRef.current;
+    if (!current || current.id === node.id) return showNode(node);
+    window.clearTimeout(switchTimer.current);
+    switchTimer.current = window.setTimeout(() => showNode(node), HOVER_SWITCH_MS);
+  }, [showNode, hideNodeSoon, nearShownName]);
+  useEffect(() => () => {
+    window.clearTimeout(hideTimer.current);
+    window.clearTimeout(switchTimer.current);
+  }, []);
 
   // Runs every frame: keep the name, ring and keyboard targets on their stars.
   const placeOverlays = useCallback(() => {
@@ -116,7 +160,7 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
         const host = hostRef.current;
         if (cancelled || !host) return;
         scene = mountConstellation(host, {
-          onHover: node => (node ? showNode(node) : hideNodeSoon()),
+          onHover: hoverFromMap,
           onSelect: node => selectRef.current?.(node),
           onBackground: () => backgroundRef.current?.(),
           onFrame: placeOverlays
@@ -147,7 +191,7 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
       sceneRef.current = null;
       setReady(false);
     };
-  }, [webgl, showNode, hideNodeSoon, placeOverlays]);
+  }, [webgl, hoverFromMap, placeOverlays]);
 
   useEffect(() => {
     if (ready) sceneRef.current?.setGraph(graph);
@@ -172,6 +216,17 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
 
   // Lines and triangles show while the pointer is over the map. Pointer moves
   // also count, in case the pointer was already there when the map loaded.
+  function trackPointer(event) {
+    engage(true);
+    pointerRef.current = { x: event.clientX, y: event.clientY };
+    if (!hoveredRef.current || sceneHoverRef.current) return;
+    if (nearShownName()) {
+      window.clearTimeout(hideTimer.current);
+    } else if (event.target === sceneRef.current?.canvas) {
+      hideNodeSoon();
+    }
+  }
+
   function engage(on) {
     if (!canHover() || engagedRef.current === on) return;
     engagedRef.current = on;
@@ -182,7 +237,7 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
   const selectedInfo = divisions.find(item => item.code === selectedDivision);
 
   return (
-    <section className={classes} ref={sectionRef} aria-label="ARE study map" onPointerEnter={() => engage(true)} onPointerMove={() => engage(true)} onPointerLeave={() => engage(false)}>
+    <section className={classes} ref={sectionRef} aria-label="ARE study map" onPointerEnter={() => engage(true)} onPointerMove={trackPointer} onPointerLeave={() => { engage(false); hideNodeSoon(); }}>
       {children}
       <div className="cover-canvas" ref={hostRef} />
       <div className="star-reticle" ref={reticleRef} aria-hidden="true" style={{ "--atom": hoveredNode?.color }} />
@@ -193,7 +248,10 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
         tabIndex={-1}
         aria-hidden="true"
         style={{ "--atom": hoveredNode?.color }}
-        onMouseEnter={() => window.clearTimeout(hideTimer.current)}
+        onMouseEnter={() => {
+          window.clearTimeout(hideTimer.current);
+          window.clearTimeout(switchTimer.current);
+        }}
         onMouseLeave={hideNodeSoon}
         onClick={() => hoveredNode && onSelectNode(hoveredNode)}
       >

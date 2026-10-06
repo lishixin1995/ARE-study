@@ -1462,7 +1462,6 @@ function StudyApp({ onLogout }) {
       if (note) openDashboardNote(note);
       return;
     }
-    if (node.kind === "core") return setCoverFocus(NO_COVER_FOCUS);
     setCoverFocus({ division: node.division, roomId: node.roomId || "", subroomId: node.subroomId || "" });
   }
 

@@ -1,14 +1,15 @@
-// Cover constellation: every room, sub-room and note is a small star, linked
-// into a faceted 3D network with an irregular crystal marking each division.
-// At rest only the stars show; lines, triangles and crystals fade in while the
-// pointer is over the map, around a hovered star, and across a selected
-// division's cluster.
+// Cover constellation: one 3D nebula where every room, sub-room and note is a
+// small star (plus a haze of decorative points), linked into a faceted
+// network with an irregular crystal marking each division. At rest only the
+// stars show; lines, triangles and crystals fade in while the pointer is over
+// the map, around a hovered star, and across a selected division's region.
 import * as THREE from "three";
 import { mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
-import { createRenderer, createStarfield, disposeObject, prefersReducedMotion } from "./space.js";
+import { createRenderer, createStarfield, disposeObject, getGlowTexture, prefersReducedMotion } from "./space.js";
 import { seededRandom } from "../lib/coverGraph.js";
 
-const LINK_BASE = { tree: 0.3, mesh: 0.15, bridge: 0.1 };
+const LINK_BASE = { tree: 0.32, mesh: 0.16 };
+const HAZE_LINK = 0.075; // mesh links that touch a haze point
 const FACE_BASE = 0.05;
 const DRAG_THRESHOLD = 5;
 
@@ -128,6 +129,7 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
   let lines = null;
   let faces = null;
   let crystals = new Map(); // node index -> crystal
+  let glows = []; // soft colour clouds behind each division's region
   let pointLevels = new Float32Array(0);
   let linkLevels = new Float32Array(0);
   let faceLevels = new Float32Array(0);
@@ -159,8 +161,13 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
       network.remove(crystal.group);
       disposeObject(crystal.group);
     }
+    for (const glow of glows) {
+      network.remove(glow.sprite);
+      glow.sprite.material.dispose();
+    }
     points = lines = faces = null;
     crystals = new Map();
+    glows = [];
   }
 
   function setGraph(next) {
@@ -235,6 +242,20 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
       network.add(crystal.group);
       crystals.set(i, crystal);
     });
+
+    // Overlapping glows give the nebula its blended colour.
+    for (const node of nodes) {
+      if (node.kind !== "division") continue;
+      const random = seededRandom(`glow:${node.id}`);
+      for (let k = 0; k < 3; k += 1) {
+        const sprite = new THREE.Sprite(additive(new THREE.SpriteMaterial({ map: getGlowTexture(), color: new THREE.Color(node.color), opacity: 0 })));
+        const offset = k === 0 ? [0, 0, 0] : [(random() - 0.5) * 1.6, (random() - 0.5) * 1.1, (random() - 0.5) * 1.2];
+        sprite.position.set(node.position[0] + offset[0], node.position[1] + offset[1], node.position[2] + offset[2]);
+        sprite.scale.setScalar(k === 0 ? 4.2 : 2.6 + random() * 1.4);
+        network.add(sprite);
+        glows.push({ sprite, region: node.division, base: k === 0 ? 0.075 : 0.05, level: 0 });
+      }
+    }
 
     screen = new Float32Array(nodes.length * 5);
     fitCamera();
@@ -312,8 +333,10 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
 
     const levelAttr = points?.geometry.attributes.aLevel;
     nodes.forEach((node, i) => {
-      let target = node.kind === "note" ? 0.8 : 1;
-      if (selected && node.division !== selected) target = node.kind === "core" ? 0.55 : 0.28;
+      const haze = node.kind === "haze";
+      let target = haze ? 0.62 : node.kind === "note" ? 0.8 : 1;
+      if (selected && node.region !== selected) target = haze ? 0.16 : 0.28;
+      else if (selected && haze) target = 0.7;
       if (selected && node.kind === "division" && node.division === selected) target = 1.6;
       if (near?.has(node.id)) target = Math.max(target, 1.3);
       if (node.id === spotlight) target = 1.9;
@@ -326,11 +349,11 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
     links.forEach((link, j) => {
       const a = nodes[nodeIndex.get(link.a)];
       const b = nodes[nodeIndex.get(link.b)];
-      const base = LINK_BASE[link.kind] || 0.1;
+      const base = a.kind === "haze" || b.kind === "haze" ? HAZE_LINK : LINK_BASE[link.kind] || 0.1;
       let target = base * reveal;
       if (selected) {
-        const inside = a.division === selected && b.division === selected;
-        const touches = a.division === selected || b.division === selected;
+        const inside = a.region === selected && b.region === selected;
+        const touches = a.region === selected || b.region === selected;
         target = inside ? base * 2.3 : touches ? base * 1.3 : base * 0.3 * reveal;
       }
       if (spotlight && (link.a === spotlight || link.b === spotlight)) target = 0.8;
@@ -345,12 +368,18 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
     const faceAttr = faces?.geometry.attributes.aAlpha;
     triangles.forEach((triangle, k) => {
       let target = FACE_BASE * reveal;
-      if (selected) target = triangle.division === selected ? FACE_BASE * 2.2 : FACE_BASE * 0.25 * reveal;
+      if (selected) target = triangle.region === selected ? FACE_BASE * 2.2 : FACE_BASE * 0.25 * reveal;
       if (spotlight && (triangle.a === spotlight || triangle.b === spotlight || triangle.c === spotlight)) target = FACE_BASE * 3;
       faceLevels[k] = ease(faceLevels[k], target, rate);
       if (faceAttr) faceAttr.array.fill(faceLevels[k], k * 3, k * 3 + 3);
     });
     if (faceAttr) faceAttr.needsUpdate = true;
+
+    for (const glow of glows) {
+      const target = glow.base * (selected ? (glow.region === selected ? 1.7 : 0.45) : 1);
+      glow.level = ease(glow.level, target, snap ? 1 : 0.05);
+      glow.sprite.material.opacity = glow.level;
+    }
 
     for (const [i, crystal] of crystals) {
       const node = nodes[i];
@@ -425,7 +454,7 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
     let bestScore = Infinity;
     for (let i = 0; i < graph.nodes.length; i += 1) {
       const o = i * 5;
-      if (!screen[o + 3]) continue;
+      if (!screen[o + 3] || graph.nodes[i].kind === "haze") continue;
       const d = Math.hypot(screen[o] - x, screen[o + 1] - y);
       const reach = Math.max(10, screen[o + 2] + 6);
       if (d > reach) continue;
@@ -494,6 +523,7 @@ export function mountConstellation(host, { onHover, onSelect, onBackground, onFr
   canvas.addEventListener("pointerleave", handleLeave);
 
   return {
+    canvas,
     setGraph,
     resize(width, height) {
       size.width = Math.max(1, width);
