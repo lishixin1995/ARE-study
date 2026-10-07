@@ -593,9 +593,25 @@ function AuthGate({ onAuthenticated }) {
 // Cover page: a constellation map of every division, room, sub-room and note.
 // Clicking a division (or anything in it) opens its room tree beside the map.
 // Wrong questions live in each division's own session, so they aren't shown here.
-function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, onOpenSearchResult, notes, quickAction, setQuickAction, quickRooms, loadedRoomDivisions, roomErrors, onRetryRooms, coverFocus, setCoverFocus, onCoverNode, onOpenRoom, onOpenSubroom, onQuickStart, onOpenNote, onSelectDivision }) {
-  const recentNotes = [...notes].sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt)).slice(0, 6);
-  const continueNote = recentNotes[0] || null;
+// searchJump: set by the top menu's Search button; the page then glides down
+// to the search box and puts the cursor in it, and calls onSearchJumpDone.
+function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, onOpenSearchResult, notes, quickAction, setQuickAction, quickRooms, loadedRoomDivisions, roomErrors, onRetryRooms, coverFocus, setCoverFocus, onCoverNode, onOpenRoom, onOpenSubroom, onQuickStart, onOpenNote, onSelectDivision, searchJump = 0, onSearchJumpDone }) {
+  const searchRef = useRef(null);
+  const [searchCalled, setSearchCalled] = useState(false);
+  useEffect(() => {
+    if (!searchJump) return undefined;
+    const box = searchRef.current;
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    box?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+    box?.querySelector("input")?.focus({ preventScroll: true });
+    setSearchCalled(true);
+    onSearchJumpDone?.();
+    const timer = window.setTimeout(() => setSearchCalled(false), 1400);
+    return () => window.clearTimeout(timer);
+    // Only when Search is pressed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchJump]);
+  const continueNote = notes.reduce((latest, note) => (!latest || new Date(note.savedAt) > new Date(latest.savedAt) ? note : latest), null);
   const attachmentCount = notes.reduce((sum, note) => sum + (note.attachments?.length || 0), 0);
   const selectedRooms = Array.isArray(quickRooms[quickAction.division]) ? quickRooms[quickAction.division] : [];
   const selectedRoom = selectedRooms.find(item => item.id === quickAction.roomId) || null;
@@ -654,7 +670,9 @@ function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, 
       </CoverConstellation>
 
       <div className="dashboard-body">
-        <SearchBar value={searchQuery} onChange={onSearchChange} placeholder="Search all study notes and wrong questions..." />
+        <div className={`cover-search${searchCalled ? " is-called" : ""}`} ref={searchRef}>
+          <SearchBar value={searchQuery} onChange={onSearchChange} placeholder="Search all study notes and wrong questions..." />
+        </div>
         {searchQuery ? (
           <SearchResults
             results={searchResults}
@@ -699,10 +717,6 @@ function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, 
             </button>
           </section>
         </div>
-        <section className="dashboard-panel">
-          <div className="dashboard-section-head"><h2>Recent Notes</h2></div>
-          {recentNotes.length ? <div className="dashboard-mini-grid">{recentNotes.map(note => <button className="mini-card" key={note.id} onClick={() => onOpenNote(note)}><b>{note.title}</b><span>{itemPath(note)}</span><p>{matchPreview([note.analysis?.summary, note.rawNotes], "")}</p><small>Updated {formatDate(note.savedAt)}</small><em>View Note</em></button>)}</div> : <div className="empty-soft">No recent notes yet.</div>}
-        </section>
         <div className="dashboard-stats">{plural(notes.length, "note")} · {plural(attachmentCount, "attachment")}</div>
       </div>
     </section>
@@ -1460,6 +1474,7 @@ function StudyApp({ onLogout }) {
   const [roomSearch, setRoomSearch] = useState("");
   const [allSearchData, setAllSearchData] = useState({ loaded: false, notes: [], wrongQuestions: [] });
   const [allSearchLoading, setAllSearchLoading] = useState(false);
+  const [searchJump, setSearchJump] = useState(0);
   const [quickAction, setQuickAction] = useState({ division: "", roomId: "", subroomId: "" });
   const [loadedRoomDivisions, setLoadedRoomDivisions] = useState([]);
   const [roomErrors, setRoomErrors] = useState([]);
@@ -2327,7 +2342,10 @@ function StudyApp({ onLogout }) {
         <DivisionMenu current={division} onSelect={chooseDivision} />
       </nav>
       <div className="top-actions">
-        <button onClick={() => chooseDivision("")}>Search</button>
+        <button onClick={() => {
+          if (division) chooseDivision("");
+          setSearchJump(count => count + 1);
+        }}>Search</button>
         <button onClick={onLogout}>Logout</button>
       </div>
     </header>
@@ -2581,6 +2599,8 @@ function StudyApp({ onLogout }) {
       onQuickStart={startQuickAction}
       onOpenNote={openDashboardNote}
       onSelectDivision={chooseDivision}
+      searchJump={searchJump}
+      onSearchJumpDone={() => setSearchJump(0)}
     />
   ) : roomId && !subroomId ? roomDirectory() : roomId && subroomId ? subroomView() : divisionView();
   const deleteRoomCounts = deleteRoomTarget ? roomContentCounts(deleteRoomTarget.id) : null;
