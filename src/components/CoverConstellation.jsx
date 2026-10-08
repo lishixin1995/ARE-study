@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { hasWebGL } from "../three/support.js";
 import { TREE_BESIDE_BREAKPOINT } from "../lib/coverLayout.js";
 
@@ -50,6 +50,17 @@ export default function CoverConstellation({ graph, divisions, selectedDivision 
   backgroundRef.current = onBackground;
   const selectedRef = useRef(selectedDivision);
   selectedRef.current = selectedDivision;
+
+  // The map fills the first screen on any display: CSS sizes it from where it
+  // starts (below the top menu) down to the bottom of the window.
+  useLayoutEffect(() => {
+    const section = sectionRef.current;
+    const fit = () => section.style.setProperty("--cover-top", `${Math.round(section.getBoundingClientRect().top + window.scrollY)}px`);
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(document.body);
+    return () => observer.disconnect();
+  }, []);
 
   const graphKey = useMemo(() => graph.nodes.map(node => `${node.id}:${node.label}:${node.size.toFixed(1)}:${node.color}`).join("|") + `#${graph.links.length}`, [graph]);
 

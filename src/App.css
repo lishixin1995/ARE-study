@@ -735,9 +735,12 @@ main.main--cover {
   border: 0;
 }
 
+/* --cover-top is measured in CoverConstellation, so the map fills the first
+   screen on any display. */
 .cover-map {
   position: relative;
-  height: clamp(560px, calc(100vh - 64px), 940px);
+  height: max(560px, calc(100vh - var(--cover-top, 56px)));
+  height: max(560px, calc(100svh - var(--cover-top, 56px)));
   margin: 0 calc(-1 * clamp(16px, 3vw, 40px));
   overflow: hidden;
   isolation: isolate;
@@ -3352,6 +3355,21 @@ button.map-label:hover:not(:disabled) {
     inset: auto;
     height: 62vh;
     min-height: 380px;
+  }
+
+  /* With no division open the map still fills the first screen: the canvas
+     takes whatever the division chips leave. Size containment stops the
+     canvas inside from holding the row open when the window shrinks. Once a
+     division is open the canvas drops back to 62vh so its tree shows below. */
+  .cover-map:not(.has-selection) {
+    min-height: calc(100vh - var(--cover-top, 56px));
+    min-height: calc(100svh - var(--cover-top, 56px));
+    grid-template-rows: minmax(380px, 1fr);
+  }
+
+  .cover-map:not(.has-selection) .cover-canvas {
+    height: auto;
+    contain: size;
   }
 
   .cover-overlay {
