@@ -3357,24 +3357,26 @@ button.map-label:hover:not(:disabled) {
     min-height: 380px;
   }
 
-  /* With no division open the map still fills the first screen: the canvas
-     takes whatever the division chips leave. Size containment stops the
-     canvas inside from holding the row open when the window shrinks. Once a
-     division is open the canvas drops back to 62vh so its tree shows below. */
+  .cover-overlay {
+    position: static;
+    margin: 0 16px;
+  }
+}
+
+/* A narrow window on a computer (not a phone or tablet): with no division
+   open the map still fills the first screen, the canvas taking whatever the
+   division chips leave. Size containment stops the canvas inside from holding
+   the row open when the window shrinks. Once a division is open the canvas
+   drops back to 62vh so its tree shows below. */
+@media (max-width: 999px) and (hover: hover) {
   .cover-map:not(.has-selection) {
     min-height: calc(100vh - var(--cover-top, 56px));
-    min-height: calc(100svh - var(--cover-top, 56px));
     grid-template-rows: minmax(380px, 1fr);
   }
 
   .cover-map:not(.has-selection) .cover-canvas {
     height: auto;
     contain: size;
-  }
-
-  .cover-overlay {
-    position: static;
-    margin: 0 16px;
   }
 }
 
