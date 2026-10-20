@@ -702,7 +702,7 @@ function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, 
               <option value="">Select division</option>
               {DIVISIONS.map(([code, label, name]) => <option key={code} value={code}>{label} - {name}</option>)}
             </select>
-            <div className="quick-label">
+            <div className="label-row">
               <label>Room</label>
               <button type="button" className="mini-action" disabled={!quickRoomsReady} onClick={() => onQuickNewRoom(quickAction.division)}>+ New room</button>
             </div>
@@ -710,7 +710,7 @@ function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, 
               <option value="">Select room</option>
               {selectedRooms.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
-            <div className="quick-label">
+            <div className="label-row">
               <label>Sub-room (optional)</label>
               <button type="button" className="mini-action" disabled={!selectedRoom} onClick={() => onQuickNewSubroom(quickAction.division, quickAction.roomId)}>+ New sub-room</button>
             </div>
@@ -759,11 +759,40 @@ function NoteCard({ note, onOpen, onEdit, onDelete }) {
   );
 }
 
-function NoteEditor({ draft, editing, busy, status, setDraft, onFiles, onRemoveFile, onAnalyze, onSave, onCancel }) {
+// placement: { rooms, roomId, subroomId, onChange, onNewSubroom } lets the
+// user choose the room an item is filed under, and a sub-room if they want one.
+function PlacementRow({ idPrefix, placement }) {
+  const placeRoom = placement.rooms.find(item => item.id === placement.roomId) || null;
+  const placeSubrooms = placeRoom?.children || [];
+  return (
+    <div className="editor-columns placement-row">
+      <div>
+        <label htmlFor={`${idPrefix}-place-room`}>Room</label>
+        <select id={`${idPrefix}-place-room`} value={placement.roomId} onChange={event => placement.onChange({ roomId: event.target.value, subroomId: "" })}>
+          <option value="">Choose a room</option>
+          {placement.rooms.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select>
+      </div>
+      <div>
+        <div className="label-row">
+          <label htmlFor={`${idPrefix}-place-subroom`}>Sub-room (optional)</label>
+          <button type="button" className="mini-action" disabled={!placeRoom} onClick={placement.onNewSubroom}>+ New sub-room</button>
+        </div>
+        <select id={`${idPrefix}-place-subroom`} value={placement.subroomId} disabled={!placeSubrooms.length} onChange={event => placement.onChange({ roomId: placement.roomId, subroomId: event.target.value })}>
+          <option value="">{!placeRoom ? "Choose a room first" : "None, save in the room"}</option>
+          {placeSubrooms.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select>
+      </div>
+    </div>
+  );
+}
+
+function NoteEditor({ draft, editing, busy, status, setDraft, onFiles, onRemoveFile, onAnalyze, onSave, onCancel, placement = null }) {
   const inputRef = useRef(null);
   return (
     <section className="editor">
       <div className="workspace-head"><div><div className="eyebrow">{editing ? "Edit Note" : "New Note"}</div><h2>Capture Editor</h2></div><button onClick={onCancel}>Cancel</button></div>
+      {placement ? <PlacementRow idPrefix="note" placement={placement} /> : null}
       <label>Note Title</label>
       <input value={draft.title} onChange={event => setDraft({ ...draft, title: event.target.value })} placeholder="Give this note a title" />
       <label>Raw Notes text</label>
@@ -890,12 +919,9 @@ function WrongQuestionCard({ card, path = "", unfiled = false, onOpen, onEdit, o
   );
 }
 
-// placement (optional): { rooms, roomId, subroomId, onChange } lets the user
-// choose the room the question is filed under, and a sub-room if they want one.
+// placement (optional): see PlacementRow.
 function WrongQuestionEditor({ draft, editing, status, setDraft, onFiles, onRemoveFile, onSave, onCancel, placement = null }) {
   const inputRef = useRef(null);
-  const placeRoom = placement ? placement.rooms.find(item => item.id === placement.roomId) : null;
-  const placeSubrooms = placeRoom?.children || [];
   return (
     <section className="editor wrong-editor">
       <div className="workspace-head">
@@ -905,24 +931,7 @@ function WrongQuestionEditor({ draft, editing, status, setDraft, onFiles, onRemo
         </div>
         <button onClick={onCancel}>Cancel</button>
       </div>
-      {placement ? (
-        <div className="editor-columns placement-row">
-          <div>
-            <label htmlFor="wrong-place-room">Room</label>
-            <select id="wrong-place-room" value={placement.roomId} onChange={event => placement.onChange({ roomId: event.target.value, subroomId: "" })}>
-              <option value="">Choose a room</option>
-              {placement.rooms.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="wrong-place-subroom">Sub-room (optional)</label>
-            <select id="wrong-place-subroom" value={placement.subroomId} disabled={!placeSubrooms.length} onChange={event => placement.onChange({ roomId: placement.roomId, subroomId: event.target.value })}>
-              <option value="">{!placeRoom ? "Choose a room first" : "None, save in the room"}</option>
-              {placeSubrooms.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-            </select>
-          </div>
-        </div>
-      ) : null}
+      {placement ? <PlacementRow idPrefix="wrong" placement={placement} /> : null}
       <label>Title</label>
       <input value={draft.title} onChange={event => setDraft({ ...draft, title: event.target.value })} placeholder="Give this wrong question a title" />
       <label>Question</label>
@@ -1482,7 +1491,10 @@ function StudyApp({ onLogout }) {
   const [subroomStatus, setSubroomStatus] = useState("");
   const [editorTargetSubroomId, setEditorTargetSubroomId] = useState("");
   const [wrongEditorTargetSubroomId, setWrongEditorTargetSubroomId] = useState("");
-  // Set while the division page's editor is open: where the question is filed.
+  // Set while an editor can move what it holds: where it will be filed. The
+  // division page's question editor always can; elsewhere, editing a saved
+  // note or question can.
+  const [notePlacement, setNotePlacement] = useState(null);
   const [wrongPlacement, setWrongPlacement] = useState(null);
   const [review, setReview] = useState(null);
   // Links drawn on the open logic map: the division's, or the room's.
@@ -1640,6 +1652,7 @@ function StudyApp({ onLogout }) {
     setEditorOpen(false);
     setEditingId("");
     setEditorTargetSubroomId("");
+    setNotePlacement(null);
     setDraft({ title: "", rawNotes: "", attachments: [], analysis: { ...EMPTY_ANALYSIS } });
   }
 
@@ -1763,6 +1776,7 @@ function StudyApp({ onLogout }) {
     setWrongStatus("");
     closeWrongEditor();
     setEditingId("");
+    setNotePlacement(null);
     setDraft({ title: "", rawNotes: "", attachments: [], analysis: { ...EMPTY_ANALYSIS } });
     setEditorOpen(true);
   }
@@ -1837,10 +1851,11 @@ function StudyApp({ onLogout }) {
 
   async function saveDraft() {
     try {
-      const saved = await saveNote();
+      const placed = notePlacement;
+      const saved = placed ? await saveNote(draft, editingId, placed.roomId, placed.subroomId) : await saveNote();
       if (!saved) return;
       closeEditor();
-      setStatus(`Saved "${saved.title}" and closed the editor.`);
+      setStatus(placed ? `Saved "${saved.title}" to ${[saved.roomName, saved.subroomName].filter(Boolean).join(" / ")}.` : `Saved "${saved.title}" and closed the editor.`);
     } catch (error) {
       setStatus(`Cloud save failed: ${error.message}`);
     }
@@ -1853,6 +1868,8 @@ function StudyApp({ onLogout }) {
     setSubroomId(parsed.subroomId || "");
     setViewerId("");
     setEditingId(parsed.id);
+    setEditorTargetSubroomId("");
+    setNotePlacement({ roomId: parsed.roomId || roomId, subroomId: parsed.subroomId || "" });
     setDraft({ title: parsed.title, rawNotes: parsed.rawNotes, attachments: parsed.attachments || [], analysis: normalizeAnalysis(parsed.analysis) });
     setEditorOpen(true);
     setStatus("");
@@ -1948,6 +1965,7 @@ function StudyApp({ onLogout }) {
       if (cardDivision && cardDivision !== division) setDivision(cardDivision);
       setRoomId(parsed.roomId);
       setSubroomId(parsed.subroomId);
+      setWrongPlacement({ roomId: parsed.roomId, subroomId: parsed.subroomId || "" });
     }
     setWrongViewerId("");
     setReview(null);
@@ -2158,9 +2176,10 @@ function StudyApp({ onLogout }) {
     }));
   }
 
-  // quick: opened from the cover's Quick Note, which then selects the new sub-room.
-  function openNewSubroom(targetRoomId = roomId, targetDivision = division, quick = false) {
-    setSubroomForm({ mode: "new", parentId: targetRoomId, division: targetDivision, quick });
+  // selectIn: the form that selects the new sub-room once it is saved: "quick"
+  // (the cover's Quick Note), "note" or "wrong" (an editor's placement).
+  function openNewSubroom(targetRoomId = roomId, targetDivision = division, selectIn = "") {
+    setSubroomForm({ mode: "new", parentId: targetRoomId, division: targetDivision, selectIn });
     setSubroomName("");
     setSubroomStatus("");
   }
@@ -2217,7 +2236,10 @@ function StudyApp({ onLogout }) {
         if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
         const saved = data.room || { id: payload.id, name };
         updateSubroomInTree(targetRoomId, children => [...children, saved], targetDivision);
-        if (subroomForm.quick) setQuickAction(prev => prev.division === targetDivision && prev.roomId === targetRoomId ? { ...prev, subroomId: saved.id } : prev);
+        const pick = prev => prev && prev.roomId === targetRoomId ? { ...prev, subroomId: saved.id } : prev;
+        if (subroomForm.selectIn === "quick") setQuickAction(prev => prev.division === targetDivision ? pick(prev) : prev);
+        if (subroomForm.selectIn === "note") setNotePlacement(pick);
+        if (subroomForm.selectIn === "wrong") setWrongPlacement(pick);
         setStatus(`Created sub-room "${saved.name}".`);
       }
       closeSubroomPanels();
@@ -2271,6 +2293,7 @@ function StudyApp({ onLogout }) {
     closeWrongEditor();
     setEditingId("");
     setEditorTargetSubroomId(targetSubroomId);
+    setNotePlacement(null);
     setDraft({ title: "", rawNotes: "", attachments: [], analysis: { ...EMPTY_ANALYSIS } });
     setEditorOpen(true);
     setStatus("");
@@ -2291,10 +2314,28 @@ function StudyApp({ onLogout }) {
     closeEditor();
     setWrongEditingId("");
     setWrongEditorTargetSubroomId(targetSubroomId);
+    setWrongPlacement(null);
     setWrongDraft({ ...EMPTY_WRONG_DRAFT });
     setWrongEditorOpen(true);
     setWrongStatus("");
   }
+
+  // Props for an editor's room / sub-room pickers, or null while it has none.
+  function placementProps(place, setPlace, setPlaceStatus, selectIn) {
+    if (!place) return null;
+    return {
+      rooms,
+      roomId: place.roomId,
+      subroomId: place.subroomId,
+      onChange: next => {
+        setPlace(next);
+        setPlaceStatus("");
+      },
+      onNewSubroom: () => openNewSubroom(place.roomId, division, selectIn)
+    };
+  }
+  const notePlacementProps = placementProps(notePlacement, setNotePlacement, setStatus, "note");
+  const wrongPlacementProps = placementProps(wrongPlacement, setWrongPlacement, setWrongStatus, "wrong");
 
   const topMenu = (
     <header className="top-menu">
@@ -2387,8 +2428,8 @@ function StudyApp({ onLogout }) {
           onLinksChange={saveMapLinks}
         />
         <SearchBar value={roomSearch} onChange={setRoomSearch} placeholder="Search in this room..." />
-        {editorOpen && !subroomId ? <NoteEditor draft={draft} editing={editingId} busy={busy} status={status} setDraft={setDraft} onFiles={attachFiles} onRemoveFile={fileId => setDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onAnalyze={analyzeDraft} onSave={saveDraft} onCancel={closeEditor} /> : null}
-        {wrongEditorOpen && !subroomId ? <WrongQuestionEditor draft={wrongDraft} editing={wrongEditingId} status={wrongStatus} setDraft={setWrongDraft} onFiles={attachWrongFiles} onRemoveFile={fileId => setWrongDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onSave={saveWrongQuestion} onCancel={closeWrongEditor} /> : null}
+        {editorOpen && !subroomId ? <NoteEditor draft={draft} editing={editingId} busy={busy} status={status} setDraft={setDraft} onFiles={attachFiles} onRemoveFile={fileId => setDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onAnalyze={analyzeDraft} onSave={saveDraft} onCancel={closeEditor} placement={notePlacementProps} /> : null}
+        {wrongEditorOpen && !subroomId ? <WrongQuestionEditor draft={wrongDraft} editing={wrongEditingId} status={wrongStatus} setDraft={setWrongDraft} onFiles={attachWrongFiles} onRemoveFile={fileId => setWrongDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onSave={saveWrongQuestion} onCancel={closeWrongEditor} placement={wrongPlacementProps} /> : null}
         {!wrongEditorOpen && !subroomId && wrongStatus ? <p className="status-banner">{wrongStatus}</p> : null}
         {query && !hasRoomSearchResults ? <div className="empty-soft">No cards in this room matched this search.</div> : null}
         {showDirect ? (
@@ -2470,19 +2511,19 @@ function StudyApp({ onLogout }) {
           <div><div className="eyebrow">Sub-room</div><h1>{subroom?.name}</h1><p>{info.label} / {room?.name}</p></div>
           <div className="buttons">
             {reviewButton({ type: "subroom" }, subroomWrongQuestions)}
-            <button className="primary" onClick={() => { closeWrongEditor(); setEditingId(""); setDraft({ title: "", rawNotes: "", attachments: [], analysis: { ...EMPTY_ANALYSIS } }); setEditorOpen(true); }}>+ New Note</button>
-            <button className="primary" onClick={() => { closeEditor(); setWrongEditingId(""); setWrongDraft({ ...EMPTY_WRONG_DRAFT }); setWrongEditorOpen(true); setWrongStatus(""); }}>+ New Wrong Question</button>
+            <button className="primary" onClick={() => openNoteForSubroom(subroomId)}>+ New Note</button>
+            <button className="primary" onClick={() => openWrongQuestionForSubroom(subroomId)}>+ New Wrong Question</button>
           </div>
         </div>
         <section className="content-section">
           <div className="content-section-head"><h2>Study Notes</h2><span>{plural(subroomNotes.length, "card")}</span></div>
-          {editorOpen ? <NoteEditor draft={draft} editing={editingId} busy={busy} status={status} setDraft={setDraft} onFiles={attachFiles} onRemoveFile={fileId => setDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onAnalyze={analyzeDraft} onSave={saveDraft} onCancel={closeEditor} /> : null}
+          {editorOpen ? <NoteEditor draft={draft} editing={editingId} busy={busy} status={status} setDraft={setDraft} onFiles={attachFiles} onRemoveFile={fileId => setDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onAnalyze={analyzeDraft} onSave={saveDraft} onCancel={closeEditor} placement={notePlacementProps} /> : null}
           <div className="cards">{subroomNotes.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}</div>
           {!subroomNotes.length && !editorOpen ? <div className="empty-soft">No saved note cards here yet. Use + New Note when ready.</div> : null}
         </section>
         <section className="content-section">
           <div className="content-section-head"><h2>Wrong Questions</h2><span>{plural(subroomWrongQuestions.length, "card")}</span></div>
-          {wrongEditorOpen ? <WrongQuestionEditor draft={wrongDraft} editing={wrongEditingId} status={wrongStatus} setDraft={setWrongDraft} onFiles={attachWrongFiles} onRemoveFile={fileId => setWrongDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onSave={saveWrongQuestion} onCancel={closeWrongEditor} /> : null}
+          {wrongEditorOpen ? <WrongQuestionEditor draft={wrongDraft} editing={wrongEditingId} status={wrongStatus} setDraft={setWrongDraft} onFiles={attachWrongFiles} onRemoveFile={fileId => setWrongDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onSave={saveWrongQuestion} onCancel={closeWrongEditor} placement={wrongPlacementProps} /> : null}
           {!wrongEditorOpen && wrongStatus ? <p className="status-banner">{wrongStatus}</p> : null}
           <div className="wrong-cards">{subroomWrongQuestions.map(card => <WrongQuestionCard key={card.id} card={card} onOpen={item => setWrongViewerId(item.id)} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />)}</div>
           {!subroomWrongQuestions.length && !wrongEditorOpen ? <div className="empty-soft">No wrong question cards here yet. Use + New Wrong Question when ready.</div> : null}
@@ -2533,15 +2574,7 @@ function StudyApp({ onLogout }) {
               editing={wrongEditingId}
               status={wrongStatus}
               setDraft={setWrongDraft}
-              placement={{
-                rooms,
-                roomId: wrongPlacement.roomId,
-                subroomId: wrongPlacement.subroomId,
-                onChange: place => {
-                  setWrongPlacement(place);
-                  setWrongStatus("");
-                }
-              }}
+              placement={wrongPlacementProps}
               onFiles={attachWrongFiles}
               onRemoveFile={fileId => setWrongDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))}
               onSave={saveWrongQuestion}
@@ -2602,7 +2635,7 @@ function StudyApp({ onLogout }) {
       onOpenSubroom={openSubroomFromCover}
       onQuickStart={startQuickAction}
       onQuickNewRoom={code => openNewRoom(code, true)}
-      onQuickNewSubroom={(code, parentId) => openNewSubroom(parentId, code, true)}
+      onQuickNewSubroom={(code, parentId) => openNewSubroom(parentId, code, "quick")}
       onOpenNote={openDashboardNote}
       onSelectDivision={chooseDivision}
       searchJump={searchJump}

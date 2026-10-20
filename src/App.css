@@ -1250,11 +1250,16 @@ main.main--cover {
   margin-top: 8px;
 }
 
-.quick-label {
+.label-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.label-row .mini-action {
+  flex: none;
+  white-space: nowrap;
 }
 
 .dashboard-stats {
@@ -1394,6 +1399,11 @@ main.main--cover {
 
 .placement-row select {
   font-size: 14px;
+}
+
+/* The sub-room label row is taller (+ New sub-room); keep the selects level. */
+.placement-row > div {
+  align-content: end;
 }
 
 @media (max-width: 1000px) {
