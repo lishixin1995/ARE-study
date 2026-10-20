@@ -167,7 +167,7 @@ export default function LogicMap({ level = "room", centerName, color, subrooms =
 
   useEffect(() => {
     if (!ready) return;
-    sceneRef.current?.setGraph({ room: { name: centerName, color }, groups: graph.groups, loose: graph.loose, links: validLinks });
+    sceneRef.current?.setGraph({ room: { name: centerName, color }, groups: graph.groups, loose: graph.loose, links: validLinks, weaveGroups: !division });
     // graphKey covers every value the scene draws.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, graphKey]);

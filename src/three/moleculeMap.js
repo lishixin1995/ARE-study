@@ -244,7 +244,9 @@ export function mountMoleculeMap(host, { onSelect, onHover } = {}) {
 
   // graph: { room: {name, color}, groups: [{id, kind, name, items:[{id, kind, title}]}], loose: [...], links: [{id, from, to, label}] }
   // A group's kind defaults to "subroom"; on a division map it is "room".
-  function setGraph({ room, groups = [], loose = [], links = [] }) {
+  // weaveGroups links neighbouring groups and shades the triangles between
+  // them; a division map turns it off so its rooms float apart like a nebula.
+  function setGraph({ room, groups = [], loose = [], links = [], weaveGroups = true }) {
     clearGraph();
     pending = { links: [], faces: [] };
     addNode(CORE_ID, { kind: "core" }, createAtom({ color: room.color, radius: 0.3, glow: 3.6, glowOpacity: 0.5, seed: 0.91 }), makeLabel(room.name, "map-label map-label--room"));
@@ -289,7 +291,7 @@ export function mountMoleculeMap(host, { onSelect, onHover } = {}) {
 
     if (loose.length) placeItems(loose, new THREE.Vector3(), new THREE.Vector3(0, 1, 0), 1.6, CORE_ID);
     // Neighbouring sub-rooms are linked too, spanning faint triangles with the core.
-    if (groups.length > 2) weave(groups.map(group => group.id), 0.16);
+    if (weaveGroups && groups.length > 2) weave(groups.map(group => group.id), 0.16);
 
     network = createLinks(pending.links, pending.faces);
     graph.add(network.group);
