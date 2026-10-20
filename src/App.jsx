@@ -2429,6 +2429,10 @@ function StudyApp({ onLogout }) {
                     <button className="subroom-title-button" onClick={() => chooseSubroom(roomId, child.id)}>{child.name}</button>
                     <div className="subroom-head-actions">
                       <span>{query ? `${cards.length} matching notes · ${wrongCards.length} matching wrong questions` : `${plural(totalCards, "note")} · ${plural(totalWrongCards, "wrong question")}`}</span>
+                      <ActionMenu label={`${child.name} actions`}>
+                        <button onClick={() => openRenameSubroom(child, roomId)}>Rename</button>
+                        <button className="danger-menu-item" onClick={() => openDeleteSubroom(child, roomId)}>Delete</button>
+                      </ActionMenu>
                     </div>
                   </div>
                   <CardCarousel
