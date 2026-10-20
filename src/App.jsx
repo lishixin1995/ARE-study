@@ -593,7 +593,7 @@ function AuthGate({ onAuthenticated }) {
 // Wrong questions live in each division's own session, so they aren't shown here.
 // searchJump: set by the top menu's Search button; the page then glides down
 // to the search box and puts the cursor in it, and calls onSearchJumpDone.
-function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, onOpenSearchResult, notes, quickAction, setQuickAction, quickRooms, loadedRoomDivisions, roomErrors, onRetryRooms, coverFocus, setCoverFocus, onCoverNode, onOpenRoom, onOpenSubroom, onQuickStart, onOpenNote, onSelectDivision, searchJump = 0, onSearchJumpDone }) {
+function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, onOpenSearchResult, notes, quickAction, setQuickAction, quickRooms, loadedRoomDivisions, roomErrors, onRetryRooms, coverFocus, setCoverFocus, onCoverNode, onOpenRoom, onOpenSubroom, onQuickStart, onQuickNewRoom, onQuickNewSubroom, onOpenNote, onSelectDivision, searchJump = 0, onSearchJumpDone }) {
   const searchRef = useRef(null);
   const [searchCalled, setSearchCalled] = useState(false);
   useEffect(() => {
@@ -614,6 +614,8 @@ function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, 
   const selectedRooms = Array.isArray(quickRooms[quickAction.division]) ? quickRooms[quickAction.division] : [];
   const selectedRoom = selectedRooms.find(item => item.id === quickAction.roomId) || null;
   const selectedSubrooms = selectedRoom?.children || [];
+  // New rooms wait for the division's saved rooms, so they are numbered after them.
+  const quickRoomsReady = Boolean(quickAction.division) && loadedRoomDivisions.includes(quickAction.division);
 
   const mapDivisions = useMemo(() => COVER_RING_ORDER.map(code => {
     const info = divisionInfo(code);
@@ -700,12 +702,18 @@ function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, 
               <option value="">Select division</option>
               {DIVISIONS.map(([code, label, name]) => <option key={code} value={code}>{label} - {name}</option>)}
             </select>
-            <label>Room</label>
+            <div className="quick-label">
+              <label>Room</label>
+              <button type="button" className="mini-action" disabled={!quickRoomsReady} onClick={() => onQuickNewRoom(quickAction.division)}>+ New room</button>
+            </div>
             <select value={quickAction.roomId} disabled={!quickAction.division} onChange={event => setQuickAction(prev => ({ ...prev, roomId: event.target.value, subroomId: "" }))}>
               <option value="">Select room</option>
               {selectedRooms.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
             </select>
-            <label>Sub-room (optional)</label>
+            <div className="quick-label">
+              <label>Sub-room (optional)</label>
+              <button type="button" className="mini-action" disabled={!selectedRoom} onClick={() => onQuickNewSubroom(quickAction.division, quickAction.roomId)}>+ New sub-room</button>
+            </div>
             <select value={quickAction.subroomId} disabled={!selectedSubrooms.length} onChange={event => setQuickAction(prev => ({ ...prev, subroomId: event.target.value }))}>
               <option value="">{selectedRoom ? "None, save in the room" : "Select a room first"}</option>
               {selectedSubrooms.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
@@ -1050,7 +1058,8 @@ function WrongQuestionViewer({ card, onClose, onEdit, onDelete, canManage = true
   );
 }
 
-function RoomNameModal({ roomType, mode, name, status, busy, onNameChange, onSave, onCancel }) {
+// place: where a new room or sub-room goes, e.g. "In PPD / Site Planning".
+function RoomNameModal({ roomType, mode, name, place = "", status, busy, onNameChange, onSave, onCancel }) {
   const label = roomType === "room" ? "Room" : "Sub-room";
   return (
     <div className="modal-backdrop" onClick={() => { if (!busy) onCancel(); }}>
@@ -1058,6 +1067,7 @@ function RoomNameModal({ roomType, mode, name, status, busy, onNameChange, onSav
         <div>
           <div className="eyebrow">{mode === "rename" ? `Rename ${label}` : `New ${label}`}</div>
           <h2>{mode === "rename" ? `Rename ${label.toLowerCase()}` : `Create ${label.toLowerCase()}`}</h2>
+          {place ? <p className="muted-text">{place}</p> : null}
         </div>
         <label>{label} name</label>
         <input value={name} onChange={event => onNameChange(event.target.value)} autoFocus placeholder={`${label} name`} />
@@ -2019,8 +2029,9 @@ function StudyApp({ onLogout }) {
     };
   }
 
-  function openNewRoom() {
-    setRoomForm({ mode: "new" });
+  // quick: opened from the cover's Quick Note, which then selects the new room.
+  function openNewRoom(targetDivision = division, quick = false) {
+    setRoomForm({ mode: "new", division: targetDivision, quick });
     setRoomName("");
     setRoomStatus("");
   }
@@ -2033,7 +2044,8 @@ function StudyApp({ onLogout }) {
 
   async function saveRoom() {
     const name = clean(roomName);
-    if (!name || !division || !roomForm) return;
+    const targetDivision = roomForm?.division || division;
+    if (!name || !targetDivision || !roomForm) return;
     try {
       setRoomBusy(true);
       setRoomStatus("");
@@ -2064,11 +2076,11 @@ function StudyApp({ onLogout }) {
 
       const payload = {
         id: makeId("room"),
-        division,
+        division: targetDivision,
         parentId: null,
         name,
         roomType: "room",
-        sortOrder: rooms.length
+        sortOrder: (tree[targetDivision] || []).length
       };
       const response = await fetch("/api/rooms", {
         method: "POST",
@@ -2078,7 +2090,8 @@ function StudyApp({ onLogout }) {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
       const saved = { ...(data.room || { id: payload.id, name }), children: [] };
-      setTree(prev => ({ ...prev, [division]: [...(prev[division] || []), saved] }));
+      setTree(prev => ({ ...prev, [targetDivision]: [...(prev[targetDivision] || []), saved] }));
+      if (roomForm.quick) setQuickAction(prev => prev.division === targetDivision ? { ...prev, roomId: saved.id, subroomId: "" } : prev);
       closeRoomPanels();
       setStatus(`Created room "${saved.name}".`);
     } catch (error) {
@@ -2138,15 +2151,16 @@ function StudyApp({ onLogout }) {
     };
   }
 
-  function updateSubroomInTree(targetRoomId, updater) {
+  function updateSubroomInTree(targetRoomId, updater, targetDivision = division) {
     setTree(prev => ({
       ...prev,
-      [division]: (prev[division] || []).map(item => item.id === targetRoomId ? { ...item, children: updater(item.children || []) } : item)
+      [targetDivision]: (prev[targetDivision] || []).map(item => item.id === targetRoomId ? { ...item, children: updater(item.children || []) } : item)
     }));
   }
 
-  function openNewSubroom(targetRoomId = roomId) {
-    setSubroomForm({ mode: "new", parentId: targetRoomId });
+  // quick: opened from the cover's Quick Note, which then selects the new sub-room.
+  function openNewSubroom(targetRoomId = roomId, targetDivision = division, quick = false) {
+    setSubroomForm({ mode: "new", parentId: targetRoomId, division: targetDivision, quick });
     setSubroomName("");
     setSubroomStatus("");
   }
@@ -2160,7 +2174,8 @@ function StudyApp({ onLogout }) {
   async function saveSubroom() {
     const name = clean(subroomName);
     const targetRoomId = subroomForm?.parentId || roomId;
-    if (!name || !targetRoomId || !division || !subroomForm) return;
+    const targetDivision = subroomForm?.division || division;
+    if (!name || !targetRoomId || !targetDivision || !subroomForm) return;
     try {
       setSubroomBusy(true);
       setSubroomStatus("");
@@ -2183,11 +2198,11 @@ function StudyApp({ onLogout }) {
         } : prev);
         setStatus(`Renamed sub-room to "${name}".`);
       } else {
-        const targetRoom = rooms.find(item => item.id === targetRoomId);
+        const targetRoom = (tree[targetDivision] || []).find(item => item.id === targetRoomId);
         const existingChildren = targetRoom?.children || [];
         const payload = {
           id: makeId("subroom"),
-          division,
+          division: targetDivision,
           parentId: targetRoomId,
           name,
           roomType: "subroom",
@@ -2201,7 +2216,8 @@ function StudyApp({ onLogout }) {
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
         const saved = data.room || { id: payload.id, name };
-        updateSubroomInTree(targetRoomId, children => [...children, saved]);
+        updateSubroomInTree(targetRoomId, children => [...children, saved], targetDivision);
+        if (subroomForm.quick) setQuickAction(prev => prev.division === targetDivision && prev.roomId === targetRoomId ? { ...prev, subroomId: saved.id } : prev);
         setStatus(`Created sub-room "${saved.name}".`);
       }
       closeSubroomPanels();
@@ -2482,7 +2498,7 @@ function StudyApp({ onLogout }) {
           <div className="workspace-head">
             <div><div className="eyebrow">Division · Logic Map</div><h1>{info.label}</h1><p>{info.name} · {plural(rooms.length, "room")} · {plural(divisionNotes.length, "note")} · {plural(divisionWrong.length, "wrong question")}</p></div>
             <div className="buttons">
-              <button className="primary" onClick={openNewRoom}>+ New Room</button>
+              <button className="primary" onClick={() => openNewRoom()}>+ New Room</button>
             </div>
           </div>
           <LogicMap
@@ -2555,7 +2571,7 @@ function StudyApp({ onLogout }) {
             />
           )}
         >
-          <button className="primary" onClick={openNewRoom}>+ New Room</button>
+          <button className="primary" onClick={() => openNewRoom()}>+ New Room</button>
         </RoomDirectory>
       </section>
     );
@@ -2581,6 +2597,8 @@ function StudyApp({ onLogout }) {
       onOpenRoom={openRoomFromCover}
       onOpenSubroom={openSubroomFromCover}
       onQuickStart={startQuickAction}
+      onQuickNewRoom={code => openNewRoom(code, true)}
+      onQuickNewSubroom={(code, parentId) => openNewSubroom(parentId, code, true)}
       onOpenNote={openDashboardNote}
       onSelectDivision={chooseDivision}
       searchJump={searchJump}
@@ -2588,6 +2606,10 @@ function StudyApp({ onLogout }) {
     />
   ) : roomId && !subroomId ? roomDirectory() : roomId && subroomId ? subroomView() : divisionView();
   const deleteRoomCounts = deleteRoomTarget ? roomContentCounts(deleteRoomTarget.id) : null;
+  const newRoomPlace = roomForm?.mode === "new" ? `In ${divisionInfo(roomForm.division || division).label}` : "";
+  const subroomFormDivision = subroomForm?.division || division;
+  const subroomParent = subroomForm ? (tree[subroomFormDivision] || []).find(item => item.id === subroomForm.parentId) : null;
+  const newSubroomPlace = subroomForm?.mode === "new" && subroomParent ? `In ${divisionInfo(subroomFormDivision).label} / ${subroomParent.name}` : "";
   const deleteSubroomCounts = deleteSubroomTarget ? subroomContentCounts(deleteSubroomTarget.parentId || roomId, deleteSubroomTarget.id) : null;
 
   return (
@@ -2602,9 +2624,9 @@ function StudyApp({ onLogout }) {
       <Viewer note={viewerNote} busy={busy} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onAnalyze={reanalyze} />
       <WrongQuestionViewer card={wrongViewerCard} canManage={Boolean(subroomId || wrongViewerCard?.roomId || (division && !roomId))} onClose={() => setWrongViewerId("")} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />
       {review ? <WrongReview cards={review.cards} practice={review.practice} scopeLabel={review.scopeLabel} onResult={recordReview} onEdit={editWrongQuestion} onClose={() => setReview(null)} /> : null}
-      {roomForm ? <RoomNameModal roomType="room" mode={roomForm.mode} name={roomName} status={roomStatus} busy={roomBusy} onNameChange={setRoomName} onSave={saveRoom} onCancel={closeRoomPanels} /> : null}
+      {roomForm ? <RoomNameModal roomType="room" mode={roomForm.mode} name={roomName} place={newRoomPlace} status={roomStatus} busy={roomBusy} onNameChange={setRoomName} onSave={saveRoom} onCancel={closeRoomPanels} /> : null}
       {deleteRoomTarget ? <DeleteRoomModal roomType="room" item={deleteRoomTarget} counts={deleteRoomCounts} status={roomStatus} busy={roomBusy} onConfirm={deleteRoom} onCancel={closeRoomPanels} /> : null}
-      {subroomForm ? <RoomNameModal roomType="subroom" mode={subroomForm.mode} name={subroomName} status={subroomStatus} busy={subroomBusy} onNameChange={setSubroomName} onSave={saveSubroom} onCancel={closeSubroomPanels} /> : null}
+      {subroomForm ? <RoomNameModal roomType="subroom" mode={subroomForm.mode} name={subroomName} place={newSubroomPlace} status={subroomStatus} busy={subroomBusy} onNameChange={setSubroomName} onSave={saveSubroom} onCancel={closeSubroomPanels} /> : null}
       {deleteSubroomTarget ? <DeleteRoomModal roomType="subroom" item={deleteSubroomTarget} counts={deleteSubroomCounts} status={subroomStatus} busy={subroomBusy} onConfirm={deleteSubroom} onCancel={closeSubroomPanels} /> : null}
     </div>
   );

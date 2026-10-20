@@ -1250,6 +1250,13 @@ main.main--cover {
   margin-top: 8px;
 }
 
+.quick-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .dashboard-stats {
   text-align: center;
   font-family: var(--font-mono);
