@@ -1706,6 +1706,12 @@ main.main--cover {
   font-size: 20px;
 }
 
+.subroom-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .content-section-head span,
 .subroom-head-actions span {
   font-family: var(--font-mono);
