@@ -1103,29 +1103,6 @@ function DeleteRoomModal({ roomType, item, counts, status, busy, onConfirm, onCa
   );
 }
 
-function RoomCreatePicker({ mode, roomName, subrooms, value, onChange, onContinue, onCancel }) {
-  const label = mode === "wrong" ? "Wrong Question" : "Study Note";
-  return (
-    <div className="modal-backdrop" onClick={onCancel}>
-      <section className="small-modal" onClick={event => event.stopPropagation()}>
-        <div>
-          <div className="eyebrow">Choose where it goes</div>
-          <h2>New {label}</h2>
-        </div>
-        <label>Save in</label>
-        <select value={value} onChange={event => onChange(event.target.value)} autoFocus>
-          <option value="">{roomName} (no sub-room)</option>
-          {subrooms.map(item => <option key={item.id} value={item.id}>Sub-room: {item.name}</option>)}
-        </select>
-        <div className="buttons">
-          <button className="primary" onClick={onContinue}>Continue</button>
-          <button onClick={onCancel}>Cancel</button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
 const WRONG_PAGE_SIZE = 6;
 const ROOM_PAGE_SIZE = 8;
 const WRONG_STATUS_FILTERS = [["due", "Due now"], ["learning", "Learning"], ["mastered", "Mastered"], ["missing", "Missing an answer"]];
@@ -1493,8 +1470,6 @@ function StudyApp({ onLogout }) {
   const [deleteSubroomTarget, setDeleteSubroomTarget] = useState(null);
   const [subroomBusy, setSubroomBusy] = useState(false);
   const [subroomStatus, setSubroomStatus] = useState("");
-  const [roomCreateMode, setRoomCreateMode] = useState("");
-  const [roomCreateSubroomId, setRoomCreateSubroomId] = useState("");
   const [editorTargetSubroomId, setEditorTargetSubroomId] = useState("");
   const [wrongEditorTargetSubroomId, setWrongEditorTargetSubroomId] = useState("");
   // Set while the division page's editor is open: where the question is filed.
@@ -1682,11 +1657,6 @@ function StudyApp({ onLogout }) {
     setRoomStatus("");
   }
 
-  function closeRoomCreatePicker() {
-    setRoomCreateMode("");
-    setRoomCreateSubroomId("");
-  }
-
   function chooseDivision(code) {
     setDivision(code);
     setCoverFocus(NO_COVER_FOCUS);
@@ -1699,7 +1669,6 @@ function StudyApp({ onLogout }) {
     closeWrongEditor();
     closeRoomPanels();
     closeSubroomPanels();
-    closeRoomCreatePicker();
     setStatus("");
     setWrongStatus("");
   }
@@ -1714,7 +1683,6 @@ function StudyApp({ onLogout }) {
     closeWrongEditor();
     closeRoomPanels();
     closeSubroomPanels();
-    closeRoomCreatePicker();
   }
 
   function chooseSubroom(parentId, idValue) {
@@ -1727,7 +1695,6 @@ function StudyApp({ onLogout }) {
     closeWrongEditor();
     closeRoomPanels();
     closeSubroomPanels();
-    closeRoomCreatePicker();
   }
 
   function openSearchResult(result) {
@@ -2283,25 +2250,9 @@ function StudyApp({ onLogout }) {
     }
   }
 
-  // A room without sub-rooms takes the note or question itself; otherwise ask
-  // where it goes, starting from the room.
-  function openRoomCreate(mode) {
-    if (!room?.children?.length) {
-      if (mode === "wrong") openWrongQuestionForSubroom("");
-      else openNoteForSubroom("");
-      return;
-    }
-    closeEditor();
-    closeWrongEditor();
-    setRoomCreateMode(mode);
-    setRoomCreateSubroomId("");
-    setStatus("");
-    setWrongStatus("");
-  }
-
+  // An empty sub-room id files the note in the room itself.
   function openNoteForSubroom(targetSubroomId) {
     closeWrongEditor();
-    closeRoomCreatePicker();
     setEditingId("");
     setEditorTargetSubroomId(targetSubroomId);
     setDraft({ title: "", rawNotes: "", attachments: [], analysis: { ...EMPTY_ANALYSIS } });
@@ -2322,20 +2273,11 @@ function StudyApp({ onLogout }) {
 
   function openWrongQuestionForSubroom(targetSubroomId) {
     closeEditor();
-    closeRoomCreatePicker();
     setWrongEditingId("");
     setWrongEditorTargetSubroomId(targetSubroomId);
     setWrongDraft({ ...EMPTY_WRONG_DRAFT });
     setWrongEditorOpen(true);
     setWrongStatus("");
-  }
-
-  function continueRoomCreate() {
-    if (roomCreateMode === "wrong") {
-      openWrongQuestionForSubroom(roomCreateSubroomId);
-      return;
-    }
-    openNoteForSubroom(roomCreateSubroomId);
   }
 
   const topMenu = (
@@ -2389,7 +2331,7 @@ function StudyApp({ onLogout }) {
       cards: query ? directNotes.filter(note => noteSearchText(note).includes(query)) : directNotes,
       wrongCards: query ? directWrong.filter(card => wrongSearchText(card).includes(query)) : directWrong
     };
-    const showDirect = query ? direct.cards.length || direct.wrongCards.length : !children.length || directNotes.length || directWrong.length;
+    const showDirect = !query || direct.cards.length || direct.wrongCards.length;
     const groups = children.map(child => {
       const cards = divisionNotes.filter(note => note.roomId === roomId && (note.subroomId || "") === child.id);
       const wrongCards = wrongQuestionsForSubroom(roomId, child.id);
@@ -2404,100 +2346,99 @@ function StudyApp({ onLogout }) {
     const hasRoomSearchResults = direct.cards.length || direct.wrongCards.length || groups.some(group => group.cards.length || group.wrongCards.length);
 
     return (
-      <>
-        <section className="workspace room-workspace">
-          {breadcrumbs([[`${info.label}`, () => chooseRoom("")], [room?.name]])}
-          <div className="workspace-head">
-            <div><div className="eyebrow">Room · Logic Map</div><h1>{room?.name}</h1><p>{plural(children.length, "sub-room")} · {plural(roomNotes.length, "note")} · {plural(roomWrong.length, "wrong question")}</p></div>
-            <div className="buttons">
-              {reviewButton({ type: "room" }, roomWrong)}
-              <button className="primary" onClick={() => openRoomCreate("note")}>+ New Note</button>
-              <button className="primary" onClick={() => openRoomCreate("wrong")}>+ New Wrong Question</button>
-            </div>
+      <section className="workspace room-workspace">
+        {breadcrumbs([[`${info.label}`, () => chooseRoom("")], [room?.name]])}
+        <div className="workspace-head">
+          <div><div className="eyebrow">Room · Logic Map</div><h1>{room?.name}</h1><p>{plural(children.length, "sub-room")} · {plural(roomNotes.length, "note")} · {plural(roomWrong.length, "wrong question")}</p></div>
+          <div className="buttons">
+            {reviewButton({ type: "room" }, roomWrong)}
+            <button className="ghost-button" onClick={() => openNewSubroom(roomId)}>+ New Sub-room</button>
+            <button className="primary" onClick={() => openNoteForSubroom("")}>+ New Note</button>
+            <button className="primary" onClick={() => openWrongQuestionForSubroom("")}>+ New Wrong Question</button>
           </div>
-          <LogicMap
-            centerName={room?.name || "Room"}
-            color={roomColor(DIVISION_COLORS[division] || "#5a8dff", Math.max(0, rooms.findIndex(item => item.id === roomId)))}
-            subrooms={children}
-            notes={roomNotes}
-            wrongQuestions={roomWrong}
-            links={mapLinks.links}
-            linksStatus={mapLinks.status}
-            onOpenNote={note => setViewerId(note.id)}
-            onOpenWrong={card => setWrongViewerId(card.id)}
-            onOpenSubroom={childId => chooseSubroom(roomId, childId)}
-            onLinksChange={saveMapLinks}
-          />
-          <SearchBar value={roomSearch} onChange={setRoomSearch} placeholder="Search in this room..." />
-          {editorOpen && !subroomId ? <NoteEditor draft={draft} editing={editingId} busy={busy} status={status} setDraft={setDraft} onFiles={attachFiles} onRemoveFile={fileId => setDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onAnalyze={analyzeDraft} onSave={saveDraft} onCancel={closeEditor} /> : null}
-          {wrongEditorOpen && !subroomId ? <WrongQuestionEditor draft={wrongDraft} editing={wrongEditingId} status={wrongStatus} setDraft={setWrongDraft} onFiles={attachWrongFiles} onRemoveFile={fileId => setWrongDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onSave={saveWrongQuestion} onCancel={closeWrongEditor} /> : null}
-          {!wrongEditorOpen && !subroomId && wrongStatus ? <p className="status-banner">{wrongStatus}</p> : null}
-          {query && !hasRoomSearchResults ? <div className="empty-soft">No cards in this room matched this search.</div> : null}
-          {showDirect ? (
-            <section className="subroom-section">
-              <div className="subroom-head">
-                <h2 className="room-level-title">In this room</h2>
-                <div className="subroom-head-actions">
-                  <span>{query ? `${direct.cards.length} matching notes · ${direct.wrongCards.length} matching wrong questions` : `${plural(directNotes.length, "note")} · ${plural(directWrong.length, "wrong question")}${children.length ? " · not in a sub-room" : ""}`}</span>
-                </div>
+        </div>
+        <LogicMap
+          centerName={room?.name || "Room"}
+          color={roomColor(DIVISION_COLORS[division] || "#5a8dff", Math.max(0, rooms.findIndex(item => item.id === roomId)))}
+          subrooms={children}
+          notes={roomNotes}
+          wrongQuestions={roomWrong}
+          links={mapLinks.links}
+          linksStatus={mapLinks.status}
+          onOpenNote={note => setViewerId(note.id)}
+          onOpenWrong={card => setWrongViewerId(card.id)}
+          onOpenSubroom={childId => chooseSubroom(roomId, childId)}
+          onLinksChange={saveMapLinks}
+        />
+        <SearchBar value={roomSearch} onChange={setRoomSearch} placeholder="Search in this room..." />
+        {editorOpen && !subroomId ? <NoteEditor draft={draft} editing={editingId} busy={busy} status={status} setDraft={setDraft} onFiles={attachFiles} onRemoveFile={fileId => setDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onAnalyze={analyzeDraft} onSave={saveDraft} onCancel={closeEditor} /> : null}
+        {wrongEditorOpen && !subroomId ? <WrongQuestionEditor draft={wrongDraft} editing={wrongEditingId} status={wrongStatus} setDraft={setWrongDraft} onFiles={attachWrongFiles} onRemoveFile={fileId => setWrongDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onSave={saveWrongQuestion} onCancel={closeWrongEditor} /> : null}
+        {!wrongEditorOpen && !subroomId && wrongStatus ? <p className="status-banner">{wrongStatus}</p> : null}
+        {query && !hasRoomSearchResults ? <div className="empty-soft">No cards in this room matched this search.</div> : null}
+        {showDirect ? (
+          <section className="subroom-section">
+            <div className="subroom-head">
+              <h2 className="room-level-title">In this room</h2>
+              <div className="subroom-head-actions">
+                <span>{query ? `${direct.cards.length} matching notes · ${direct.wrongCards.length} matching wrong questions` : `${plural(directNotes.length, "note")} · ${plural(directWrong.length, "wrong question")}${children.length ? " · not in a sub-room" : ""}`}</span>
               </div>
-              <CardCarousel
-                title="Study Notes"
-                previousLabel={`Previous study notes in ${room?.name || "this room"}`}
-                nextLabel={`Next study notes in ${room?.name || "this room"}`}
-                action={<button className="mini-action" onClick={() => openNoteForSubroom("")}>+ New Note</button>}
-                empty={<div className="empty-soft">{query ? "No matching study note cards in this room." : "No study notes in this room yet."}</div>}
-              >
-                {direct.cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}
-              </CardCarousel>
-              <CardCarousel
-                title="Wrong Questions"
-                previousLabel={`Previous wrong questions in ${room?.name || "this room"}`}
-                nextLabel={`Next wrong questions in ${room?.name || "this room"}`}
-                action={<button className="mini-action" onClick={() => openWrongQuestionForSubroom("")}>+ New Wrong Question</button>}
-                empty={<div className="empty-soft">{query ? "No matching wrong question cards in this room." : "No wrong questions in this room yet."}</div>}
-              >
-                {direct.wrongCards.map(card => <WrongQuestionCard key={card.id} card={card} onOpen={item => setWrongViewerId(item.id)} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />)}
-              </CardCarousel>
-            </section>
-          ) : null}
-          {children.length ? (
-            <>
-              {groups.map(({ child, cards, wrongCards, totalCards, totalWrongCards }) => {
-                if (query && !cards.length && !wrongCards.length) return null;
-                return (
-                  <section className="subroom-section" key={child.id}>
-                    <div className="subroom-head">
-                      <button className="subroom-title-button" onClick={() => chooseSubroom(roomId, child.id)}>{child.name}</button>
-                      <div className="subroom-head-actions">
-                        <span>{query ? `${cards.length} matching notes · ${wrongCards.length} matching wrong questions` : `${plural(totalCards, "note")} · ${plural(totalWrongCards, "wrong question")}`}</span>
-                      </div>
+            </div>
+            <CardCarousel
+              title="Study Notes"
+              previousLabel={`Previous study notes in ${room?.name || "this room"}`}
+              nextLabel={`Next study notes in ${room?.name || "this room"}`}
+              action={<button className="mini-action" onClick={() => openNoteForSubroom("")}>+ New Note</button>}
+              empty={<div className="empty-soft">{query ? "No matching study note cards in this room." : "No study notes in this room yet."}</div>}
+            >
+              {direct.cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}
+            </CardCarousel>
+            <CardCarousel
+              title="Wrong Questions"
+              previousLabel={`Previous wrong questions in ${room?.name || "this room"}`}
+              nextLabel={`Next wrong questions in ${room?.name || "this room"}`}
+              action={<button className="mini-action" onClick={() => openWrongQuestionForSubroom("")}>+ New Wrong Question</button>}
+              empty={<div className="empty-soft">{query ? "No matching wrong question cards in this room." : "No wrong questions in this room yet."}</div>}
+            >
+              {direct.wrongCards.map(card => <WrongQuestionCard key={card.id} card={card} onOpen={item => setWrongViewerId(item.id)} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />)}
+            </CardCarousel>
+          </section>
+        ) : null}
+        {children.length ? (
+          <>
+            {groups.map(({ child, cards, wrongCards, totalCards, totalWrongCards }) => {
+              if (query && !cards.length && !wrongCards.length) return null;
+              return (
+                <section className="subroom-section" key={child.id}>
+                  <div className="subroom-head">
+                    <button className="subroom-title-button" onClick={() => chooseSubroom(roomId, child.id)}>{child.name}</button>
+                    <div className="subroom-head-actions">
+                      <span>{query ? `${cards.length} matching notes · ${wrongCards.length} matching wrong questions` : `${plural(totalCards, "note")} · ${plural(totalWrongCards, "wrong question")}`}</span>
                     </div>
-                    <CardCarousel
-                      title="Study Notes"
-                      previousLabel={`Previous study notes in ${child.name}`}
-                      nextLabel={`Next study notes in ${child.name}`}
-                      empty={<div className="empty-soft">{query ? "No matching study note cards in this sub-room." : "No saved note cards in this sub-room yet."}</div>}
-                    >
-                      {cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}
-                    </CardCarousel>
-                    <CardCarousel
-                      title="Wrong Questions"
-                      previousLabel={`Previous wrong questions in ${child.name}`}
-                      nextLabel={`Next wrong questions in ${child.name}`}
-                      action={<button className="mini-action" onClick={() => openWrongQuestionForSubroom(child.id)}>+ New Wrong Question</button>}
-                      empty={<div className="empty-soft">{query ? "No matching wrong question cards in this sub-room." : "No wrong question cards in this sub-room yet."}</div>}
-                    >
-                      {wrongCards.map(card => <WrongQuestionCard key={card.id} card={card} onOpen={item => setWrongViewerId(item.id)} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />)}
-                    </CardCarousel>
-                  </section>
-                );
-              })}
-            </>
-          ) : <div className="empty-soft">No sub-rooms. Notes and wrong questions go straight into this room; if the topic needs splitting up, add a sub-room from the room menu on the division page.</div>}
-        </section>
-        {roomCreateMode ? <RoomCreatePicker mode={roomCreateMode} roomName={room?.name || "This room"} subrooms={children} value={roomCreateSubroomId} onChange={setRoomCreateSubroomId} onContinue={continueRoomCreate} onCancel={closeRoomCreatePicker} /> : null}
-      </>
+                  </div>
+                  <CardCarousel
+                    title="Study Notes"
+                    previousLabel={`Previous study notes in ${child.name}`}
+                    nextLabel={`Next study notes in ${child.name}`}
+                    action={<button className="mini-action" onClick={() => openNoteForSubroom(child.id)}>+ New Note</button>}
+                    empty={<div className="empty-soft">{query ? "No matching study note cards in this sub-room." : "No saved note cards in this sub-room yet."}</div>}
+                  >
+                    {cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}
+                  </CardCarousel>
+                  <CardCarousel
+                    title="Wrong Questions"
+                    previousLabel={`Previous wrong questions in ${child.name}`}
+                    nextLabel={`Next wrong questions in ${child.name}`}
+                    action={<button className="mini-action" onClick={() => openWrongQuestionForSubroom(child.id)}>+ New Wrong Question</button>}
+                    empty={<div className="empty-soft">{query ? "No matching wrong question cards in this sub-room." : "No wrong question cards in this sub-room yet."}</div>}
+                  >
+                    {wrongCards.map(card => <WrongQuestionCard key={card.id} card={card} onOpen={item => setWrongViewerId(item.id)} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />)}
+                  </CardCarousel>
+                </section>
+              );
+            })}
+          </>
+        ) : query ? null : <div className="empty-soft">No sub-rooms yet. Add one with + New Sub-room whenever this topic needs splitting up.</div>}
+      </section>
     );
   }
 
