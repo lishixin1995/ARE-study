@@ -488,239 +488,6 @@ main.main--cover {
   opacity: 0.5;
 }
 
-/* ---------- Molecule hero ---------- */
-
-.molecule-hero {
-  position: relative;
-  height: clamp(560px, calc(100vh - 64px), 920px);
-  margin: 0 calc(-1 * clamp(16px, 3vw, 40px));
-  overflow: hidden;
-  isolation: isolate;
-}
-
-.molecule-hero::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background:
-    radial-gradient(circle at 50% 50%, rgba(50, 110, 220, 0.18), transparent calc(var(--hero-radius, 260px) * 1.9)),
-    linear-gradient(rgba(150, 190, 255, 0.04) 1px, transparent 1px) 0 0 / 64px 64px,
-    linear-gradient(90deg, rgba(150, 190, 255, 0.04) 1px, transparent 1px) 0 0 / 64px 64px;
-  mask-image: radial-gradient(circle at 50% 50%, black 30%, transparent 80%);
-}
-
-.division-page .molecule-hero {
-  height: clamp(560px, calc(100vh - 140px), 860px);
-}
-
-.hero-canvas {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  transition: opacity 0.9s ease;
-}
-
-.molecule-hero.is-ready .hero-canvas {
-  opacity: 1;
-}
-
-.hero-canvas canvas {
-  display: block;
-}
-
-.hero-lines {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
-  overflow: visible;
-}
-
-.hero-fallback-atom {
-  fill: color-mix(in srgb, var(--atom) 30%, #050b18);
-  stroke: var(--atom);
-  stroke-width: 1.5;
-  filter: drop-shadow(0 0 14px var(--atom));
-  opacity: 0.85;
-}
-
-.hero-line {
-  fill: none;
-  stroke: rgba(205, 225, 255, 0.4);
-  stroke-width: 1;
-  transition: stroke 0.2s, stroke-width 0.2s;
-}
-
-.hero-reticle {
-  fill: none;
-  stroke: rgba(205, 225, 255, 0.35);
-  stroke-width: 1;
-  stroke-dasharray: 2 4;
-  transition: stroke 0.2s;
-}
-
-.hero-tip {
-  fill: #e6f2ff;
-}
-
-.hero-lines .is-active .hero-line {
-  stroke: var(--atom);
-  stroke-width: 1.5;
-  filter: drop-shadow(0 0 4px var(--atom));
-}
-
-.hero-lines .is-active .hero-reticle {
-  stroke: var(--atom);
-  stroke-dasharray: 6 3;
-  animation: reticle-spin 6s linear infinite;
-}
-
-@keyframes reticle-spin {
-  to {
-    stroke-dashoffset: -90;
-  }
-}
-
-.hero-center {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  text-align: center;
-  gap: 14px;
-  padding: 0 24%;
-  pointer-events: none;
-}
-
-.hero-center > * {
-  pointer-events: auto;
-}
-
-.hero-title {
-  font-size: clamp(32px, 3.7vw, 58px);
-  font-weight: 500;
-  line-height: 1;
-  letter-spacing: -0.03em;
-  text-shadow: 0 0 40px rgba(80, 150, 255, 0.45), 0 2px 12px rgba(0, 0, 0, 0.8);
-}
-
-.hero-title--division {
-  font-size: clamp(56px, 8vw, 120px);
-  letter-spacing: 0.02em;
-}
-
-.hero-subtitle {
-  max-width: min(400px, calc(var(--hero-radius, 260px) * 1.4));
-  color: var(--text-soft);
-  font-size: 15px;
-  line-height: 1.55;
-  text-shadow: 0 1px 10px rgba(0, 0, 0, 0.9);
-}
-
-/* On division pages the actions sit under the molecule, clear of the bonds. */
-.molecule-hero--center .hero-actions {
-  position: absolute;
-  left: 50%;
-  bottom: 5%;
-  transform: translateX(-50%);
-  margin: 0;
-  width: max-content;
-  max-width: calc(100% - 32px);
-}
-
-.molecule-hero--center .hero-note {
-  position: absolute;
-  left: 50%;
-  bottom: calc(5% + 64px);
-  transform: translateX(-50%);
-}
-
-.hero-note {
-  max-width: 360px;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.hero-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 10px;
-  margin-top: 6px;
-}
-
-.hero-callouts {
-  position: absolute;
-  top: 12%;
-  bottom: 10%;
-  width: min(250px, 21vw);
-  display: flex;
-  flex-direction: column;
-  justify-content: space-around;
-  align-items: flex-start;
-  pointer-events: none;
-}
-
-.hero-callouts--left {
-  left: clamp(16px, 4vw, 64px);
-}
-
-.hero-callouts--right {
-  right: clamp(16px, 4vw, 64px);
-}
-
-.hero-callout {
-  pointer-events: auto;
-  display: grid;
-  gap: 4px;
-  max-width: 100%;
-  border: 0;
-  border-radius: 10px;
-  background: none;
-  padding: 6px 8px;
-  margin: -6px -8px;
-  text-align: left;
-}
-
-.hero-callout:hover:not(:disabled) {
-  background: rgba(10, 20, 40, 0.45);
-  box-shadow: none;
-}
-
-.callout-eyebrow {
-  width: fit-content;
-  max-width: 100%;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--text-soft);
-  transition: color 0.2s;
-}
-
-.callout-title {
-  font-size: clamp(18px, 1.7vw, 24px);
-  font-weight: 500;
-  line-height: 1.15;
-  overflow-wrap: anywhere;
-}
-
-.callout-meta {
-  font-size: 12.5px;
-  color: var(--muted);
-}
-
-.hero-callout.is-active .callout-eyebrow {
-  color: var(--atom);
-}
-
-.hero-callout.is-active .callout-title {
-  text-shadow: 0 0 18px var(--atom);
-}
-
 /* ---------- Cover constellation ---------- */
 
 .sr-only {
@@ -1949,6 +1716,11 @@ main.main--cover {
   border-radius: 6px;
 }
 
+.room-level-title {
+  font-size: 20px;
+  font-weight: 500;
+}
+
 .subroom-title-button:hover:not(:disabled) {
   background: none;
   box-shadow: none;
@@ -2726,6 +2498,11 @@ main.main--cover {
   box-shadow: 0 0 8px #9fc2ff;
 }
 
+.legend-dot--small {
+  width: 6px;
+  height: 6px;
+}
+
 .legend-dot--note {
   background: #6fd6ff;
   box-shadow: 0 0 8px #6fd6ff;
@@ -2833,6 +2610,15 @@ button.map-label:hover:not(:disabled) {
 
 .map-label--note {
   border-color: rgba(111, 214, 255, 0.3);
+}
+
+/* A room's sub-rooms on the division map: small, like the notes beside them. */
+.map-label--item.map-label--subroom {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 400;
+  color: #dbe9ff;
+  border-color: rgba(159, 194, 255, 0.3);
 }
 
 .map-label--wrong {
@@ -3319,10 +3105,6 @@ button.map-label:hover:not(:disabled) {
   .viewer-answer-grid {
     grid-template-columns: 1fr;
   }
-
-  .hero-center {
-    padding: 0 22%;
-  }
 }
 
 @media (max-width: 900px) {
@@ -3427,64 +3209,6 @@ button.map-label:hover:not(:disabled) {
     display: none;
   }
 
-
-  .molecule-hero,
-  .division-page .molecule-hero {
-    height: auto;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 10px;
-    padding: 0 16px 20px;
-  }
-
-  .hero-canvas {
-    position: relative;
-    inset: auto;
-    grid-column: 1 / -1;
-    height: 64vh;
-    min-height: 380px;
-    margin: 0 -16px 8px;
-  }
-
-  .hero-lines {
-    display: none;
-  }
-
-  .hero-center {
-    inset: 0 0 auto 0;
-    height: 64vh;
-    min-height: 380px;
-    padding: 0 16px;
-  }
-
-  .molecule-hero--center .hero-actions {
-    bottom: 12px;
-  }
-
-  .hero-canvas,
-  .hero-center {
-    height: 56vh;
-  }
-
-  .hero-title {
-    font-size: 30px;
-  }
-
-  .molecule-hero--ring .hero-subtitle,
-  .molecule-hero--ring .hero-center .eyebrow {
-    display: none;
-  }
-
-  .hero-callouts {
-    display: contents;
-  }
-
-  .hero-callout {
-    margin: 0;
-    padding: 12px;
-    border: 1px solid var(--line);
-    background: rgba(10, 18, 34, 0.7);
-  }
 
   .viewer-header {
     flex-direction: column;

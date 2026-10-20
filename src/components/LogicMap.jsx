@@ -3,6 +3,8 @@ import { hasWebGL } from "../three/support.js";
 
 const LINK_SUGGESTIONS = ["leads to", "requires", "part of", "example of", "contrasts with", "related to", "causes"];
 
+const NONE = [];
+
 const makeLinkId = () => `link-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 function shorten(value, max = 34) {
@@ -10,35 +12,71 @@ function shorten(value, max = 34) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text || "Untitled";
 }
 
-// Builds the molecule from saved data: room → sub-rooms → notes and wrong
-// questions. links: [{ id, from, to, label }] using node ids like "note:<id>".
-function buildMapGraph({ subrooms = [], notes = [], wrongQuestions = [] }) {
-  const known = new Set(subrooms.map(item => item.id));
-  const item = (kind, record) => ({ id: `${kind}:${record.id}`, kind, refId: record.id, title: shorten(record.title), fullTitle: record.title || "Untitled" });
-  const groups = subrooms.map(subroom => ({
-    id: `subroom:${subroom.id}`,
-    refId: subroom.id,
-    name: subroom.name,
-    title: subroom.name,
-    items: [
-      ...notes.filter(note => (note.subroomId || "") === subroom.id).map(note => item("note", note)),
-      ...wrongQuestions.filter(card => (card.subroomId || "") === subroom.id).map(card => item("wrong", card))
-    ]
-  }));
-  const loose = [
-    ...notes.filter(note => !known.has(note.subroomId || "")).map(note => item("note", note)),
-    ...wrongQuestions.filter(card => !known.has(card.subroomId || "")).map(card => item("wrong", card))
-  ];
+const atomOf = (kind, record) => ({ id: `${kind}:${record.id}`, kind, refId: record.id, title: shorten(record.title), fullTitle: record.title || "Untitled" });
+
+function indexNodes(groups, loose) {
   const nodes = new Map();
   for (const group of groups) {
-    nodes.set(group.id, { ...group, kind: "subroom" });
+    nodes.set(group.id, group);
     for (const entry of group.items) nodes.set(entry.id, entry);
   }
   for (const entry of loose) nodes.set(entry.id, entry);
   return { groups, loose, nodes };
 }
 
-export default function LogicMap({ roomName, color, subrooms, notes, wrongQuestions, links = [], linksStatus = "", onOpenNote, onOpenWrong, onOpenSubroom, onLinksChange }) {
+// Builds the molecule from saved data: room → sub-rooms → notes and wrong
+// questions; notes and wrong questions not in a sub-room sit around the room.
+// links: [{ id, from, to, label }] using node ids like "note:<id>".
+function buildMapGraph({ subrooms = [], notes = [], wrongQuestions = [] }) {
+  const known = new Set(subrooms.map(item => item.id));
+  const groups = subrooms.map(subroom => ({
+    id: `subroom:${subroom.id}`,
+    kind: "subroom",
+    refId: subroom.id,
+    name: subroom.name,
+    title: subroom.name,
+    items: [
+      ...notes.filter(note => (note.subroomId || "") === subroom.id).map(note => atomOf("note", note)),
+      ...wrongQuestions.filter(card => (card.subroomId || "") === subroom.id).map(card => atomOf("wrong", card))
+    ]
+  }));
+  const loose = [
+    ...notes.filter(note => !known.has(note.subroomId || "")).map(note => atomOf("note", note)),
+    ...wrongQuestions.filter(card => !known.has(card.subroomId || "")).map(card => atomOf("wrong", card))
+  ];
+  return indexNodes(groups, loose);
+}
+
+// The same molecule one level up: division → rooms → each room's sub-rooms
+// and the notes and wrong questions filed in the room itself.
+function buildDivisionGraph({ rooms = [], notes = [], wrongQuestions = [] }) {
+  const groups = rooms.map(room => {
+    const children = room.children || [];
+    const known = new Set(children.map(child => child.id));
+    const inRoom = record => record.roomId === room.id && !known.has(record.subroomId || "");
+    return {
+      id: `room:${room.id}`,
+      kind: "room",
+      refId: room.id,
+      name: room.name,
+      title: room.name,
+      items: [
+        ...children.map(child => ({ id: `subroom:${child.id}`, kind: "subroom", refId: child.id, parentId: room.id, title: shorten(child.name), fullTitle: child.name || "Sub-room" })),
+        ...notes.filter(inRoom).map(note => atomOf("note", note)),
+        ...wrongQuestions.filter(inRoom).map(card => atomOf("wrong", card))
+      ]
+    };
+  });
+  return indexNodes(groups, []);
+}
+
+const KIND_LABELS = { room: "Room", subroom: "Sub-room", note: "Study note", wrong: "Wrong question" };
+
+// level "room": the room at the centre, its sub-rooms around it.
+// level "division": the division at the centre, its rooms around it; give
+// `rooms` instead of `subrooms`. onOpenSubroom gets (subroomId, roomId).
+export default function LogicMap({ level = "room", centerName, color, subrooms = NONE, rooms = NONE, notes, wrongQuestions, links = NONE, linksStatus = "", onOpenNote, onOpenWrong, onOpenRoom, onOpenSubroom, onLinksChange }) {
+  const division = level === "division";
   const hostRef = useRef(null);
   const sceneRef = useRef(null);
   const [webgl] = useState(() => hasWebGL());
@@ -49,18 +87,18 @@ export default function LogicMap({ roomName, color, subrooms, notes, wrongQuesti
   const [linkLabel, setLinkLabel] = useState("");
   const [hovered, setHovered] = useState(null);
 
-  const graph = useMemo(() => buildMapGraph({ subrooms, notes, wrongQuestions }), [subrooms, notes, wrongQuestions]);
+  const graph = useMemo(() => division ? buildDivisionGraph({ rooms, notes, wrongQuestions }) : buildMapGraph({ subrooms, notes, wrongQuestions }), [division, rooms, subrooms, notes, wrongQuestions]);
   const validLinks = useMemo(() => links.filter(link => graph.nodes.has(link.from) && graph.nodes.has(link.to)), [links, graph]);
   const graphKey = useMemo(() => JSON.stringify([
-    roomName,
+    centerName,
     color,
     graph.groups.map(group => [group.id, group.name, group.items.map(entry => [entry.id, entry.title])]),
     graph.loose.map(entry => [entry.id, entry.title]),
     validLinks.map(link => [link.from, link.to, link.label])
-  ]), [roomName, color, graph, validLinks]);
+  ]), [centerName, color, graph, validLinks]);
 
   const stateRef = useRef({});
-  stateRef.current = { connecting, source, graph, onOpenNote, onOpenWrong, onOpenSubroom, notes, wrongQuestions };
+  stateRef.current = { connecting, source, graph, onOpenNote, onOpenWrong, onOpenRoom, onOpenSubroom, notes, wrongQuestions };
 
   function handlePick(node) {
     const state = stateRef.current;
@@ -81,8 +119,10 @@ export default function LogicMap({ roomName, color, subrooms, notes, wrongQuesti
     } else if (node.kind === "wrong") {
       const card = state.wrongQuestions.find(entry => entry.id === node.refId);
       if (card) state.onOpenWrong?.(card);
+    } else if (node.kind === "room") {
+      state.onOpenRoom?.(node.refId);
     } else if (node.kind === "subroom") {
-      state.onOpenSubroom?.(node.refId);
+      state.onOpenSubroom?.(node.refId, node.parentId);
     }
   }
   const pickRef = useRef(handlePick);
@@ -127,7 +167,7 @@ export default function LogicMap({ roomName, color, subrooms, notes, wrongQuesti
 
   useEffect(() => {
     if (!ready) return;
-    sceneRef.current?.setGraph({ room: { name: roomName, color }, groups: graph.groups, loose: graph.loose, links: validLinks });
+    sceneRef.current?.setGraph({ room: { name: centerName, color }, groups: graph.groups, loose: graph.loose, links: validLinks, weaveGroups: !division });
     // graphKey covers every value the scene draws.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, graphKey]);
@@ -167,8 +207,14 @@ export default function LogicMap({ roomName, color, subrooms, notes, wrongQuesti
     onLinksChange?.(validLinks.filter(link => link.id !== id));
   }
 
-  const noteCount = notes.length;
-  const wrongCount = wrongQuestions.length;
+  // A division map draws only what sits directly in each room, so it counts
+  // what it draws; a room map draws everything in the room.
+  const drawn = kind => graph.groups.reduce((sum, group) => sum + group.items.filter(entry => entry.kind === kind).length, 0);
+  const noteCount = division ? drawn("note") : notes.length;
+  const wrongCount = division ? drawn("wrong") : wrongQuestions.length;
+  const subroomCount = division ? drawn("subroom") : subrooms.length;
+  const empty = division ? !rooms.length : !noteCount && !wrongCount && !subroomCount;
+  const inRooms = division ? " in rooms" : "";
   const nodeName = id => graph.nodes.get(id)?.fullTitle || graph.nodes.get(id)?.name || "Removed item";
   const hint = !connecting
     ? "Drag to rotate · Scroll to zoom · Click an atom to open it"
@@ -177,12 +223,13 @@ export default function LogicMap({ roomName, color, subrooms, notes, wrongQuesti
       : "Connect mode — pick the first atom";
 
   return (
-    <section className={`logic-map${connecting ? " is-connecting" : ""}`} aria-label={`${roomName} logic map`}>
+    <section className={`logic-map${connecting ? " is-connecting" : ""}`} aria-label={`${centerName} logic map`}>
       <div className="logic-map-head">
         <div className="map-legend">
-          <span><i className="legend-dot legend-dot--subroom" />{subrooms.length} sub-rooms</span>
-          <span><i className="legend-dot legend-dot--note" />{noteCount} notes</span>
-          <span><i className="legend-dot legend-dot--wrong" />{wrongCount} wrong questions</span>
+          {division ? <span><i className="legend-dot legend-dot--subroom" />{rooms.length} rooms</span> : null}
+          <span><i className={`legend-dot legend-dot--subroom${division ? " legend-dot--small" : ""}`} />{subroomCount} sub-rooms</span>
+          <span><i className="legend-dot legend-dot--note" />{noteCount} notes{inRooms}</span>
+          <span><i className="legend-dot legend-dot--wrong" />{wrongCount} wrong questions{inRooms}</span>
           <span><i className="legend-dot legend-dot--link" />{validLinks.length} links</span>
         </div>
         {webgl ? (
@@ -197,10 +244,10 @@ export default function LogicMap({ roomName, color, subrooms, notes, wrongQuesti
         <div className="logic-map-stage">
           <div className="logic-map-canvas" ref={hostRef} />
           {!ready ? <div className="map-loading">Assembling molecule…</div> : null}
-          {ready && !noteCount && !wrongCount && !subrooms.length ? <div className="map-empty">Create a sub-room, then add notes. They appear here as atoms automatically.</div> : null}
-          {hovered && hovered.kind !== "room" && !connecting ? (
+          {ready && empty ? <div className="map-empty">{division ? "Create a room, then add notes. They appear here as atoms automatically." : "Add notes here or in a sub-room. They appear here as atoms automatically."}</div> : null}
+          {hovered && hovered.kind !== "core" && !connecting ? (
             <div className="map-hover-card">
-              <small>{hovered.kind === "note" ? "Study note" : hovered.kind === "wrong" ? "Wrong question" : "Sub-room"}</small>
+              <small>{KIND_LABELS[hovered.kind] || "Sub-room"}</small>
               <b>{hovered.fullTitle || hovered.name}</b>
             </div>
           ) : null}
@@ -235,7 +282,7 @@ export default function LogicMap({ roomName, color, subrooms, notes, wrongQuesti
         <div className="logic-map-flat">
           {graph.groups.map(group => (
             <div key={group.id} className="flat-group">
-              <button type="button" className="flat-subroom" onClick={() => onOpenSubroom?.(group.refId)}>{group.name}</button>
+              <button type="button" className="flat-subroom" onClick={() => handlePick(group)}>{group.name}</button>
               <div className="flat-items">
                 {group.items.map(entry => (
                   <button type="button" key={entry.id} className={`flat-item flat-item--${entry.kind}`} onClick={() => handlePick(entry)}>{entry.title}</button>
@@ -243,6 +290,13 @@ export default function LogicMap({ roomName, color, subrooms, notes, wrongQuesti
               </div>
             </div>
           ))}
+          {graph.loose.length ? (
+            <div className="flat-items">
+              {graph.loose.map(entry => (
+                <button type="button" key={entry.id} className={`flat-item flat-item--${entry.kind}`} onClick={() => handlePick(entry)}>{entry.title}</button>
+              ))}
+            </div>
+          ) : null}
           <p className="map-hint">3D view needs WebGL, which this browser has turned off.</p>
         </div>
       )}

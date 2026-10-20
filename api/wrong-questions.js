@@ -146,7 +146,8 @@ export default async function handler(request, response) {
       const explanation = "explanation" in body ? normalizeString(body.explanation) : null;
       const missReason = "missReason" in body ? (MISS_REASON_KEYS.has(body.missReason) ? body.missReason : "") : null;
 
-      if (!id || !division || !roomId || !subroomId || (!text && !attachments.length)) {
+      // No sub-room means the question sits in the room itself.
+      if (!id || !division || !roomId || (!text && !attachments.length)) {
         return response.status(400).json({ error: "Missing required wrong question fields." });
       }
 
@@ -170,8 +171,8 @@ export default async function handler(request, response) {
           division = COALESCE(NULLIF(EXCLUDED.division, ''), wrong_question_flashcards.division),
           room_id = COALESCE(NULLIF(EXCLUDED.room_id, ''), wrong_question_flashcards.room_id),
           room_name = COALESCE(NULLIF(EXCLUDED.room_name, ''), wrong_question_flashcards.room_name),
-          subroom_id = COALESCE(NULLIF(EXCLUDED.subroom_id, ''), wrong_question_flashcards.subroom_id),
-          subroom_name = COALESCE(NULLIF(EXCLUDED.subroom_name, ''), wrong_question_flashcards.subroom_name),
+          subroom_id = EXCLUDED.subroom_id,
+          subroom_name = EXCLUDED.subroom_name,
           topic_path = COALESCE(NULLIF(EXCLUDED.topic_path, ''), wrong_question_flashcards.topic_path),
           title = EXCLUDED.title,
           edited_text = EXCLUDED.edited_text,

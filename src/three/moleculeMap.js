@@ -1,8 +1,9 @@
-// Room logic map in the cover's constellation style: the room is a crystal
-// at the centre, sub-rooms are small crystals linked to it, and each
-// sub-room's notes (tiny stars) and wrong questions (tiny amber crystals)
-// cluster around it. User-drawn links render as animated dashed bonds. Built
-// from saved data every time, so new notes appear automatically.
+// Logic map in the cover's constellation style: the room (or division) is a
+// crystal at the centre, its sub-rooms (or rooms) are small crystals linked
+// to it, and what each of those holds clusters around it: notes as tiny
+// stars, wrong questions as tiny amber crystals, a room's sub-rooms as tiny
+// pale stars. User-drawn links render as animated dashed bonds. Built from
+// saved data every time, so new notes appear automatically.
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
@@ -29,6 +30,7 @@ export const MAP_COLORS = {
 };
 
 const DENSE_LABELS = 32;
+const CORE_ID = "core";
 
 function clusterRadius(count) {
   return count ? 0.7 + Math.sqrt(count) * 0.34 : 0;
@@ -240,12 +242,14 @@ export function mountMoleculeMap(host, { onSelect, onHover } = {}) {
     controls.update();
   }
 
-  // graph: { room: {name, color}, groups: [{id, name, items:[{id, kind, title}]}], loose: [...], links: [{id, from, to, label}] }
-  function setGraph({ room, groups = [], loose = [], links = [] }) {
+  // graph: { room: {name, color}, groups: [{id, kind, name, items:[{id, kind, title}]}], loose: [...], links: [{id, from, to, label}] }
+  // A group's kind defaults to "subroom"; on a division map it is "room".
+  // weaveGroups links neighbouring groups and shades the triangles between
+  // them; a division map turns it off so its rooms float apart like a nebula.
+  function setGraph({ room, groups = [], loose = [], links = [], weaveGroups = true }) {
     clearGraph();
-    const coreId = "room";
     pending = { links: [], faces: [] };
-    addNode(coreId, { kind: "room" }, createAtom({ color: room.color, radius: 0.3, glow: 3.6, glowOpacity: 0.5, seed: 0.91 }), makeLabel(room.name, "map-label map-label--room"));
+    addNode(CORE_ID, { kind: "core" }, createAtom({ color: room.color, radius: 0.3, glow: 3.6, glowOpacity: 0.5, seed: 0.91 }), makeLabel(room.name, "map-label map-label--room"));
 
     const largest = Math.max(0, ...groups.map(group => group.items.length));
     const ringRadius = Math.max(2.8, groups.length > 1 ? (groups.length * (2 * clusterRadius(largest) + 0.9)) / (2 * Math.PI) : 2.8);
@@ -267,7 +271,7 @@ export function mountMoleculeMap(host, { onSelect, onHover } = {}) {
           hitRadius: 0.14
         });
         atom.position.copy(center).addScaledVector(direction, radius);
-        addNode(item.id, item, atom, makeLabel(item.title, `map-label map-label--${item.kind}`, item.id));
+        addNode(item.id, item, atom, makeLabel(item.title, `map-label map-label--item map-label--${item.kind}`, item.id));
         connect(parentId, item.id, 0.3);
       });
       weave(items.map(item => item.id), 0.1);
@@ -279,15 +283,15 @@ export function mountMoleculeMap(host, { onSelect, onHover } = {}) {
       const position = new THREE.Vector3(Math.cos(angle) * ringRadius, lift, Math.sin(angle) * ringRadius);
       const atom = createAtom({ color: MAP_COLORS.subroom, radius: 0.13, glow: 4.6, glowOpacity: 0.5, shape: index % 3 === 2 ? "shard" : "gem", seed: index + 1.7, hitRadius: 0.22 });
       atom.position.copy(position);
-      addNode(group.id, { kind: "subroom", ...group }, atom, makeLabel(group.name, "map-label map-label--subroom", group.id));
-      connect(coreId, group.id, 0.5);
+      addNode(group.id, { ...group, kind: group.kind || "subroom" }, atom, makeLabel(group.name, "map-label map-label--subroom", group.id));
+      connect(CORE_ID, group.id, 0.5);
       const outward = position.clone().setY(0).normalize();
       placeItems(group.items, position, outward, clusterRadius(group.items.length), group.id);
     });
 
-    if (loose.length) placeItems(loose, new THREE.Vector3(), new THREE.Vector3(0, 1, 0), 1.6, coreId);
+    if (loose.length) placeItems(loose, new THREE.Vector3(), new THREE.Vector3(0, 1, 0), 1.6, CORE_ID);
     // Neighbouring sub-rooms are linked too, spanning faint triangles with the core.
-    if (groups.length > 2) weave(groups.map(group => group.id), 0.16);
+    if (weaveGroups && groups.length > 2) weave(groups.map(group => group.id), 0.16);
 
     network = createLinks(pending.links, pending.faces);
     graph.add(network.group);
@@ -363,14 +367,13 @@ export function mountMoleculeMap(host, { onSelect, onHover } = {}) {
   function setHovered(id) {
     if (id === hovered) return;
     hovered = id;
-    renderer.domElement.style.cursor = id && id !== "room" ? "pointer" : "";
+    renderer.domElement.style.cursor = id && id !== CORE_ID ? "pointer" : "";
     refreshHighlight();
     onHover?.(id ? nodes.get(id)?.data || null : null);
   }
 
   function select(id) {
-    const node = nodes.get(id);
-    if (node && node.data.kind !== "room") onSelect?.(node.data);
+    if (id !== CORE_ID && nodes.has(id)) onSelect?.(nodes.get(id).data);
   }
 
   const handleMove = event => setHovered(pick(event));

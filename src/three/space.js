@@ -435,11 +435,3 @@ export function createStarfield({ count = 1400, inner = 25, outer = 70, seed = 3
   const points = new THREE.Points(geometry, material);
   return { points, update(time) { material.uniforms.uTime.value = time; } };
 }
-
-// Camera distance at which a sphere of `radius` fills `screenFraction` of the
-// viewport height (as a radius), for a perspective camera.
-export function distanceForScreenRadius(camera, radius, screenFraction) {
-  const halfFov = THREE.MathUtils.degToRad(camera.fov / 2);
-  const angle = Math.atan(screenFraction * 2 * Math.tan(halfFov));
-  return radius / Math.sin(angle);
-}
