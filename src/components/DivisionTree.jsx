@@ -118,7 +118,7 @@ export default function DivisionTree({ code, label, name, color, rooms = [], sta
     const extra = children.length - shown.length;
     const items = shown.map(child => ({ kind: "subroom", id: child.id, name: child.name, meta: plural(notesIn(activeRoom.id, child.id), "note") }));
     if (extra > 0) items.push({ kind: "more", id: "more", name: `+${extra} more`, meta: "Open room to see all" });
-    if (!items.length) items.push({ kind: "empty", id: "empty", name: "No sub-rooms yet", meta: "Open the room to add one" });
+    if (!items.length) items.push({ kind: "empty", id: "empty", name: "No sub-rooms", meta: `${plural(notesIn(activeRoom.id), "note")} in the room · Open it` });
     const centerY = layout.height / 2;
     const spacing = Math.min(LEAF_SPACING, (layout.height * 0.8) / Math.max(1, items.length));
     const radius = Math.max(layout.height * 0.55, (items.length * spacing) / 1.6);
@@ -207,7 +207,7 @@ export default function DivisionTree({ code, label, name, color, rooms = [], sta
                         <span className="tree-leaf-text"><b>{child.name}</b><small>{plural(notesIn(room.id, child.id), "note")}</small></span>
                       </button>
                     </li>
-                  )) : <li className="tree-empty">No sub-rooms yet</li>}
+                  )) : <li className="tree-empty">No sub-rooms · {plural(notesIn(room.id), "note")} in the room</li>}
                 </ul>
               ) : null}
             </li>
