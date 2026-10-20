@@ -1498,7 +1498,7 @@ function StudyApp({ onLogout }) {
   // Set while the division page's editor is open: where the question is filed.
   const [wrongPlacement, setWrongPlacement] = useState(null);
   const [review, setReview] = useState(null);
-  const [roomLinks, setRoomLinks] = useState({ key: "", links: [], status: "" });
+  const [roomLinks, setRoomLinks] = useState({ key: "", links: [], status: "", loaded: false });
   const debouncedDashboardSearch = useDebouncedValue(dashboardSearch);
   const debouncedRoomSearch = useDebouncedValue(roomSearch);
 
@@ -1591,15 +1591,15 @@ function StudyApp({ onLogout }) {
     if (!linksKey) return undefined;
     const key = linksKey;
     let cancelled = false;
-    setRoomLinks({ key, links: [], status: "" });
+    setRoomLinks({ key, links: [], status: "", loaded: false });
     fetch(`/api/cloud-data?app=are-study&key=${encodeURIComponent(key)}`)
       .then(response => response.json().then(data => ({ ok: response.ok, data })))
       .then(({ ok, data }) => {
         if (cancelled) return;
         const links = Array.isArray(data?.item?.data?.links) ? data.item.data.links : [];
-        setRoomLinks({ key, links, status: ok ? "" : "Saved links unavailable." });
+        setRoomLinks({ key, links, status: ok ? "" : "Saved links unavailable.", loaded: ok });
       })
-      .catch(() => !cancelled && setRoomLinks({ key, links: [], status: "Saved links unavailable." }));
+      .catch(() => !cancelled && setRoomLinks({ key, links: [], status: "Saved links unavailable.", loaded: false }));
     return () => { cancelled = true; };
   }, [linksKey]);
 
@@ -2029,15 +2029,16 @@ function StudyApp({ onLogout }) {
 
   async function saveRoomLinks(nextLinks) {
     const key = roomLinks.key;
-    if (!key) return;
+    // Saving before the stored links load would overwrite them.
+    if (!key || !roomLinks.loaded) return;
     const previous = roomLinks.links;
-    setRoomLinks({ key, links: nextLinks, status: "" });
+    setRoomLinks({ key, links: nextLinks, status: "", loaded: true });
     try {
       const response = await fetch("/api/cloud-data", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ app: "are-study", key, data: { links: nextLinks } }) });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     } catch (error) {
-      setRoomLinks(current => current.key === key ? { key, links: previous, status: `Link not saved: ${error.message}` } : current);
+      setRoomLinks(current => current.key === key ? { key, links: previous, status: `Link not saved: ${error.message}`, loaded: true } : current);
     }
   }
 
@@ -2419,6 +2420,7 @@ function StudyApp({ onLogout }) {
             wrongQuestions={roomWrong}
             links={roomLinks.links}
             linksStatus={roomLinks.status}
+            linksReady={roomLinks.loaded}
             onOpenNote={note => setViewerId(note.id)}
             onOpenWrong={card => setWrongViewerId(card.id)}
             onOpenSubroom={childId => chooseSubroom(roomId, childId)}
@@ -2539,6 +2541,7 @@ function StudyApp({ onLogout }) {
             wrongQuestions={divisionWrong}
             links={roomLinks.links}
             linksStatus={roomLinks.status}
+            linksReady={roomLinks.loaded}
             emptyText="Create your first room (a chapter or topic). Rooms and their notes appear here as atoms."
             onOpenNote={note => setViewerId(note.id)}
             onOpenWrong={card => setWrongViewerId(card.id)}

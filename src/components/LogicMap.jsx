@@ -41,7 +41,7 @@ function buildMapGraph({ groups: groupList = [], groupField = "subroomId", group
 }
 
 // level="room": a room with its sub-rooms. level="division": a division with its rooms.
-export default function LogicMap({ level = "room", roomName, color, subrooms, notes, wrongQuestions, links = [], linksStatus = "", emptyText = "", onOpenNote, onOpenWrong, onOpenSubroom, onLinksChange }) {
+export default function LogicMap({ level = "room", roomName, color, subrooms, notes, wrongQuestions, links = [], linksStatus = "", linksReady = true, emptyText = "", onOpenNote, onOpenWrong, onOpenSubroom, onLinksChange }) {
   const isDivision = level === "division";
   const groupNoun = isDivision ? "room" : "sub-room";
   const hostRef = useRef(null);
@@ -198,7 +198,7 @@ export default function LogicMap({ level = "room", roomName, color, subrooms, no
         </div>
         {webgl ? (
           <div className="map-tools">
-            <button type="button" className={connecting ? "is-on" : ""} onClick={toggleConnecting}>{connecting ? "Done connecting" : "Connect"}</button>
+            <button type="button" className={connecting ? "is-on" : ""} disabled={!linksReady && !connecting} title={linksReady ? undefined : "Loading saved links…"} onClick={toggleConnecting}>{connecting ? "Done connecting" : "Connect"}</button>
             <button type="button" onClick={() => sceneRef.current?.recenter()}>Recenter</button>
           </div>
         ) : null}
