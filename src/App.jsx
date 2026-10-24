@@ -125,7 +125,7 @@ function parseNote(note) {
     analysis = normalizeAnalysis(legacy.meta?.aiResult || legacy.meta?.localAnalysis || null);
   }
 
-  return { ...note, title, rawNotes, plainText: rawNotes, analysis, attachments, analyzed: hasAnalysis(analysis) };
+  return { ...note, title, rawNotes, plainText: rawNotes, analysis, attachments };
 }
 
 function packNote(draft) {
@@ -578,7 +578,7 @@ function AuthGate({ onAuthenticated }) {
       <section className="passcode-card">
         <div className="eyebrow">ARE Study Vault</div>
         <h1>Passcode required</h1>
-        <p>Your cloud study workspace is protected before notes, rooms, attachments, or AI tools load.</p>
+        <p>Your cloud study workspace is protected before notes, rooms, or attachments load.</p>
         <form className="passcode-form" onSubmit={submit}>
           <label htmlFor="passcode">Site passcode</label>
           <input id="passcode" type="password" value={passcode} onChange={event => setPasscode(event.target.value)} autoFocus />
@@ -750,13 +750,12 @@ function NoteCard({ note, onOpen, onEdit, onDelete, onExport }) {
           <button onClick={() => onDelete(note.id)}>Delete</button>
         </ActionMenu>
       </div>
-      <p className="summary-clamp">{note.analysis?.summary || clean(note.rawNotes) || "No summary yet."}</p>
+      <p className="summary-clamp">{note.analysis?.summary || clean(note.rawNotes) || "No note text yet."}</p>
       <ul className="bullet-clamp">
         {(note.analysis?.bulletPoints || []).slice(0, 2).map((item, index) => <li key={index}>{item}</li>)}
       </ul>
       <div className="card-footer">
         <div className="card-badges">
-          <span className={note.analyzed ? "ok" : "muted"}>{note.analyzed ? "AI Analyzed" : "Not Analyzed"}</span>
           <span>PDF {counts.pdf}</span>
           <span>Image {counts.image}</span>
         </div>
@@ -794,7 +793,7 @@ function PlacementRow({ idPrefix, placement }) {
   );
 }
 
-function NoteEditor({ draft, editing, busy, status, setDraft, onFiles, onRemoveFile, onAnalyze, onSave, onCancel, placement = null }) {
+function NoteEditor({ draft, editing, status, setDraft, onFiles, onRemoveFile, onSave, onCancel, placement = null }) {
   const inputRef = useRef(null);
   return (
     <section className="editor">
@@ -806,14 +805,14 @@ function NoteEditor({ draft, editing, busy, status, setDraft, onFiles, onRemoveF
       <textarea value={draft.rawNotes} onChange={event => setDraft({ ...draft, rawNotes: event.target.value })} placeholder="Paste or type raw notes here..." />
       <div className="upload-row"><div><b>Attachments</b><p>PDF, JPEG, JPG, PNG, and DOCX are saved only as attachments.</p></div><button onClick={() => inputRef.current?.click()}>Upload Files</button><input ref={inputRef} type="file" multiple accept=".pdf,.png,.jpg,.jpeg,.docx,application/pdf,image/jpeg,image/jpg,image/png,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden onChange={event => onFiles(event.target.files)} /></div>
       {draft.attachments.length ? <div className="chips">{draft.attachments.map(item => <span key={item.id}>{item.kind.toUpperCase()} {item.name}<button onClick={() => onRemoveFile(item.id)}>Remove</button></span>)}</div> : null}
-      <div className="buttons"><button className="ai" disabled={busy || !clean(draft.rawNotes)} onClick={onAnalyze}>{busy ? "Thinking..." : "Analyze with AI"}</button><button className="primary" onClick={onSave}>Save Note</button><button onClick={onCancel}>Cancel</button></div>
+      <div className="buttons"><button className="primary" onClick={onSave}>Save Note</button><button onClick={onCancel}>Cancel</button></div>
       {status ? <p className="status-banner">{status}</p> : null}
       {hasAnalysis(draft.analysis) ? <div className="analysis-preview"><section><h3>Summary</h3><p>{draft.analysis.summary}</p></section><section><h3>Bullet Points</h3><ul>{draft.analysis.bulletPoints.map((item, index) => <li key={index}>{item}</li>)}</ul></section></div> : null}
     </section>
   );
 }
 
-function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze, onExport }) {
+function Viewer({ note, onClose, onEdit, onDelete, onExport }) {
   const [preview, setPreview] = useState(null);
 
   useEffect(() => {
@@ -830,11 +829,10 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze, onExport }) 
           <div>
             <div className="eyebrow">Full Note Viewer</div>
             <h2>{note.title}</h2>
-            <p>{note.division} / {note.roomName} / {note.subroomName} · Updated {formatDate(note.savedAt)}</p>
+            <p>{itemPath(note)} · Updated {formatDate(note.savedAt)}</p>
           </div>
           <div className="viewer-actions">
             <button onClick={() => onEdit(note)}>Edit</button>
-            <button className="ai" disabled={busy || !clean(note.rawNotes)} onClick={() => onAnalyze(note)}>{busy ? "Thinking..." : "Re-analyze"}</button>
             <button title={EXPORT_HINT} onClick={() => onExport(note)}>Export PDF</button>
             <ActionMenu label="More note actions">
               <button onClick={() => onDelete(note.id)}>Delete</button>
@@ -845,14 +843,18 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze, onExport }) 
 
         <div className="viewer-body viewer-two-column">
           <div className="viewer-left-column">
-            <section className="viewer-panel">
-              <h3>Summary</h3>
-              <p>{note.analysis?.summary || "No AI summary yet."}</p>
-            </section>
-            <section className="viewer-panel">
-              <h3>Bullet Points</h3>
-              {note.analysis?.bulletPoints?.length ? <ul>{note.analysis.bulletPoints.map((item, index) => <li key={index}>{item}</li>)}</ul> : <p>No AI bullet points yet.</p>}
-            </section>
+            {note.analysis?.summary ? (
+              <section className="viewer-panel">
+                <h3>Summary</h3>
+                <p>{note.analysis.summary}</p>
+              </section>
+            ) : null}
+            {note.analysis?.bulletPoints?.length ? (
+              <section className="viewer-panel">
+                <h3>Bullet Points</h3>
+                <ul>{note.analysis.bulletPoints.map((item, index) => <li key={index}>{item}</li>)}</ul>
+              </section>
+            ) : null}
             <section className="viewer-panel attachments-panel">
               <h3>Attachments</h3>
               {note.attachments?.length ? (
@@ -1476,7 +1478,6 @@ function StudyApp({ onLogout }) {
   const [wrongViewerId, setWrongViewerId] = useState("");
   const [wrongStatus, setWrongStatus] = useState("");
   const [status, setStatus] = useState("");
-  const [busy, setBusy] = useState(false);
   const [dashboardSearch, setDashboardSearch] = useState("");
   const [roomSearch, setRoomSearch] = useState("");
   const [allSearchData, setAllSearchData] = useState({ loaded: false, notes: [], wrongQuestions: [] });
@@ -1810,28 +1811,6 @@ function StudyApp({ onLogout }) {
     setWrongDraft(prev => ({ ...prev, attachments: [...prev.attachments, ...next] }));
   }
 
-  async function analyzeSummary(rawNotes) {
-    const response = await fetch("/api/ai", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: rawNotes }) });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-    return normalizeAnalysis(data.analysis);
-  }
-
-  async function analyzeDraft() {
-    if (!clean(draft.rawNotes)) return setStatus("Raw Notes text is empty.");
-    try {
-      setBusy(true);
-      setStatus("AI generating Summary and Bullet Points from Raw Notes text only...");
-      const analysis = await analyzeSummary(draft.rawNotes);
-      setDraft(prev => ({ ...prev, analysis }));
-      setStatus("AI summary complete. Save Note to create or update the card.");
-    } catch (error) {
-      setStatus(`AI Error: ${error.message}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function saveNote(noteDraft = draft, noteId = editingId, targetRoom = roomId, targetSubroom = editorTargetSubroomId || subroomId, targetDivision = division) {
     if (!targetRoom) return setStatus("Select a room before saving.");
     if (!clean(noteDraft.title) && !clean(noteDraft.rawNotes) && !noteDraft.attachments.length) return setStatus("Add a title, Raw Notes text, or attachment before saving.");
@@ -1882,22 +1861,6 @@ function StudyApp({ onLogout }) {
     setDraft({ title: parsed.title, rawNotes: parsed.rawNotes, attachments: parsed.attachments || [], analysis: normalizeAnalysis(parsed.analysis) });
     setEditorOpen(true);
     setStatus("");
-  }
-
-  async function reanalyze(note) {
-    if (!clean(note.rawNotes)) return;
-    try {
-      setBusy(true);
-      setStatus("Re-analyzing Summary and Bullet Points from Raw Notes text only...");
-      const analysis = await analyzeSummary(note.rawNotes);
-      const saved = await saveNote({ title: note.title, rawNotes: note.rawNotes, attachments: note.attachments || [], analysis }, note.id, note.roomId, note.subroomId, note.division || division);
-      setViewerId(saved.id);
-      setStatus("Saved note Summary and Bullet Points updated.");
-    } catch (error) {
-      setStatus(`AI Error: ${error.message}`);
-    } finally {
-      setBusy(false);
-    }
   }
 
   async function deleteNote(noteId) {
@@ -2473,7 +2436,7 @@ function StudyApp({ onLogout }) {
           onLinksChange={saveMapLinks}
         />
         <SearchBar value={roomSearch} onChange={setRoomSearch} placeholder="Search in this room..." />
-        {editorOpen && !subroomId ? <NoteEditor draft={draft} editing={editingId} busy={busy} status={status} setDraft={setDraft} onFiles={attachFiles} onRemoveFile={fileId => setDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onAnalyze={analyzeDraft} onSave={saveDraft} onCancel={closeEditor} placement={notePlacementProps} /> : null}
+        {editorOpen && !subroomId ? <NoteEditor draft={draft} editing={editingId} status={status} setDraft={setDraft} onFiles={attachFiles} onRemoveFile={fileId => setDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onSave={saveDraft} onCancel={closeEditor} placement={notePlacementProps} /> : null}
         {wrongEditorOpen && !subroomId ? <WrongQuestionEditor draft={wrongDraft} editing={wrongEditingId} status={wrongStatus} setDraft={setWrongDraft} onFiles={attachWrongFiles} onRemoveFile={fileId => setWrongDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onSave={saveWrongQuestion} onCancel={closeWrongEditor} placement={wrongPlacementProps} /> : null}
         {!wrongEditorOpen && !subroomId && wrongStatus ? <p className="status-banner">{wrongStatus}</p> : null}
         {query && !hasRoomSearchResults ? <div className="empty-soft">No cards in this room matched this search.</div> : null}
@@ -2563,7 +2526,7 @@ function StudyApp({ onLogout }) {
         </div>
         <section className="content-section">
           <div className="content-section-head"><h2>Study Notes</h2><span>{plural(subroomNotes.length, "card")}</span></div>
-          {editorOpen ? <NoteEditor draft={draft} editing={editingId} busy={busy} status={status} setDraft={setDraft} onFiles={attachFiles} onRemoveFile={fileId => setDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onAnalyze={analyzeDraft} onSave={saveDraft} onCancel={closeEditor} placement={notePlacementProps} /> : null}
+          {editorOpen ? <NoteEditor draft={draft} editing={editingId} status={status} setDraft={setDraft} onFiles={attachFiles} onRemoveFile={fileId => setDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onSave={saveDraft} onCancel={closeEditor} placement={notePlacementProps} /> : null}
           <div className="cards">{subroomNotes.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} onExport={exportNote} />)}</div>
           {!subroomNotes.length && !editorOpen ? <div className="empty-soft">No saved note cards here yet. Use + New Note when ready.</div> : null}
         </section>
@@ -2705,7 +2668,7 @@ function StudyApp({ onLogout }) {
         {unassignedWrongQuestions.length && division ? <p className="status-banner">{unassignedWrongQuestions.length} legacy wrong question card(s) are preserved without a room and are not shown in room lists.</p> : null}
         {main}
       </main>
-      <Viewer note={viewerNote} busy={busy} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onAnalyze={reanalyze} onExport={exportNote} />
+      <Viewer note={viewerNote} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onExport={exportNote} />
       <WrongQuestionViewer card={wrongViewerCard} canManage={Boolean(subroomId || wrongViewerCard?.roomId || (division && !roomId))} onClose={() => setWrongViewerId("")} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />
       {review ? <WrongReview cards={review.cards} practice={review.practice} scopeLabel={review.scopeLabel} onResult={recordReview} onEdit={editWrongQuestion} onClose={() => setReview(null)} /> : null}
       <NotePrint job={printJob} onDone={() => setPrintJob(null)} />

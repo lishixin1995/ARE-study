@@ -77,11 +77,6 @@ button.primary:hover:not(:disabled) {
   box-shadow: 0 0 28px rgba(140, 200, 255, 0.45);
 }
 
-button.ai {
-  border-color: rgba(169, 155, 255, 0.55);
-  background: rgba(70, 50, 150, 0.35);
-}
-
 .ghost-button {
   background: rgba(6, 12, 26, 0.35);
   backdrop-filter: blur(8px);
@@ -1979,15 +1974,6 @@ main.main--cover {
   border: 1px solid var(--line-strong);
   color: var(--text-soft);
   background: rgba(4, 9, 20, 0.5);
-}
-
-.card-badges span.ok {
-  color: var(--green);
-  border-color: rgba(79, 224, 168, 0.4);
-}
-
-.card-badges span.muted {
-  color: var(--muted);
 }
 
 .status-chip.status-new {
