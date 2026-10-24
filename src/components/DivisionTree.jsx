@@ -28,8 +28,8 @@ function setRef(map, key) {
 }
 
 // The menu that grows out of a division's star: branches to its rooms, and
-// the chosen room fans out to its sub-rooms, or to its notes when it has no
-// sub-rooms. Beside the map on wide screens;
+// the chosen room fans out to its sub-rooms and the notes kept in the room
+// itself. Beside the map on wide screens;
 // a vertical branch list under the map on narrow ones.
 // anchorRef holds the division star's live screen position.
 export default function DivisionTree({ code, label, name, color, rooms = [], status = "ready", notes = [], focusRoomId = "", focusSubroomId = "", autoFocus = false, anchorRef, onClose, onEnter, onOpenRoom, onOpenSubroom, onOpenNote, onRetry, onHighlight }) {
@@ -52,11 +52,18 @@ export default function DivisionTree({ code, label, name, color, rooms = [], sta
   const activeRoom = rooms.find(room => room.id === activeRoomId) || null;
   const notesIn = (roomId, subroomId) => notes.filter(note => note.roomId === roomId && (subroomId === undefined || (note.subroomId || "") === subroomId)).length;
   const subroomCount = rooms.reduce((sum, room) => sum + (room.children?.length || 0), 0);
-  // A room without sub-rooms shows its notes by name, newest first.
-  const noteLeaves = room => {
-    const roomNotes = notes.filter(note => note.roomId === room.id).sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt));
-    const items = roomNotes.slice(0, MAX_LEAVES).map(note => ({ kind: "note", id: note.id, name: note.title || "Untitled Note", meta: `Note · ${formatDay(note.savedAt)}` }));
-    if (roomNotes.length > items.length) items.push({ kind: "more", id: "more", name: `+${roomNotes.length - items.length} more`, meta: "Open room to see all" });
+  // A room's leaves: its sub-rooms, then the notes filed in the room itself
+  // (no sub-room, or one that no longer exists), newest first.
+  const roomLeaves = room => {
+    const children = room.children || [];
+    const childIds = new Set(children.map(child => child.id));
+    const direct = notes.filter(note => note.roomId === room.id && !childIds.has(note.subroomId || "")).sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt));
+    const all = [
+      ...children.map(child => ({ kind: "subroom", id: child.id, name: child.name, meta: plural(notesIn(room.id, child.id), "note") })),
+      ...direct.map(note => ({ kind: "note", id: note.id, name: note.title || "Untitled Note", meta: `Note · ${formatDay(note.savedAt)}` }))
+    ];
+    const items = all.slice(0, MAX_LEAVES);
+    if (all.length > items.length) items.push({ kind: "more", id: "more", name: `+${all.length - items.length} more`, meta: "Open room to see all" });
     return items;
   };
 
@@ -127,11 +134,7 @@ export default function DivisionTree({ code, label, name, color, rooms = [], sta
   const leaves = useMemo(() => {
     const card = layout.cards.get(activeRoomId);
     if (!wide || !card || !activeRoom) return [];
-    const children = activeRoom.children || [];
-    const shown = children.slice(0, MAX_LEAVES);
-    const extra = children.length - shown.length;
-    const items = children.length ? shown.map(child => ({ kind: "subroom", id: child.id, name: child.name, meta: plural(notesIn(activeRoom.id, child.id), "note") })) : noteLeaves(activeRoom);
-    if (extra > 0) items.push({ kind: "more", id: "more", name: `+${extra} more`, meta: "Open room to see all" });
+    const items = roomLeaves(activeRoom);
     if (!items.length) items.push({ kind: "empty", id: "empty", name: "No sub-rooms or notes", meta: "Open the room to add one" });
     const centerY = layout.height / 2;
     const spacing = Math.min(LEAF_SPACING, (layout.height * 0.8) / Math.max(1, items.length));
@@ -144,7 +147,7 @@ export default function DivisionTree({ code, label, name, color, rooms = [], sta
       const y = centerY + offset;
       return { ...item, x, y, fade: 1 - 0.5 * (offset / radius) ** 2, from: { x: card.right + 8, y: card.mid } };
     });
-    // notesIn depends on notes/activeRoom, both covered.
+    // roomLeaves depends on notes/activeRoom, both covered.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wide, layout, activeRoomId, activeRoom, notes]);
 
@@ -209,6 +212,7 @@ export default function DivisionTree({ code, label, name, color, rooms = [], sta
   };
 
   if (!wide) {
+    const stackedLeaves = activeRoom ? roomLeaves(activeRoom) : [];
     return (
       <div className="tree-map is-stacked" ref={rootRef} style={{ "--atom": color }}>
         {rootLabel}
@@ -220,16 +224,9 @@ export default function DivisionTree({ code, label, name, color, rooms = [], sta
               {card(room, index)}
               {room.id === activeRoomId ? (
                 <ul className="tree-twigs">
-                  {(room.children || []).length ? room.children.map(child => (
-                    <li key={child.id}>
-                      <button type="button" className={`tree-leaf${child.id === focusSubroomId ? " is-focus" : ""}`} onClick={() => onOpenSubroom(room.id, child.id)}>
-                        <span className="tree-leaf-dot" aria-hidden="true" />
-                        <span className="tree-leaf-text"><b>{child.name}</b><small>{plural(notesIn(room.id, child.id), "note")}</small></span>
-                      </button>
-                    </li>
-                  )) : noteLeaves(room).length ? noteLeaves(room).map(leaf => (
+                  {stackedLeaves.length ? stackedLeaves.map(leaf => (
                     <li key={leaf.id}>
-                      <button type="button" className={`tree-leaf tree-leaf--${leaf.kind}`} title={leaf.kind === "note" ? leaf.name : undefined} onClick={() => openLeaf(leaf)}>
+                      <button type="button" className={`tree-leaf tree-leaf--${leaf.kind}${leaf.kind === "subroom" && leaf.id === focusSubroomId ? " is-focus" : ""}`} title={leaf.kind === "note" ? leaf.name : undefined} onClick={() => openLeaf(leaf)}>
                         <span className="tree-leaf-dot" aria-hidden="true" />
                         <span className="tree-leaf-text"><b>{leaf.name}</b><small>{leaf.meta}</small></span>
                       </button>
