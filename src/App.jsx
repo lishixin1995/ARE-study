@@ -3,6 +3,7 @@ import CoverConstellation from "./components/CoverConstellation.jsx";
 import DivisionTree from "./components/DivisionTree.jsx";
 import { buildCoverGraph, shiftColor } from "./lib/coverGraph.js";
 import LogicMap from "./components/LogicMap.jsx";
+import NotePrint from "./components/NotePrint.jsx";
 import WrongReview from "./components/WrongReview.jsx";
 import { MISS_REASONS, isDue, missReasonLabel, nextDueLabel, normalizeReviewState, reviewStatus, sortForReview } from "./lib/wrongReview.js";
 import "./App.css";
@@ -45,6 +46,7 @@ const DEFAULT_ROOMS = {
 const MARKER = "\n\n[[ARE_STUDY_NOTE_META_V2]]";
 const LEGACY_MARKER = "\n\n[[STUDY_CAPTURE_META_V1]]";
 const EMPTY_ANALYSIS = { summary: "", bulletPoints: [] };
+const EXPORT_HINT = "Opens the print window. Choose Save as PDF there.";
 const DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const ACCEPTED_TYPES = new Set(["application/pdf", DOCX_TYPE, "image/jpeg", "image/jpg", "image/png"]);
 const WRONG_QUESTION_TYPES = new Set([
@@ -729,7 +731,7 @@ function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, 
   );
 }
 
-function NoteCard({ note, onOpen, onEdit, onDelete }) {
+function NoteCard({ note, onOpen, onEdit, onDelete, onExport }) {
   const counts = countAttachments(note.attachments);
   return (
     <article className="note-card" onClick={() => onOpen(note)} tabIndex={0} role="button" onKeyDown={event => event.key === "Enter" && onOpen(note)}>
@@ -740,6 +742,7 @@ function NoteCard({ note, onOpen, onEdit, onDelete }) {
         </div>
         <ActionMenu label="Note actions">
           <button onClick={() => onEdit(note)}>Edit</button>
+          {onExport ? <button onClick={() => onExport(note)}>Export PDF</button> : null}
           <button onClick={() => onDelete(note.id)}>Delete</button>
         </ActionMenu>
       </div>
@@ -806,7 +809,7 @@ function NoteEditor({ draft, editing, busy, status, setDraft, onFiles, onRemoveF
   );
 }
 
-function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze }) {
+function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze, onExport }) {
   const [preview, setPreview] = useState(null);
 
   useEffect(() => {
@@ -828,6 +831,7 @@ function Viewer({ note, busy, onClose, onEdit, onDelete, onAnalyze }) {
           <div className="viewer-actions">
             <button onClick={() => onEdit(note)}>Edit</button>
             <button className="ai" disabled={busy || !clean(note.rawNotes)} onClick={() => onAnalyze(note)}>{busy ? "Thinking..." : "Re-analyze"}</button>
+            <button title={EXPORT_HINT} onClick={() => onExport(note)}>Export PDF</button>
             <ActionMenu label="More note actions">
               <button onClick={() => onDelete(note.id)}>Delete</button>
             </ActionMenu>
@@ -1497,6 +1501,7 @@ function StudyApp({ onLogout }) {
   const [notePlacement, setNotePlacement] = useState(null);
   const [wrongPlacement, setWrongPlacement] = useState(null);
   const [review, setReview] = useState(null);
+  const [printJob, setPrintJob] = useState(null);
   // Links drawn on the open logic map: the division's, or the room's.
   const [mapLinks, setMapLinks] = useState({ key: "", links: [], status: "" });
   const debouncedDashboardSearch = useDebouncedValue(dashboardSearch);
@@ -2368,6 +2373,41 @@ function StudyApp({ onLogout }) {
     );
   }
 
+  // Notes print in page order: a room's own notes, then each sub-room's.
+  function roomNotesInOrder(targetRoom) {
+    const childIds = (targetRoom?.children || []).map(child => child.id);
+    const roomNotes = divisionNotes.filter(note => note.roomId === targetRoom?.id);
+    return [
+      ...roomNotes.filter(note => !childIds.includes(note.subroomId || "")),
+      ...childIds.flatMap(id => roomNotes.filter(note => (note.subroomId || "") === id))
+    ];
+  }
+
+  function divisionNotesInOrder() {
+    const roomIds = new Set(rooms.map(item => item.id));
+    return [...rooms.flatMap(roomNotesInOrder), ...divisionNotes.filter(note => !roomIds.has(note.roomId))];
+  }
+
+  // Opens the print window; its Save as PDF writes the file.
+  function exportNote(note) {
+    setPrintJob({ title: note.title, items: [{ note, path: itemPath(note) }] });
+  }
+
+  function exportNotes(list, heading) {
+    if (list.length === 1) return exportNote(list[0]);
+    setPrintJob({
+      title: `${heading} notes`,
+      heading,
+      subtitle: `${plural(list.length, "study note")} · Exported ${formatDate(new Date().toISOString())}`,
+      items: list.map(note => ({ note, path: itemPath(note) }))
+    });
+  }
+
+  function exportButton(list, heading) {
+    if (!list.length) return null;
+    return <button className="ghost-button" title={EXPORT_HINT} onClick={() => exportNotes(list, heading)}>Export notes PDF</button>;
+  }
+
   function reviewButton(scope, pool) {
     if (!pool.length) return null;
     const due = dueCards(pool).length;
@@ -2409,6 +2449,7 @@ function StudyApp({ onLogout }) {
           <div><div className="eyebrow">Room · Logic Map</div><h1>{room?.name}</h1><p>{plural(children.length, "sub-room")} · {plural(roomNotes.length, "note")} · {plural(roomWrong.length, "wrong question")}</p></div>
           <div className="buttons">
             {reviewButton({ type: "room" }, roomWrong)}
+            {exportButton(roomNotesInOrder(room), `${info.label} / ${room?.name || "Room"}`)}
             <button className="ghost-button" onClick={() => openNewSubroom(roomId)}>+ New Sub-room</button>
             <button className="primary" onClick={() => openNoteForSubroom("")}>+ New Note</button>
             <button className="primary" onClick={() => openWrongQuestionForSubroom("")}>+ New Wrong Question</button>
@@ -2447,7 +2488,7 @@ function StudyApp({ onLogout }) {
               action={<button className="mini-action" onClick={() => openNoteForSubroom("")}>+ New Note</button>}
               empty={<div className="empty-soft">{query ? "No matching study note cards in this room." : "No study notes in this room yet."}</div>}
             >
-              {direct.cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}
+              {direct.cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} onExport={exportNote} />)}
             </CardCarousel>
             <CardCarousel
               title="Wrong Questions"
@@ -2483,7 +2524,7 @@ function StudyApp({ onLogout }) {
                     action={<button className="mini-action" onClick={() => openNoteForSubroom(child.id)}>+ New Note</button>}
                     empty={<div className="empty-soft">{query ? "No matching study note cards in this sub-room." : "No saved note cards in this sub-room yet."}</div>}
                   >
-                    {cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}
+                    {cards.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} onExport={exportNote} />)}
                   </CardCarousel>
                   <CardCarousel
                     title="Wrong Questions"
@@ -2511,6 +2552,7 @@ function StudyApp({ onLogout }) {
           <div><div className="eyebrow">Sub-room</div><h1>{subroom?.name}</h1><p>{info.label} / {room?.name}</p></div>
           <div className="buttons">
             {reviewButton({ type: "subroom" }, subroomWrongQuestions)}
+            {exportButton(subroomNotes, `${info.label} / ${room?.name || "Room"} / ${subroom?.name || "Sub-room"}`)}
             <button className="primary" onClick={() => openNoteForSubroom(subroomId)}>+ New Note</button>
             <button className="primary" onClick={() => openWrongQuestionForSubroom(subroomId)}>+ New Wrong Question</button>
           </div>
@@ -2518,7 +2560,7 @@ function StudyApp({ onLogout }) {
         <section className="content-section">
           <div className="content-section-head"><h2>Study Notes</h2><span>{plural(subroomNotes.length, "card")}</span></div>
           {editorOpen ? <NoteEditor draft={draft} editing={editingId} busy={busy} status={status} setDraft={setDraft} onFiles={attachFiles} onRemoveFile={fileId => setDraft(prev => ({ ...prev, attachments: prev.attachments.filter(item => item.id !== fileId) }))} onAnalyze={analyzeDraft} onSave={saveDraft} onCancel={closeEditor} placement={notePlacementProps} /> : null}
-          <div className="cards">{subroomNotes.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} />)}</div>
+          <div className="cards">{subroomNotes.map(note => <NoteCard key={note.id} note={note} onOpen={item => setViewerId(item.id)} onEdit={editNote} onDelete={deleteNote} onExport={exportNote} />)}</div>
           {!subroomNotes.length && !editorOpen ? <div className="empty-soft">No saved note cards here yet. Use + New Note when ready.</div> : null}
         </section>
         <section className="content-section">
@@ -2543,6 +2585,7 @@ function StudyApp({ onLogout }) {
           <div className="workspace-head">
             <div><div className="eyebrow">Division · Logic Map</div><h1>{info.label}</h1><p>{info.name} · {plural(rooms.length, "room")} · {plural(divisionNotes.length, "note")} · {plural(divisionWrong.length, "wrong question")}</p></div>
             <div className="buttons">
+              {exportButton(divisionNotesInOrder(), `${info.label} · ${info.name}`)}
               <button className="primary" onClick={() => openNewRoom()}>+ New Room</button>
             </div>
           </div>
@@ -2658,9 +2701,10 @@ function StudyApp({ onLogout }) {
         {unassignedWrongQuestions.length && division ? <p className="status-banner">{unassignedWrongQuestions.length} legacy wrong question card(s) are preserved without a room and are not shown in room lists.</p> : null}
         {main}
       </main>
-      <Viewer note={viewerNote} busy={busy} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onAnalyze={reanalyze} />
+      <Viewer note={viewerNote} busy={busy} onClose={() => setViewerId("")} onEdit={editNote} onDelete={deleteNote} onAnalyze={reanalyze} onExport={exportNote} />
       <WrongQuestionViewer card={wrongViewerCard} canManage={Boolean(subroomId || wrongViewerCard?.roomId || (division && !roomId))} onClose={() => setWrongViewerId("")} onEdit={editWrongQuestion} onDelete={deleteWrongQuestion} />
       {review ? <WrongReview cards={review.cards} practice={review.practice} scopeLabel={review.scopeLabel} onResult={recordReview} onEdit={editWrongQuestion} onClose={() => setReview(null)} /> : null}
+      <NotePrint job={printJob} onDone={() => setPrintJob(null)} />
       {roomForm ? <RoomNameModal roomType="room" mode={roomForm.mode} name={roomName} place={newRoomPlace} status={roomStatus} busy={roomBusy} onNameChange={setRoomName} onSave={saveRoom} onCancel={closeRoomPanels} /> : null}
       {deleteRoomTarget ? <DeleteRoomModal roomType="room" item={deleteRoomTarget} counts={deleteRoomCounts} status={roomStatus} busy={roomBusy} onConfirm={deleteRoom} onCancel={closeRoomPanels} /> : null}
       {subroomForm ? <RoomNameModal roomType="subroom" mode={subroomForm.mode} name={subroomName} place={newSubroomPlace} status={subroomStatus} busy={subroomBusy} onNameChange={setSubroomName} onSave={saveSubroom} onCancel={closeSubroomPanels} /> : null}
