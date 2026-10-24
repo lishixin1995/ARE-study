@@ -649,6 +649,10 @@ function Dashboard({ searchQuery, onSearchChange, searchResults, searchLoading, 
       onEnter={() => onSelectDivision(focusInfo.code)}
       onOpenRoom={roomId => onOpenRoom(focusInfo.code, roomId)}
       onOpenSubroom={(roomId, subroomId) => onOpenSubroom(focusInfo.code, roomId, subroomId)}
+      onOpenNote={noteId => {
+        const note = notes.find(item => item.id === noteId);
+        if (note) onOpenNote(note);
+      }}
       onRetry={() => onRetryRooms(focusInfo.code)}
       onHighlight={setTreeHighlight}
       anchorRef={treeAnchorRef}

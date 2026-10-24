@@ -8,6 +8,12 @@ function plural(count, word) {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
 
+function formatDay(value) {
+  const date = new Date(value || "");
+  if (Number.isNaN(date.getTime())) return "";
+  return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}`;
+}
+
 // Horizontal S-curve, like a branch leaving one node and arriving level at the next.
 function branch(x0, y0, x1, y1) {
   const mid = x0 + (x1 - x0) * 0.55;
@@ -22,10 +28,11 @@ function setRef(map, key) {
 }
 
 // The menu that grows out of a division's star: branches to its rooms, and
-// the chosen room fans out to its sub-rooms. Beside the map on wide screens;
+// the chosen room fans out to its sub-rooms, or to its notes when it has no
+// sub-rooms. Beside the map on wide screens;
 // a vertical branch list under the map on narrow ones.
 // anchorRef holds the division star's live screen position.
-export default function DivisionTree({ code, label, name, color, rooms = [], status = "ready", notes = [], focusRoomId = "", focusSubroomId = "", autoFocus = false, anchorRef, onClose, onEnter, onOpenRoom, onOpenSubroom, onRetry, onHighlight }) {
+export default function DivisionTree({ code, label, name, color, rooms = [], status = "ready", notes = [], focusRoomId = "", focusSubroomId = "", autoFocus = false, anchorRef, onClose, onEnter, onOpenRoom, onOpenSubroom, onOpenNote, onRetry, onHighlight }) {
   const rootRef = useRef(null);
   const rootLabelRef = useRef(null);
   const columnRef = useRef(null);
@@ -45,6 +52,13 @@ export default function DivisionTree({ code, label, name, color, rooms = [], sta
   const activeRoom = rooms.find(room => room.id === activeRoomId) || null;
   const notesIn = (roomId, subroomId) => notes.filter(note => note.roomId === roomId && (subroomId === undefined || (note.subroomId || "") === subroomId)).length;
   const subroomCount = rooms.reduce((sum, room) => sum + (room.children?.length || 0), 0);
+  // A room without sub-rooms shows its notes by name, newest first.
+  const noteLeaves = room => {
+    const roomNotes = notes.filter(note => note.roomId === room.id).sort((a, b) => new Date(b.savedAt) - new Date(a.savedAt));
+    const items = roomNotes.slice(0, MAX_LEAVES).map(note => ({ kind: "note", id: note.id, name: note.title || "Untitled Note", meta: `Note · ${formatDay(note.savedAt)}` }));
+    if (roomNotes.length > items.length) items.push({ kind: "more", id: "more", name: `+${roomNotes.length - items.length} more`, meta: "Open room to see all" });
+    return items;
+  };
 
   // Measure the cards (relative to the menu) so branches can reach them.
   const measure = useCallback(() => {
@@ -116,9 +130,9 @@ export default function DivisionTree({ code, label, name, color, rooms = [], sta
     const children = activeRoom.children || [];
     const shown = children.slice(0, MAX_LEAVES);
     const extra = children.length - shown.length;
-    const items = shown.map(child => ({ kind: "subroom", id: child.id, name: child.name, meta: plural(notesIn(activeRoom.id, child.id), "note") }));
+    const items = children.length ? shown.map(child => ({ kind: "subroom", id: child.id, name: child.name, meta: plural(notesIn(activeRoom.id, child.id), "note") })) : noteLeaves(activeRoom);
     if (extra > 0) items.push({ kind: "more", id: "more", name: `+${extra} more`, meta: "Open room to see all" });
-    if (!items.length) items.push({ kind: "empty", id: "empty", name: "No sub-rooms", meta: `${plural(notesIn(activeRoom.id), "note")} in the room · Open it` });
+    if (!items.length) items.push({ kind: "empty", id: "empty", name: "No sub-rooms or notes", meta: "Open the room to add one" });
     const centerY = layout.height / 2;
     const spacing = Math.min(LEAF_SPACING, (layout.height * 0.8) / Math.max(1, items.length));
     const radius = Math.max(layout.height * 0.55, (items.length * spacing) / 1.6);
@@ -141,7 +155,13 @@ export default function DivisionTree({ code, label, name, color, rooms = [], sta
 
   function openLeaf(leaf) {
     if (leaf.kind === "subroom") onOpenSubroom(activeRoom.id, leaf.id);
+    else if (leaf.kind === "note") onOpenNote(leaf.id);
     else onOpenRoom(activeRoom.id);
+  }
+
+  // Lights up the leaf's star on the map (notes past the map's limit have none).
+  function highlightLeaf(leaf) {
+    if (leaf.kind === "subroom" || leaf.kind === "note") onHighlight?.(`${leaf.kind}:${leaf.id}`);
   }
 
   const stats = status === "ready"
@@ -207,7 +227,14 @@ export default function DivisionTree({ code, label, name, color, rooms = [], sta
                         <span className="tree-leaf-text"><b>{child.name}</b><small>{plural(notesIn(room.id, child.id), "note")}</small></span>
                       </button>
                     </li>
-                  )) : <li className="tree-empty">No sub-rooms · {plural(notesIn(room.id), "note")} in the room</li>}
+                  )) : noteLeaves(room).length ? noteLeaves(room).map(leaf => (
+                    <li key={leaf.id}>
+                      <button type="button" className={`tree-leaf tree-leaf--${leaf.kind}`} title={leaf.kind === "note" ? leaf.name : undefined} onClick={() => openLeaf(leaf)}>
+                        <span className="tree-leaf-dot" aria-hidden="true" />
+                        <span className="tree-leaf-text"><b>{leaf.name}</b><small>{leaf.meta}</small></span>
+                      </button>
+                    </li>
+                  )) : <li className="tree-empty">No sub-rooms or notes yet</li>}
                 </ul>
               ) : null}
             </li>
@@ -253,10 +280,11 @@ export default function DivisionTree({ code, label, name, color, rooms = [], sta
           <button
             key={leaf.id}
             type="button"
-            className={`tree-leaf tree-leaf--${leaf.kind}${leaf.id === focusSubroomId ? " is-focus" : ""}`}
+            className={`tree-leaf tree-leaf--${leaf.kind}${leaf.kind === "subroom" && leaf.id === focusSubroomId ? " is-focus" : ""}`}
+            title={leaf.kind === "note" ? leaf.name : undefined}
             style={{ left: `${leaf.x.toFixed(1)}px`, top: `${leaf.y.toFixed(1)}px`, "--i": index, "--fade": leaf.fade }}
             onClick={() => openLeaf(leaf)}
-            onMouseEnter={() => leaf.kind === "subroom" && onHighlight?.(`subroom:${leaf.id}`)}
+            onMouseEnter={() => highlightLeaf(leaf)}
             onMouseLeave={() => onHighlight?.("")}
           >
             <span className="tree-leaf-dot" aria-hidden="true" />
