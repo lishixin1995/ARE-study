@@ -1039,6 +1039,13 @@ main.main--cover {
   box-shadow: none;
 }
 
+/* Notes are smaller dots than sub-rooms, in the same 10px slot. */
+.tree-leaf--note .tree-leaf-dot {
+  width: 7px;
+  height: 7px;
+  margin: 0 1.5px;
+}
+
 .tree-leaf--empty .tree-leaf-text b {
   color: var(--text-soft);
   font-weight: 400;
